@@ -3,6 +3,8 @@ import type { ExplorerAPI } from '../shared/types';
 
 const api: ExplorerAPI = {
   bootstrap: () => ipcRenderer.invoke('bootstrap'),
+  detachTab: (tab, point, single) => ipcRenderer.invoke('detach-tab', tab, point, single),
+  windowReady: () => ipcRenderer.invoke('window-ready'),
   setLanguage: mode => ipcRenderer.invoke('set-language', mode),
   onLanguageChanged: callback => { const listener = (_event: unknown, state: import('../shared/i18n').LanguageState) => callback(state); ipcRenderer.on('language-changed', listener); return () => ipcRenderer.removeListener('language-changed', listener); },
   openPrivacySettings: () => ipcRenderer.invoke('open-privacy-settings'),

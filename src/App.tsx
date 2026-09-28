@@ -204,8 +204,9 @@ export default function App() {
     applyLanguage(data.language); setBoot(data); setTheme(data.theme);
     const saved = stored<unknown>('tabs', []);
     const folders = Array.isArray(saved) ? saved.filter((p): p is string => typeof p === 'string' && (p === PC || isTrashLocation(p) || p.startsWith('/'))) : [];
-    const initial = (data.initialPath ? [data.initialPath] : [...new Set([data.home, ...folders])].slice(0, 12)).map(makeTab);
+    const initial = data.initialTab ? [{ ...data.initialTab, id: crypto.randomUUID() }] : (data.initialPath ? [data.initialPath] : [...new Set([data.home, ...folders])].slice(0, 12)).map(makeTab);
     setTabs(initial); setActiveID(initial[0].id);
+    void api.windowReady();
   }).catch(e => { setError(errorMessage(e)); setLoading(false); }); }, []);
   useEffect(() => { for (const [key, value] of Object.entries({ view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, recent]);
   useEffect(() => { if (boot) localStorage.setItem('tabs', JSON.stringify(tabs.map(t => t.location))); }, [tabs, boot]);
@@ -308,6 +309,33 @@ export default function App() {
     } else if (!isVirtual(location) && location !== '/') navigate(parent(location));
   }
   function newTab(destination = boot?.home || '') { const next = makeTab(destination); setTabs(previous => [...previous, next]); setActiveID(next.id); resetNavigation(); }
+  const tabDrag = useRef<{ id: string; y: number; top: number; bottom: number } | null>(null);
+  const detaching = useRef(false);
+  const suppressTabClick = useRef(false);
+  function startTabDrag(event: ReactPointerEvent<HTMLButtonElement>, id: string) {
+    if (event.button !== 0 || detaching.current || operation || modal || editingName) return;
+    const bounds = event.currentTarget.closest('.tab-strip')!.getBoundingClientRect();
+    tabDrag.current = { id, y: event.clientY, top: bounds.top, bottom: bounds.bottom };
+    suppressTabClick.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  async function moveTabDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = tabDrag.current;
+    if (!drag || detaching.current) return;
+    event.currentTarget.style.transform = `translateY(${Math.max(-20, Math.min(20, event.clientY - drag.y))}px)`;
+    if (Math.abs(event.clientY - drag.y) < 24 || (event.clientY >= drag.top - 16 && event.clientY <= drag.bottom + 16)) return;
+    tabDrag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    event.currentTarget.style.transform = '';
+    const target = tabs.find(t => t.id === drag.id);
+    if (!target) return;
+    suppressTabClick.current = true; detaching.current = true;
+    try {
+      await api.detachTab(target, { x: event.screenX, y: event.screenY }, tabs.length === 1);
+      if (tabs.length > 1) closeTab(target.id);
+    } catch (error) { setError(errorMessage(error)); }
+    finally { detaching.current = false; }
+  }
   function closeTab(id: string) {
     if (tabs.length === 1) { navigate(boot?.home || ''); return; }
     const index = tabs.findIndex(t => t.id === id);
@@ -842,7 +870,7 @@ export default function App() {
       <div className="traffic-light-space"/>
       <div className="tabs" role="tablist" aria-label={tr('文件夹标签页')}>
         {tabs.map(t => <div key={t.id} className={`tab ${t.id === tab.id ? 'current' : ''}`}>
-          <button role="tab" aria-selected={t.id === tab.id} className="tab-label" onClick={() => { setActiveID(t.id); resetNavigation(); }} onAuxClick={event => { if (event.button === 1) closeTab(t.id); }}>
+          <button role="tab" aria-selected={t.id === tab.id} className="tab-label" onPointerDown={event => startTabDrag(event, t.id)} onPointerMove={moveTabDrag} onPointerUp={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onPointerCancel={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onKeyDown={event => { if (event.key === 'Escape') { tabDrag.current = null; event.currentTarget.style.transform = ''; } }} onClick={() => { if (suppressTabClick.current) { suppressTabClick.current = false; return; } setActiveID(t.id); resetNavigation(); }} onAuxClick={event => { if (event.button === 1) closeTab(t.id); }}>
             {isVirtual(t.location) ? <PlaceIcon icon={isTrashLocation(t.location) ? 'trash' : t.location} size={16}/> : <FolderGlyph dimension={21}/>}<span>{label(t.location)}</span>
           </button>
           <button className="tab-close" aria-label={tr('关闭 {0} 标签页', label(t.location))} onClick={() => closeTab(t.id)}><X size={13}/></button>

@@ -6,7 +6,8 @@ export interface FileEntry {
 export interface Place { path: string; name: string; icon: string }
 export interface Volume extends Place { total: number; free: number; canEject: boolean }
 export type ThemeMode = 'light' | 'dark' | 'system';
-export interface Bootstrap { language: LanguageState; theme: ThemeMode; home: string; places: Place[]; volumes: Volume[]; initialPath?: string }
+export interface TabState { location: string; history: string[]; index: number }
+export interface Bootstrap { initialTab?: TabState; language: LanguageState; theme: ThemeMode; home: string; places: Place[]; volumes: Volume[]; initialPath?: string }
 export interface Listing { path: string; entries: FileEntry[] }
 export interface TrashListing { entries: FileEntry[]; roots: string[]; unavailable: string[] }
 export interface SearchResult { entries: FileEntry[]; truncated: boolean; skipped: number }
@@ -18,6 +19,8 @@ export type ExtractMode = 'choose' | 'here' | 'folder';
 export interface ArchivePreview { path: string; name: string; entries: { path: string; directory: boolean; size: number }[] }
 export interface ExplorerAPI {
   bootstrap(): Promise<Bootstrap>;
+  detachTab(tab: TabState, point: { x: number; y: number }, single: boolean): Promise<void>;
+  windowReady(): Promise<void>;
   setLanguage(mode: LanguageMode): Promise<LanguageState>;
   onLanguageChanged(callback: (state: LanguageState) => void): () => void;
   openPrivacySettings(): Promise<void>;

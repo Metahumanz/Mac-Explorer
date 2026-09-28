@@ -1,7 +1,8 @@
 import { languageState, loadLanguage, saveLanguage } from './language';
 import { t as tr } from '../shared/i18n';
-import { app, BrowserWindow, ipcMain, shell, clipboard, ClipboardItem, dialog, Menu, nativeTheme, ShareMenu } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, clipboard, ClipboardItem, dialog, Menu, nativeTheme, ShareMenu, screen } from 'electron';
 import fs from 'node:fs/promises';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { watch, type FSWatcher } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,13 +15,13 @@ import { isArchive } from '../shared/archives';
 import { FileHistory } from './history';
 import { FileIcons } from './icons';
 import { listTrash, TrashOrigins, snapshotTrash, emptyTrash } from './trash';
-import type { Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import type { TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 
 let currentLanguage = 'zh-CN';
-let window: BrowserWindow | null = null;
-let watcher: FSWatcher | undefined;
-let watchTimer: NodeJS.Timeout | undefined;
-let searchController: AbortController | undefined;
+// Preserve the requesting window across awaits, even when focus changes.
+const requestWindow = new AsyncLocalStorage<BrowserWindow>();
+const windows = new Map<BrowserWindow, { initialTab?: TabState; watcher?: FSWatcher; watchTimer?: NodeJS.Timeout; searchController?: AbortController; ready?: () => void }>();
+const currentWindow = () => requestWindow.getStore() || BrowserWindow.getFocusedWindow() || windows.keys().next().value;
 const fileIcons = new FileIcons(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/file-icon'));
 const history = new FileHistory();
 const isDev = process.env.EXPLORER_DEV === '1';
@@ -34,7 +35,7 @@ app.on('open-file', (event, input) => {
   event.preventDefault();
   try { openPaths.push(absolute(input)); } catch { return; }
   if (!readyForOpen) return;
-  if (!window) createWindow();
+  const window = currentWindow() || createWindow();
   if (window?.isMinimized()) window.restore();
   window?.show(); window?.focus();
   window?.webContents.send('open-paths');
@@ -53,8 +54,9 @@ function ipc(name: string, handler: (...args: any[]) => unknown) {
   ipcMain.handle(name, async (event, ...args) => {
     const url = event.senderFrame?.url;
     const trusted = isDev ? url?.startsWith('http://127.0.0.1:5173/') : url === pathToFileURL(path.join(__dirname, '../dist/index.html')).href;
-    if (!window || event.sender !== window.webContents || !trusted) throw new Error(tr('不受信任的请求。'));
-    try { return await handler(...args); }
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || !windows.has(owner) || !trusted) throw new Error(tr('不受信任的请求。'));
+    try { return await requestWindow.run(owner, () => handler(...args)); }
     catch (error) { throw new Error(readableError(error)); }
   });
 }
@@ -118,15 +120,14 @@ async function bootstrap(): Promise<Bootstrap> {
   const places = (await Promise.all(candidates.map(async place => (await fs.stat(place.path).catch(() => null))?.isDirectory() ? place : null))).filter((p): p is Place => p !== null);
   places.push({ name: tr('回收站'), path: 'trash', icon: 'trash' });
   const volumes = await readVolumes();
-  return { language: languageState(), theme: nativeTheme.themeSource, home, places, volumes, initialPath: testRoot ? path.join(testRoot, 'Documents') : process.env.EXPLORER_START_PATH };
+  return { initialTab: windows.get(currentWindow()!)?.initialTab, language: languageState(), theme: nativeTheme.themeSource, home, places, volumes, initialPath: testRoot ? path.join(testRoot, 'Documents') : process.env.EXPLORER_START_PATH };
 }
 ipc('bootstrap', bootstrap);
 ipc('set-language', async (mode: unknown) => {
   const state = await saveLanguage(mode);
   currentLanguage = state.locale;
   buildMenu();
-  window?.setTitle(tr('文件资源管理器'));
-  window?.webContents.send('language-changed', state);
+  for (const window of windows.keys()) { window.setTitle(tr('文件资源管理器')); window.webContents.send('language-changed', state); }
   return state;
 });
 // Fixed destination only: renderer cannot supply arbitrary external URLs.
@@ -146,7 +147,7 @@ ipc('restore-trash', async (inputs: unknown, choose: unknown = false) => {
   const origins = await Promise.all(paths.map(input => trashOrigins.original(input)));
   const missing = (await Promise.all(origins.map(async origin => !origin || !(await fs.stat(path.dirname(origin)).catch(() => null))?.isDirectory()))).some(Boolean);
   if (choose === true || missing) {
-    const picked = await dialog.showOpenDialog(window!, { title: missing ? tr('无法确定原位置，请选择还原文件夹') : tr('还原到…'), buttonLabel: tr('还原到此处'), properties: ['openDirectory', 'createDirectory'] });
+    const picked = await dialog.showOpenDialog(currentWindow()!, { title: missing ? tr('无法确定原位置，请选择还原文件夹') : tr('还原到…'), buttonLabel: tr('还原到此处'), properties: ['openDirectory', 'createDirectory'] });
     if (picked.canceled || !picked.filePaths[0]) return null;
     destination = picked.filePaths[0];
   }
@@ -162,7 +163,7 @@ ipc('empty-trash', async () => {
     const roots = await trashRoots();
     const snapshot = await snapshotTrash(roots);
     if (!snapshot.length) return { succeeded: [], errors: [] };
-    const answer = await dialog.showMessageBox(window!, { type: 'warning', title: tr('清空回收站'), message: tr('永久删除回收站中的 {0} 个项目？', snapshot.length), detail: tr('包含本机及已连接磁盘的回收站。此操作无法撤销。确认后新加入的顶层项目将保留。'), buttons: [tr('取消'), tr('永久删除')], defaultId: 0, cancelId: 0, noLink: true });
+    const answer = await dialog.showMessageBox(currentWindow()!, { type: 'warning', title: tr('清空回收站'), message: tr('永久删除回收站中的 {0} 个项目？', snapshot.length), detail: tr('包含本机及已连接磁盘的回收站。此操作无法撤销。确认后新加入的顶层项目将保留。'), buttons: [tr('取消'), tr('永久删除')], defaultId: 0, cancelId: 0, noLink: true });
     if (answer.response !== 1) return null;
     const result = await emptyTrash(roots, snapshot);
     if (result.succeeded.length) history.clear();
@@ -193,7 +194,7 @@ ipc('set-theme', async (mode: unknown) => {
   await fs.mkdir(app.getPath('userData'), { recursive: true });
   await fs.writeFile(path.join(app.getPath('userData'), 'appearance.json'), JSON.stringify({ theme: mode }), 'utf8');
   nativeTheme.themeSource = mode;
-  window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff');
+  for (const window of windows.keys()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff');
   return mode;
 });
 ipc('list', (input: string, refreshIcons: unknown = false) => {
@@ -202,11 +203,12 @@ ipc('list', (input: string, refreshIcons: unknown = false) => {
   return listDirectory(directory);
 });
 ipc('search', async (input: string, query: string, hidden: boolean) => {
-  searchController?.abort();
-  searchController = new AbortController();
-  return searchDirectory(absolute(input), String(query), !!hidden, searchController.signal);
+  const state = windows.get(currentWindow()!)!;
+  state.searchController?.abort();
+  state.searchController = new AbortController();
+  return searchDirectory(absolute(input), String(query), !!hidden, state.searchController.signal);
 });
-ipc('cancel-search', () => searchController?.abort());
+ipc('cancel-search', () => windows.get(currentWindow()!)?.searchController?.abort());
 ipc('info', (input: string) => entryFor(absolute(input)));
 ipc('open', async (input: string) => {
   const filePath = absolute(input);
@@ -246,7 +248,7 @@ ipc('extract-archive', async (input: string, selected: unknown, mode: unknown) =
   try {
     let destination = path.dirname(filePath);
     if (mode === 'choose') {
-      const choice = await dialog.showOpenDialog(window!, { title: tr('选择解压位置'), buttonLabel: tr('解压到此处'), defaultPath: destination, properties: ['openDirectory', 'createDirectory'] });
+      const choice = await dialog.showOpenDialog(currentWindow()!, { title: tr('选择解压位置'), buttonLabel: tr('解压到此处'), defaultPath: destination, properties: ['openDirectory', 'createDirectory'] });
       if (choice.canceled || !choice.filePaths.length) return null;
       destination = choice.filePaths[0];
     }
@@ -267,7 +269,7 @@ ipc('open-with', async (inputs: unknown, editor?: unknown) => {
     await promisify(execFile)('/usr/bin/open', ['-n', '-b', 'com.apple.TextEdit', ...paths, '--args', '-IgnoreHTML', 'YES', '-IgnoreRichText', 'YES']);
     return true;
   }
-  const choice = await dialog.showOpenDialog(window!, {
+  const choice = await dialog.showOpenDialog(currentWindow()!, {
     title: tr('选择打开方式'),
     message: paths.length === 1 ? tr('选择用于打开“{0}”的应用', path.basename(paths[0])) : tr('选择用于打开这 {0} 个文件的应用', paths.length),
     buttonLabel: tr('用此应用打开'),
@@ -291,10 +293,10 @@ ipc('open-terminal', async (input: string) => {
   // Terminal opens a new session at this directory without Automation access.
   await promisify(execFile)('/usr/bin/open', ['-b', 'com.apple.Terminal', directory]);
 });
-ipc('share', (inputs: unknown) => new ShareMenu({ filePaths: pathsArg(inputs) }).popup({ window: window! }));
+ipc('share', (inputs: unknown) => new ShareMenu({ filePaths: pathsArg(inputs) }).popup({ window: currentWindow()! }));
 ipc('quick-look', (input: string) => {
   const filePath = absolute(input);
-  if (process.platform === 'darwin') window?.previewFile(filePath);
+  if (process.platform === 'darwin') currentWindow()?.previewFile(filePath);
   else shell.openPath(filePath);
 });
 ipc('icon', (input: string, pixels = 64) => fileIcons.get(absolute(input), typeof pixels === 'number' && Number.isFinite(pixels) ? Math.min(512, Math.max(32, pixels)) : 64));
@@ -355,29 +357,48 @@ ipc('history', () => history.label ? tr(history.label) : null);
 ipc('undo', () => history.undo(moveNoReplace, input => moveToSystemTrash(input)));
 ipc('copy-text', (value: string) => clipboard.writeText(String(value)));
 ipc('choose-folder', async () => {
-  const result = await dialog.showOpenDialog(window!, { title: tr('选择要打开的文件夹'), properties: ['openDirectory'] });
+  const result = await dialog.showOpenDialog(currentWindow()!, { title: tr('选择要打开的文件夹'), properties: ['openDirectory'] });
   return result.canceled ? null : result.filePaths[0];
 });
 ipc('watch', (input: string | null) => {
-  watcher?.close(); watcher = undefined;
-  clearTimeout(watchTimer);
+  const owner = currentWindow()!;
+  const state = windows.get(owner)!;
+  state.watcher?.close(); state.watcher = undefined;
+  clearTimeout(state.watchTimer);
   if (!input) return;
   try {
-    watcher = watch(absolute(input), () => {
-      clearTimeout(watchTimer);
-      watchTimer = setTimeout(() => window?.webContents.send('directory-changed'), 220);
+    state.watcher = watch(absolute(input), () => {
+      clearTimeout(state.watchTimer);
+      state.watchTimer = setTimeout(() => { if (!owner.isDestroyed()) owner.webContents.send('directory-changed'); }, 220);
     });
-    watcher.on('error', () => { watcher?.close(); watcher = undefined; });
+    state.watcher.on('error', () => { state.watcher?.close(); state.watcher = undefined; });
   } catch { /* Explicit refresh remains available for restricted volumes. */ }
 });
+ipc('window-ready', () => windows.get(currentWindow()!)?.ready?.());
+ipc('detach-tab', async (input: TabState, point: { x: number; y: number }, single: boolean) => {
+  const validLocation = (value: unknown) => typeof value === 'string' && value.length <= 32768 && !value.includes('\0') && (value === 'computer' || value === 'trash' || value.startsWith('/') || value.startsWith('trash:/'));
+  if (!input || !Array.isArray(input.history) || !input.history.length || input.history.length > 10000 || !input.history.every(validLocation) || !Number.isInteger(input.index) || input.index < 0 || input.index >= input.history.length || input.location !== input.history[input.index] || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || typeof single !== 'boolean') throw new Error(tr('无效的标签页。'));
+  const owner = currentWindow()!;
+  const area = screen.getDisplayNearestPoint({ x: Math.round(point.x), y: Math.round(point.y) }).workArea;
+  const x = Math.round(Math.max(area.x, Math.min(point.x - 160, area.x + area.width - 800)));
+  const y = Math.round(Math.max(area.y, Math.min(point.y - 24, area.y + area.height - 100)));
+  if (single) { owner.setPosition(x, y); return; }
+  const target = createWindow({ location: input.location, history: [...input.history], index: input.index }, { x, y });
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => { if (!target.isDestroyed()) target.destroy(); reject(new Error(tr('无法打开新窗口，原标签页已保留。'))); }, 15000);
+    windows.get(target)!.ready = () => { clearTimeout(timer); resolve(); };
+    target.once('closed', () => { clearTimeout(timer); reject(new Error(tr('新窗口已关闭，原标签页已保留。'))); });
+  });
+});
 
-function createWindow() {
-  window = new BrowserWindow({
-    width: 1260, height: 820, minWidth: 800, minHeight: 530, title: tr('文件资源管理器'),
+function createWindow(initialTab?: TabState, position?: { x: number; y: number }) {
+  const window = new BrowserWindow({
+    ...position, width: 1260, height: 820, minWidth: 800, minHeight: 530, title: tr('文件资源管理器'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff', titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 },
     show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false },
   });
+  windows.set(window, { initialTab });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -396,11 +417,12 @@ function createWindow() {
   if (isDev) window.loadURL('http://127.0.0.1:5173/');
   else window.loadFile(path.join(__dirname, '../dist/index.html'));
   window.on('close', event => { if (extracting) event.preventDefault(); });
-  window.on('focus', () => { const before = currentLanguage; const next = languageState(); if (next.locale !== before) { currentLanguage = next.locale; buildMenu(); window?.webContents.send('language-changed', next); } });
-  window.on('closed', () => { window = null; watcher?.close(); searchController?.abort(); });
+  window.on('focus', () => { const before = currentLanguage; const next = languageState(); if (next.locale !== before) { currentLanguage = next.locale; buildMenu(); for (const target of windows.keys()) target.webContents.send('language-changed', next); } });
+  window.on('closed', () => { const state = windows.get(window); state?.watcher?.close(); state?.searchController?.abort(); clearTimeout(state?.watchTimer); windows.delete(window); });
+  return window;
 }
 const action = (name: string) => async () => {
-  const contents = window?.webContents;
+  const contents = currentWindow()?.webContents;
   if (!contents || contents.isDestroyed()) return;
   const edits = { copy: () => contents.copy(), cut: () => contents.cut(), paste: () => contents.paste(), 'select-all': () => contents.selectAll(), undo: () => contents.undo() };
   if (name in edits) {
@@ -426,7 +448,7 @@ app.whenReady().then(async () => {
     const saved = JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'appearance.json'), 'utf8'));
     if (isThemeMode(saved.theme)) nativeTheme.themeSource = saved.theme;
   } catch { /* Keep the existing light appearance when no valid preference exists. */ }
-  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff'));
+  nativeTheme.on('updated', () => { for (const window of windows.keys()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff'); });
   currentLanguage = (await loadLanguage()).locale;
   buildMenu();
   readyForOpen = true;
@@ -434,6 +456,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     const gestures = require(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/scroll-gesture.node')) as { start(callback: (timestamp: number) => void): void };
     gestures.start(timestamp => {
+      const window = BrowserWindow.getFocusedWindow();
       if (window && !window.isDestroyed()) window.webContents.send('scroll-gesture-start', timestamp);
     });
   }

@@ -386,5 +386,8 @@
   "实际解压内容超过 20 GB 限制。": "Extracted data exceeded the 20 GB limit.",
   "文件解压失败，数据已损坏或需要密码。": "Extraction failed. The data is damaged or requires a password.",
   "压缩包读取失败，可能已损坏或需要密码。": "Cannot read the archive. It may be damaged or require a password.",
-  "文件已不存在": "The file no longer exists"
+  "文件已不存在": "The file no longer exists",
+  "无效的标签页。": "Invalid tab.",
+  "无法打开新窗口，原标签页已保留。": "Could not open the new window. The original tab was kept.",
+  "新窗口已关闭，原标签页已保留。": "The new window was closed. The original tab was kept."
 }
