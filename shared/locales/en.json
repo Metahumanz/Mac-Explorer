@@ -389,5 +389,6 @@
   "文件已不存在": "The file no longer exists",
   "无效的标签页。": "Invalid tab.",
   "无法打开新窗口，原标签页已保留。": "Could not open the new window. The original tab was kept.",
-  "新窗口已关闭，原标签页已保留。": "The new window was closed. The original tab was kept."
+  "新窗口已关闭，原标签页已保留。": "The new window was closed. The original tab was kept.",
+  "新建窗口": "New window"
 }

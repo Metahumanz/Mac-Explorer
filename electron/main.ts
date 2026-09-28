@@ -20,8 +20,9 @@ import type { TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Previe
 let currentLanguage = 'zh-CN';
 // Preserve the requesting window across awaits, even when focus changes.
 const requestWindow = new AsyncLocalStorage<BrowserWindow>();
-const windows = new Map<BrowserWindow, { initialTab?: TabState; watcher?: FSWatcher; watchTimer?: NodeJS.Timeout; searchController?: AbortController; ready?: () => void }>();
-const currentWindow = () => requestWindow.getStore() || BrowserWindow.getFocusedWindow() || windows.keys().next().value;
+const windows = new Map<BrowserWindow, { initialTab?: TabState; watcher?: FSWatcher; watchTimer?: NodeJS.Timeout; searchController?: AbortController; ready?: () => void; rendererReady?: boolean; pendingTabs?: number }>();
+let lastActiveWindow: BrowserWindow | undefined;
+const currentWindow = () => requestWindow.getStore() || BrowserWindow.getFocusedWindow() || lastActiveWindow || windows.keys().next().value;
 const fileIcons = new FileIcons(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/file-icon'));
 const history = new FileHistory();
 const isDev = process.env.EXPLORER_DEV === '1';
@@ -374,7 +375,14 @@ ipc('watch', (input: string | null) => {
     state.watcher.on('error', () => { state.watcher?.close(); state.watcher = undefined; });
   } catch { /* Explicit refresh remains available for restricted volumes. */ }
 });
-ipc('window-ready', () => windows.get(currentWindow()!)?.ready?.());
+ipc('window-ready', () => {
+  const owner = currentWindow()!;
+  const state = windows.get(owner)!;
+  state.rendererReady = true;
+  for (let remaining = state.pendingTabs || 0; remaining > 0; remaining--) owner.webContents.send('action', 'new-tab');
+  state.pendingTabs = 0;
+  state.ready?.();
+});
 ipc('detach-tab', async (input: TabState, point: { x: number; y: number }, single: boolean) => {
   const validLocation = (value: unknown) => typeof value === 'string' && value.length <= 32768 && !value.includes('\0') && (value === 'computer' || value === 'trash' || value.startsWith('/') || value.startsWith('trash:/'));
   if (!input || !Array.isArray(input.history) || !input.history.length || input.history.length > 10000 || !input.history.every(validLocation) || !Number.isInteger(input.index) || input.index < 0 || input.index >= input.history.length || input.location !== input.history[input.index] || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || typeof single !== 'boolean') throw new Error(tr('无效的标签页。'));
@@ -417,8 +425,8 @@ function createWindow(initialTab?: TabState, position?: { x: number; y: number }
   if (isDev) window.loadURL('http://127.0.0.1:5173/');
   else window.loadFile(path.join(__dirname, '../dist/index.html'));
   window.on('close', event => { if (extracting) event.preventDefault(); });
-  window.on('focus', () => { const before = currentLanguage; const next = languageState(); if (next.locale !== before) { currentLanguage = next.locale; buildMenu(); for (const target of windows.keys()) target.webContents.send('language-changed', next); } });
-  window.on('closed', () => { const state = windows.get(window); state?.watcher?.close(); state?.searchController?.abort(); clearTimeout(state?.watchTimer); windows.delete(window); });
+  window.on('focus', () => { lastActiveWindow = window; const before = currentLanguage; const next = languageState(); if (next.locale !== before) { currentLanguage = next.locale; buildMenu(); for (const target of windows.keys()) target.webContents.send('language-changed', next); } });
+  window.on('closed', () => { const state = windows.get(window); state?.watcher?.close(); state?.searchController?.abort(); clearTimeout(state?.watchTimer); windows.delete(window); if (lastActiveWindow === window) lastActiveWindow = undefined; });
   return window;
 }
 const action = (name: string) => async () => {
@@ -433,6 +441,18 @@ const action = (name: string) => async () => {
   contents.send('action', name);
 };
 function buildMenu() {
+  if (process.platform === 'darwin') app.dock?.setMenu(Menu.buildFromTemplate([
+    { label: tr('新建窗口'), click: () => { const home = testRoot || os.homedir(); createWindow({ location: home, history: [home], index: 0 }); } },
+    { label: tr('新建标签页'), click: () => {
+      const owner = currentWindow();
+      if (!owner) { const home = testRoot || os.homedir(); createWindow({ location: home, history: [home], index: 0 }); return; }
+      if (owner.isMinimized()) owner.restore();
+      owner.show(); owner.focus();
+      const state = windows.get(owner)!;
+      if (state.rendererReady) owner.webContents.send('action', 'new-tab');
+      else state.pendingTabs = (state.pendingTabs || 0) + 1;
+    } },
+  ]));
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Mac Explorer', submenu: [{ role: 'about', label: tr('关于 Mac Explorer') }, { type: 'separator' }, { role: 'hide', label: tr('隐藏') }, { role: 'quit', label: tr('退出') }] },
     { label: tr('文件'), submenu: [{ label: tr('新建标签页'), accelerator: 'Command+T', click: action('new-tab') }, { label: tr('打开文件夹…'), click: action('choose-folder') }, { label: tr('新建文件夹'), accelerator: 'Command+Shift+N', click: action('new-folder') }, { type: 'separator' }, { label: tr('关闭标签页'), accelerator: 'Command+W', click: action('close-tab') }, { role: 'close', label: tr('关闭窗口'), accelerator: 'Command+Shift+W' }] },
