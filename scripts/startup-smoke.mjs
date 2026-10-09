@@ -35,8 +35,8 @@ try {
   await page.keyboard.press('Meta+w'); await page.getByText('此文件夹为空', { exact: true }).waitFor();
   await page.keyboard.press('Meta+t'); await personal.waitFor();
   await page.keyboard.press('Meta+w'); await page.getByText('此文件夹为空', { exact: true }).waitFor();
-  await page.keyboard.press('Meta+w'); await personal.waitFor();
-  assert.equal(await page.getByRole('tab').count(), 1);
   await page.screenshot({ path: 'artifacts/personal-folder-startup-fixture.png' });
-  console.log('PASS: personal-folder startup; migrated legacy Home tabs; preserved directories/pins; toolbar and Command+T; final-tab fallback; malformed saved state.');
+  const closed = page.waitForEvent('close');
+  await page.keyboard.press('Meta+w').catch(error => { if (!page.isClosed()) throw error; }); await closed;
+  console.log('PASS: personal-folder startup; migrated legacy Home tabs; preserved directories/pins; toolbar and Command+T; final-tab closes window; malformed saved state.');
 } finally { await app.close(); await fs.rm(root, { recursive: true, force: true }); }

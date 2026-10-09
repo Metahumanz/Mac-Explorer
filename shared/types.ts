@@ -53,6 +53,8 @@ export interface ExplorerAPI {
   clipboardSet(paths: string[], cut: boolean): Promise<ClipboardInfo>;
   clipboardGet(): Promise<ClipboardInfo>;
   paste(parent: string, move?: boolean): Promise<OperationResult>;
+  closeWindow(): Promise<void>;
+  moveTo(paths: string[], parent: string): Promise<OperationResult>;
   copyTo(paths: string[], parent: string): Promise<OperationResult>;
   history(): Promise<string | null>;
   undo(): Promise<OperationResult>;

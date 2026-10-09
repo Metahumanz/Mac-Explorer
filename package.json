@@ -1,6 +1,6 @@
 {
   "name": "mac-explorer",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "private": true,
   "description": "A Windows 11-style file explorer for macOS",
   "main": "dist-electron/main.cjs",
@@ -34,7 +34,8 @@
     "test:language": "npm run build && node scripts/language-smoke.mjs",
     "test:eject": "npm run build && node scripts/eject-smoke.mjs",
     "test:trash-browser": "npm run build && node scripts/trash-browser-smoke.mjs && node scripts/trash-operations-smoke.mjs",
-    "test:dock": "npm run build && node scripts/dock-menu-smoke.mjs"
+    "test:dock": "npm run build && node scripts/dock-menu-smoke.mjs",
+    "test:drop-move": "npm run build && node scripts/drop-move-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

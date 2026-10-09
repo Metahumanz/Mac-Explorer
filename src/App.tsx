@@ -337,7 +337,7 @@ export default function App() {
     finally { detaching.current = false; }
   }
   function closeTab(id: string) {
-    if (tabs.length === 1) { navigate(boot?.home || ''); return; }
+    if (tabs.length === 1) { void api.closeWindow().catch(error => setError(errorMessage(error))); return; }
     const index = tabs.findIndex(t => t.id === id);
     if (id === tab.id) { setActiveID(tabs[index === 0 ? 1 : index - 1].id); resetNavigation(); }
     setTabs(previous => previous.filter(t => t.id !== id));
@@ -659,7 +659,7 @@ export default function App() {
     let paths: string[] = [];
     try { paths = JSON.parse(event.dataTransfer.getData('application/x-explorer-paths') || '[]'); } catch { /* External drop. */ }
     if (!paths.length) paths = Array.from(event.dataTransfer.files).map(file => api.filePath(file)).filter(Boolean);
-    if (paths.length) run(tr('正在复制拖入的文件…'), async () => report(await api.copyTo(paths, destination), tr('已复制')));
+    if (paths.length) run(tr('正在移动拖入的文件…'), async () => report(await api.moveTo(paths, destination), tr('已移动')));
   }
 
   const actions = useRef<(action: string) => void>(() => {});
@@ -854,8 +854,8 @@ export default function App() {
       {visible.map((entry, index) => <div key={entry.path} data-path={entry.path} data-index={index} role="option" aria-selected={selected.has(entry.path)} aria-label={entry.name}
         className={`file-row ${selected.has(entry.path) ? 'selected' : ''} ${clipboard.cut && clipboard.paths.includes(entry.path) ? 'cut' : ''} ${dragOver === entry.path ? 'drop-target' : ''} ${entry.hidden ? 'hidden-file' : ''}`}
         onClick={event => select(entry, event)} onDoubleClick={() => openEntry(entry)} onContextMenu={event => contextMenu(event, entry)} draggable
-        onDragStart={event => { const paths = selected.has(entry.path) ? [...selected] : [entry.path]; event.dataTransfer.setData('application/x-explorer-paths', JSON.stringify(paths)); event.dataTransfer.effectAllowed = 'copy'; setPopup(null); }}
-        onDragOver={event => { if (entry.isDirectory && !viewingTrash) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy'; setDragOver(entry.path); } }}
+        onDragStart={event => { const paths = selected.has(entry.path) ? [...selected] : [entry.path]; event.dataTransfer.setData('application/x-explorer-paths', JSON.stringify(paths)); event.dataTransfer.effectAllowed = 'move'; setPopup(null); }}
+        onDragOver={event => { if (entry.isDirectory && !viewingTrash) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDragOver(entry.path); } }}
         onDragLeave={() => setDragOver(null)} onDrop={event => { if (entry.isDirectory) drop(event, entry.path); }}>
         {checkboxes && <input className="item-checkbox" type="checkbox" aria-label={tr('选择 {0}', entry.name)} checked={selected.has(entry.path)} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onChange={event => { const checked = event.target.checked; setSelected(previous => { const next = new Set(previous); if (checked) next.add(entry.path); else next.delete(entry.path); return next; }); selectionAnchor.current = entry.path; }}/>}
         <div className="col-name"><FileGlyph entry={entry} dimension={view === 'icons' ? iconSize : view === 'tiles' ? 48 : view === 'content' ? 56 : 22}/>{editingName?.path === entry.path ? <InlineName key={editingName.path} name={editingName.name} directory={entry.isDirectory} onSave={finishRename} onCancel={() => { setEditingName(null); contentRef.current?.focus(); }}/> : <span className="entry-name" title={entry.name}>{displayName(entry)}{(view === 'tiles' || view === 'content') && <small>{type(entry)}{!entry.isDirectory && ` · ${size(entry.size)}`}</small>}{submittedQuery && <small>{parent(entry.path)}</small>}</span>}</div>
@@ -951,7 +951,7 @@ export default function App() {
         <div ref={contentRef} tabIndex={0} className={`file-content view-${view} ${dragOver === location ? 'drop-target' : ''}`} aria-label={label(location)} aria-busy={loading}
           onPointerDown={startMarquee} onClickCapture={event => { if (suppressMarqueeClick.current) { event.preventDefault(); event.stopPropagation(); suppressMarqueeClick.current = false; } }}
           onContextMenu={event => contextMenu(event)}
-          onDragOver={event => { if (writable) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setDragOver(location); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(null); }} onDrop={event => drop(event, location)}>
+          onDragOver={event => { if (writable) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDragOver(location); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(null); }} onDrop={event => drop(event, location)}>
           {location === PC && !submittedQuery ? <div className="computer-content"><h2><ChevronDown size={14}/>{tr('设备和驱动器（{0}）', boot?.volumes.length || 0)}</h2><div className="drive-grid">{boot?.volumes.map(volume => <button className="drive-card" key={volume.path} onContextMenu={event => menuAt(event, [{ label: tr('打开'), action: () => navigate(volume.path) }, ...(volume.canEject ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])} onDoubleClick={() => navigate(volume.path)} onKeyDown={event => { if (event.key === 'Enter') navigate(volume.path); }}><HardDrive size={49} strokeWidth={1.2}/><span><strong>{volume.name}</strong><span className="storage-track"><span style={{ width: `${Math.max(0, Math.min(100, (1 - volume.free / volume.total) * 100))}%` }}/></span><small>{tr('{0} 可用，共 {1}', size(volume.free), size(volume.total))}</small></span></button>)}</div></div> : loading ? <Loading/> : visible.length ? fileRows() : <div className="empty-state">{submittedQuery ? <Search size={42} strokeWidth={1.2}/> : <FolderGlyph dimension={68}/>}<h2>{error ? tr('无法显示此位置') : submittedQuery ? tr('没有找到匹配的项目') : viewingTrash ? tr('回收站为空') : tr('此文件夹为空')}</h2><p>{error ? tr('检查访问权限，或返回上一个文件夹。') : submittedQuery ? tr('尝试其他名称，或到上一级文件夹中搜索。') : viewingTrash ? tr('这里显示回收站中的项目。') : tr('将文件拖到这里，或使用“新建”创建文件夹。')}</p>{error && <button className="secondary-button" onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button>}</div>}
           {selectionBox && <div className="selection-marquee" style={selectionBox} aria-hidden="true"/>}
         </div>
@@ -1105,7 +1105,7 @@ function NavigationTree({ place, location, hidden, navigate, newTab, drop, conte
     return () => { live = false; };
   }, [expanded, place.path, hidden, location]);
   return <div className="tree-node">
-    <div className={`tree-row ${location === place.path ? 'current' : ''} ${over ? 'drop-target' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setOver(true); }} onDragLeave={() => setOver(false)} onDrop={event => { setOver(false); drop(event, place.path); }}>
+    <div className={`tree-row ${location === place.path ? 'current' : ''} ${over ? 'drop-target' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setOver(true); }} onDragLeave={() => setOver(false)} onDrop={event => { setOver(false); drop(event, place.path); }}>
       <button className="tree-toggle" style={{ left: 1 + level * 12 }} aria-label={`${expanded ? tr('折叠') : tr('展开')} ${place.name}`} aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{loading ? <Loader2 size={11} className="spinning"/> : <ChevronRight size={11}/>}</button>
       <button className={`nav-item ${location === place.path ? 'current' : ''}`} style={{ paddingLeft: 24 + level * 12, paddingRight: eject ? 36 : undefined }} onClick={() => navigate(place.path)} onAuxClick={event => { if (event.button === 1) newTab(place.path); }} onContextMenu={event => context(event, place)}>
         {place.icon === 'folder' ? <FolderGlyph dimension={20}/> : <PlaceIcon icon={place.icon}/>}<span>{place.name}</span>{pinned && <Pin size={12} className="pin-mark"/>}

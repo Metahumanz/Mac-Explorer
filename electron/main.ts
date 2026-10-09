@@ -354,6 +354,13 @@ ipc('copy-to', async (inputs: unknown, parent: string) => {
   const result = await transferEntries(pathsArg(inputs), absolute(parent), false);
   await history.record('复制', result.changes || []); return result;
 });
+ipc('move-to', async (inputs: unknown, parent: string) => {
+  const sources = pathsArg(inputs);
+  sources.forEach(protect);
+  const result = await transferEntries(sources, absolute(parent), true);
+  await history.record('移动', result.changes || []); return result;
+});
+ipc('close-window', () => currentWindow()?.close());
 ipc('history', () => history.label ? tr(history.label) : null);
 ipc('undo', () => history.undo(moveNoReplace, input => moveToSystemTrash(input)));
 ipc('copy-text', (value: string) => clipboard.writeText(String(value)));
