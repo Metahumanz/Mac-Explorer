@@ -171,6 +171,7 @@ export default function App() {
   const [editingName, setEditingName] = useState<{ path: string; name: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const tabHover = useRef<{ id: string; timer: number } | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -876,7 +877,24 @@ export default function App() {
     <header className="tab-strip">
       <div className="traffic-light-space"/>
       <div className="tabs" role="tablist" aria-label={tr('文件夹标签页')}>
-        {tabs.map(t => <div key={t.id} className={`tab ${t.id === tab.id ? 'current' : ''}`}>
+        {tabs.map(t => <div key={t.id} className={`tab ${t.id === tab.id ? 'current' : ''} ${dragOver === 'tab:' + t.id ? 'drop-target' : ''}`}
+          onDragOver={event => {
+            if (isVirtual(t.location)) return;
+            event.preventDefault(); event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
+            setDragOver('tab:' + t.id);
+            // Hovering over a tab during a drag switches to it, like browser tabs do.
+            if (tabHover.current?.id !== t.id && t.id !== tab.id) {
+              clearTimeout(tabHover.current?.timer);
+              tabHover.current = { id: t.id, timer: window.setTimeout(() => { tabHover.current = null; setActiveID(t.id); resetNavigation(); }, 600) };
+            }
+          }}
+          onDragLeave={event => {
+            if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+            if (tabHover.current?.id === t.id) { clearTimeout(tabHover.current.timer); tabHover.current = null; }
+            setDragOver(null);
+          }}
+          onDrop={event => { if (tabHover.current?.id === t.id) { clearTimeout(tabHover.current.timer); tabHover.current = null; } drop(event, t.location); }}>
           <button role="tab" aria-selected={t.id === tab.id} className="tab-label" onPointerDown={event => startTabDrag(event, t.id)} onPointerMove={moveTabDrag} onPointerUp={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onPointerCancel={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onKeyDown={event => { if (event.key === 'Escape') { tabDrag.current = null; event.currentTarget.style.transform = ''; } }} onClick={() => { if (suppressTabClick.current) { suppressTabClick.current = false; return; } setActiveID(t.id); resetNavigation(); }} onAuxClick={event => { if (event.button === 1) closeTab(t.id); }}>
             {isVirtual(t.location) ? <PlaceIcon icon={isTrashLocation(t.location) ? 'trash' : t.location} size={16}/> : <FolderGlyph dimension={21}/>}<span>{label(t.location)}</span>
           </button>
@@ -1133,11 +1151,14 @@ function NavigationTree({ place, location, hidden, navigate, newTab, drop, conte
 }
 function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
   const [skipTrashConfirmation, setSkipTrashConfirmation] = useState(false);
-  const dialogRef = useRef<HTMLDialogElement>(null); const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null); const inputRef = useRef<HTMLInputElement>(null); const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     dialogRef.current?.showModal();
     const input = inputRef.current;
+    // React's autoFocus runs while the dialog is still inert, so focus the confirm button
+    // after showModal() — otherwise the dialog focuses the close button and Return dismisses.
     if (input) { input.focus(); const dot = value.lastIndexOf('.'); input.setSelectionRange(0, modal.kind === 'rename' && dot > 0 ? dot : value.length); }
+    else if (modal.kind === 'trash') confirmRef.current?.focus();
   }, []);
   const title = modal.kind === 'trash' ? tr('移到回收站') : modal.kind === 'rename' ? tr('重命名') : modal.kind === 'folder' ? tr('新建文件夹') : modal.kind === 'file' ? tr('新建文本文档') : tr('键盘快捷键');
   return <dialog ref={dialogRef} className={`modal ${modal.kind === 'shortcuts' ? 'shortcut-modal' : ''}`} aria-labelledby="modal-title" onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}>
@@ -1146,7 +1167,7 @@ function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }:
 [tr('后退 / 前进 / 上一级'), tr('⌘[ / ⌘] / Backspace 或 ⌘↑')], [tr('前往文件夹 / 搜索'), '⇧⌘G / ⌘F'], [tr('新建 / 关闭标签页'), '⌘T / ⌘W'], [tr('切换标签页'), '⌃Tab / ⌃⇧Tab'], [tr('图标 / 详细信息视图'), '⌘1 / ⌘2'], [tr('预览窗格 / 隐藏项目'), '⇧⌘P / ⇧⌘.'], [tr('详细信息窗格'), '⌘I']].map(([name, keys]) => <div key={name}><span>{name}</span><kbd>{keys}</kbd></div>)}</div><p className="shortcut-note">{tr('移动文件：先 ⌘C，再到目标文件夹按 ⌥⌘V。保留 Ctrl+C / X / V、F2、F5 等兼容快捷键；输入框内沿用文本编辑快捷键。')}</p></> : modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
       {modal.kind === 'trash' && <label className="trash-confirmation-preference"><input type="checkbox" checked={skipTrashConfirmation} disabled={busy} onChange={event => setSkipTrashConfirmation(event.target.checked)}/>{tr('不再显示此提示')}</label>}
       {error && <p className="modal-error" role="alert">{error}</p>}
-      <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{modal.kind === 'shortcuts' ? tr('知道了') : tr('取消')}</button>{modal.kind !== 'shortcuts' && <button type="submit" className="primary-button" disabled={busy || modal.kind !== 'trash' && !value.trim()}>{busy ? tr('正在处理…') : modal.kind === 'trash' ? tr('移到回收站') : tr('确定')}</button>}</div>
+      <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{modal.kind === 'shortcuts' ? tr('知道了') : tr('取消')}</button>{modal.kind !== 'shortcuts' && <button type="submit" ref={confirmRef} className="primary-button" disabled={busy || modal.kind !== 'trash' && !value.trim()}>{busy ? tr('正在处理…') : modal.kind === 'trash' ? tr('移到回收站') : tr('确定')}</button>}</div>
     </form>
   </dialog>;
 }

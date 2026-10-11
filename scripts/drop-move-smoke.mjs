@@ -42,5 +42,18 @@ try {
   assert.equal(page.isClosed(), false);
   await page.getByRole('button', { name: '新建标签页 (⌘T)', exact: true }).click();
   assert.equal(await page.getByRole('tab').count(), 2);
-  console.log('PASS: row/sidebar/background drops move, undo restores, collisions preserve both files, closing last tab closes only its window.');
+  // Hover an inactive tab during a drag: it should switch to that tab, and dropping onto
+  // another tab moves the file into that tab's folder.
+  await page.getByRole('button', { name: '桌面', exact: true }).click();
+  const docsTab = page.getByRole('tab', { name: '文档', exact: true });
+  const desktopTab = page.getByRole('tab', { name: '桌面', exact: true });
+  const hover = await page.evaluateHandle(() => new DataTransfer());
+  await docsTab.dispatchEvent('dragover', { dataTransfer: hover });
+  await page.waitForFunction(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === '文档', undefined, { timeout: 5000 });
+  const tabTransfer = await page.evaluateHandle(input => { const data = new DataTransfer(); data.setData('application/x-explorer-paths', JSON.stringify([input])); return data; }, path.join(root, 'Documents/move.txt'));
+  await desktopTab.dispatchEvent('drop', { dataTransfer: tabTransfer });
+  await row('move.txt').waitFor({ state: 'detached' });
+  assert.equal(await fs.readFile(path.join(root, 'Desktop/move.txt'), 'utf8'), 'source');
+  await assert.rejects(fs.access(path.join(root, 'Documents/move.txt')));
+  console.log('PASS: row/sidebar/background/tab drops move, hover switches tabs, undo restores, collisions preserve both files, closing last tab closes only its window.');
 } finally { await app.close(); await fs.rm(root, { recursive: true, force: true }); }

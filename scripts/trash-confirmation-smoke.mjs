@@ -32,6 +32,12 @@ try {
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   assert.equal(await page.evaluate(() => localStorage.getItem('skipTrashConfirmation')), null);
   assert.equal(await app.evaluate(() => globalThis.trashCalls.length), 0);
+  assert.equal(await app.evaluate(() => globalThis.trashCalls.length), 0);
+  // Return inside the dialog must confirm the deletion, not dismiss it.
+  await open();
+  await page.keyboard.press('Enter');
+  await dialog.waitFor({ state: 'hidden' });
+  assert.equal(await app.evaluate(() => globalThis.trashCalls.length), 1);
   await open(); assert.equal(await preference.isChecked(), false);
   await preference.check();
   await app.evaluate(() => { globalThis.failTrash = true; });
@@ -47,7 +53,7 @@ try {
   await page.keyboard.press('Meta+Backspace');
   await page.waitForFunction(() => document.querySelector('.status-feedback')?.textContent.includes('已移到回收站'));
   assert.equal(await dialog.count(), 0);
-  assert.equal(await app.evaluate(() => globalThis.trashCalls.length), 2);
+  assert.equal(await app.evaluate(() => globalThis.trashCalls.length), 3);
   assert.equal(await fs.readFile(path.join(root, 'Documents', 'example.txt'), 'utf8'), 'Preserve this fixture');
   console.log('PASS: cancel does not persist; failure remains retryable; confirm persists; shortcut skips after reload; fixture preserved.');
 } finally { await app.close(); await fs.rm(root, { recursive: true, force: true }); }
