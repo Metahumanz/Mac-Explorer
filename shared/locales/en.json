@@ -391,5 +391,14 @@
   "无法打开新窗口，原标签页已保留。": "Could not open the new window. The original tab was kept.",
   "新窗口已关闭，原标签页已保留。": "The new window was closed. The original tab was kept.",
   "新建窗口": "New window",
-  "正在移动拖入的文件…": "Moving dropped files…"
+  "正在移动拖入的文件…": "Moving dropped files…",
+  "唤醒 Mac Explorer（全局）": "Raise Mac Explorer (global)",
+  "默认应用": "Default app",
+  "登录时自动启动": "Open at login",
+  "接管桌面（隐藏访达桌面图标）": "Take over the desktop (hide Finder desktop icons)",
+  "登录项需要把应用装到“应用程序”文件夹": "Login items require the app to live in the Applications folder",
+  "用 Mac Explorer 打开以下文件": "Open these files with Mac Explorer",
+  "正在更新默认应用设置…": "Updating default app settings…",
+  "无效的默认应用设置。": "Invalid default app setting.",
+  "无法设置登录项。": "The login item could not be updated."
 }

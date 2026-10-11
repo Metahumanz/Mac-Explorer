@@ -5,12 +5,12 @@ import {
   ClipboardPaste, Copy, Download, ExternalLink, FilePlus2, FileText, Film, FolderOpen,
   FolderPlus, HardDrive, Image, Info, Keyboard, LayoutGrid, List, Loader2,
   PanelLeft, Eye, FileType, SquareCheck, ChevronsDownUp,
-  Languages, Monitor, MoreHorizontal, Music2, PanelRight, Pin, Plus, RotateCw, Scissors,
+  Languages, Monitor, MoreHorizontal, Music2, PanelRight, Pin, Plus, RotateCw, Scissors, AppWindow,
   Search, Share2, Star, Sun, Moon, SunMoon, Terminal, TextCursorInput, Trash2, Undo2, X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { archiveFolderName, isArchive } from '../shared/archives';
-import type { ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import type { DefaultAppKey, DefaultAppState, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, HandlerKind, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 
 const api = window.explorer;
 const PC = 'computer';
@@ -87,8 +87,15 @@ function ToolButton({ label, children, onClick, disabled = false, active = false
 }
 
 export default function App() {
+  // Built per render so the labels follow the active locale.
+  const handlerLabels: Record<HandlerKind, string> = { archive: tr('ZIP 压缩文件'), pdf: tr('PDF 文档'), image: tr('PNG 图像'), text: tr('文本文档') };
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [language, setLanguage] = useState<LanguageState>({ mode: 'zh-CN', locale: 'zh-CN' });
+  const [defaultApp, setDefaultApp] = useState<DefaultAppState | null>(null);
+  useEffect(() => { api.defaultAppStatus().then(setDefaultApp).catch(() => setDefaultApp(null)); }, []);
+  async function changeDefaultApp(key: DefaultAppKey, value: boolean) {
+    await run(tr('正在更新默认应用设置…'), async () => setDefaultApp(await api.setDefaultApp(key, value)));
+  }
   function applyLanguage(state: LanguageState) {
     setLocale(state.locale); setLanguage(state);
     document.documentElement.lang = state.locale; document.title = tr('文件资源管理器');
@@ -922,6 +929,15 @@ export default function App() {
         { label: tr('语言'), icon: <Languages/>, children: [
           ...([{ mode: 'zh-CN', label: '简体中文' }, { mode: 'zh-TW', label: '繁體中文' }, { mode: 'en', label: 'English' }, { mode: 'system', label: tr('跟随系统') }] as const).map(option => ({ label: option.label, radio: true, checked: language.mode === option.mode, disabled: !!operation, action: () => void changeLanguage(option.mode) })),
         ] },
+        { label: tr('默认应用'), icon: <AppWindow/>, divider: true, children: [
+          { label: tr('登录时自动启动'), checked: !!defaultApp?.login, disabled: !defaultApp?.installed, action: () => void changeDefaultApp('login', !defaultApp?.login) },
+          { label: tr('接管桌面（隐藏访达桌面图标）'), checked: !!defaultApp?.desktop, action: () => void changeDefaultApp('desktop', !defaultApp?.desktop) },
+          ...(defaultApp?.installed ? [] : [{ label: tr('登录项需要把应用装到“应用程序”文件夹'), disabled: true }]),
+          { label: tr('用 Mac Explorer 打开以下文件'), divider: true, children: (Object.keys(handlerLabels) as HandlerKind[]).map(kind => ({
+            label: handlerLabels[kind], checked: defaultApp?.handlers[kind] === defaultApp?.self,
+            action: () => void changeDefaultApp(kind, defaultApp?.handlers[kind] !== defaultApp?.self),
+          })) },
+        ] },
         { label: tr('键盘快捷键'), icon: <Keyboard/>, divider: true, action: () => showModal({ kind: 'shortcuts' }) },
       ])}><MoreHorizontal/></ToolButton>
       <div className="command-spacer"/>
@@ -1126,7 +1142,8 @@ function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }:
   const title = modal.kind === 'trash' ? tr('移到回收站') : modal.kind === 'rename' ? tr('重命名') : modal.kind === 'folder' ? tr('新建文件夹') : modal.kind === 'file' ? tr('新建文本文档') : tr('键盘快捷键');
   return <dialog ref={dialogRef} className={`modal ${modal.kind === 'shortcuts' ? 'shortcut-modal' : ''}`} aria-labelledby="modal-title" onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}>
     <form onSubmit={event => { event.preventDefault(); onSubmit(modal.kind === 'trash' && skipTrashConfirmation); }}><div className="modal-heading"><h2 id="modal-title">{title}</h2><button type="button" aria-label={tr('关闭对话框')} onClick={onClose} disabled={busy}><X size={18}/></button></div>
-      {modal.kind === 'shortcuts' ? <><p className="shortcut-note">{tr('文件操作遵循 macOS 访达的常用快捷键。')}</p><div className="shortcut-list">{[[tr('重命名'), 'Return'], [tr('打开项目'), '⌘O / ⌘↓'], [tr('复制 / 粘贴 / 撤销'), '⌘C / ⌘V / ⌘Z'], [tr('移动已复制的文件'), '⌥⌘V'], [tr('创建副本'), '⌘D'], [tr('全选 / 新建文件夹'), '⌘A / ⇧⌘N'], [tr('移到回收站'), '⌘⌫'], [tr('快速查看'), 'Space / ⌘Y'], [tr('后退 / 前进 / 上一级'), tr('⌘[ / ⌘] / Backspace 或 ⌘↑')], [tr('前往文件夹 / 搜索'), '⇧⌘G / ⌘F'], [tr('新建 / 关闭标签页'), '⌘T / ⌘W'], [tr('切换标签页'), '⌃Tab / ⌃⇧Tab'], [tr('图标 / 详细信息视图'), '⌘1 / ⌘2'], [tr('预览窗格 / 隐藏项目'), '⇧⌘P / ⇧⌘.'], [tr('详细信息窗格'), '⌘I']].map(([name, keys]) => <div key={name}><span>{name}</span><kbd>{keys}</kbd></div>)}</div><p className="shortcut-note">{tr('移动文件：先 ⌘C，再到目标文件夹按 ⌥⌘V。保留 Ctrl+C / X / V、F2、F5 等兼容快捷键；输入框内沿用文本编辑快捷键。')}</p></> : modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
+      {modal.kind === 'shortcuts' ? <><p className="shortcut-note">{tr('文件操作遵循 macOS 访达的常用快捷键。')}</p><div className="shortcut-list">{[[tr('重命名'), 'Return'], [tr('打开项目'), '⌘O / ⌘↓'], [tr('复制 / 粘贴 / 撤销'), '⌘C / ⌘V / ⌘Z'], [tr('移动已复制的文件'), '⌥⌘V'], [tr('创建副本'), '⌘D'], [tr('全选 / 新建文件夹'), '⌘A / ⇧⌘N'], [tr('移到回收站'), '⌘⌫'], [tr('快速查看'), 'Space / ⌘Y'], [tr('唤醒 Mac Explorer（全局）'), '⌘E'],
+[tr('后退 / 前进 / 上一级'), tr('⌘[ / ⌘] / Backspace 或 ⌘↑')], [tr('前往文件夹 / 搜索'), '⇧⌘G / ⌘F'], [tr('新建 / 关闭标签页'), '⌘T / ⌘W'], [tr('切换标签页'), '⌃Tab / ⌃⇧Tab'], [tr('图标 / 详细信息视图'), '⌘1 / ⌘2'], [tr('预览窗格 / 隐藏项目'), '⇧⌘P / ⇧⌘.'], [tr('详细信息窗格'), '⌘I']].map(([name, keys]) => <div key={name}><span>{name}</span><kbd>{keys}</kbd></div>)}</div><p className="shortcut-note">{tr('移动文件：先 ⌘C，再到目标文件夹按 ⌥⌘V。保留 Ctrl+C / X / V、F2、F5 等兼容快捷键；输入框内沿用文本编辑快捷键。')}</p></> : modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
       {modal.kind === 'trash' && <label className="trash-confirmation-preference"><input type="checkbox" checked={skipTrashConfirmation} disabled={busy} onChange={event => setSkipTrashConfirmation(event.target.checked)}/>{tr('不再显示此提示')}</label>}
       {error && <p className="modal-error" role="alert">{error}</p>}
       <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{modal.kind === 'shortcuts' ? tr('知道了') : tr('取消')}</button>{modal.kind !== 'shortcuts' && <button type="submit" className="primary-button" disabled={busy || modal.kind !== 'trash' && !value.trim()}>{busy ? tr('正在处理…') : modal.kind === 'trash' ? tr('移到回收站') : tr('确定')}</button>}</div>

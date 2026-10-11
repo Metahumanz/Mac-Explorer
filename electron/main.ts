@@ -1,6 +1,6 @@
 import { languageState, loadLanguage, saveLanguage } from './language';
 import { t as tr } from '../shared/i18n';
-import { app, BrowserWindow, ipcMain, shell, clipboard, ClipboardItem, dialog, Menu, nativeTheme, ShareMenu, screen } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, shell, clipboard, ClipboardItem, dialog, Menu, nativeTheme, ShareMenu, screen, type Rectangle } from 'electron';
 import fs from 'node:fs/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { watch, type FSWatcher } from 'node:fs';
@@ -26,6 +26,9 @@ const currentWindow = () => requestWindow.getStore() || BrowserWindow.getFocused
 const fileIcons = new FileIcons(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/file-icon'));
 const history = new FileHistory();
 const isDev = process.env.EXPLORER_DEV === '1';
+const windowStateFile = () => path.join(app.getPath('userData'), 'window-state.json');
+let savedWindowBounds: Rectangle | undefined;
+let rememberTimer: NodeJS.Timeout | undefined;
 const testRoot = process.env.EXPLORER_TEST_ROOT;
 if (testRoot) app.setPath('userData', path.join(testRoot, '.app-data'));
 app.setName('Mac Explorer');
@@ -189,6 +192,65 @@ async function moveToSystemTrash(input: string) {
   catch { throw new Error(tr('文件已移入回收站，但无法保存原位置。请在回收站使用“还原到…”恢复。')); }
 }
 ipc('take-open-paths', () => openPaths.splice(0));
+// ---- 默认应用 / 接管访达 ----
+// macOS 不允许设置「文件夹」的默认打开方式（LSSetDefaultRoleHandlerForContentType 已失效，
+// NSWorkspace 按 UTI 设置一律失败），所以能真正接管的只有这几项：登录时启动、桌面图标、
+// 以及具体的文件类型。前两项让日常使用就是它，第三项是真的改系统默认。
+const HANDLERS = {
+  archive: { type: 'public.zip-archive', extension: 'zip', system: '/System/Applications/Utilities/Archive Utility.app' },
+  pdf: { type: 'com.adobe.pdf', extension: 'pdf', system: '/System/Applications/Preview.app' },
+  image: { type: 'public.png', extension: 'png', system: '/System/Applications/Preview.app' },
+  text: { type: 'public.plain-text', extension: 'txt', system: '/System/Applications/TextEdit.app' },
+} as const;
+type HandlerKind = keyof typeof HANDLERS;
+type DefaultAppKey = 'login' | 'desktop' | HandlerKind;
+interface DefaultAppState { login: boolean; desktop: boolean; handlers: Record<HandlerKind, string | null>; installed: boolean; self: string }
+let defaults: { appURL(): string; bundleID(): string; loginEnabled(): boolean; setLogin(value: boolean): boolean; defaultHandler(type: string): string | null; setDefaultForFile(application: string, file: string): boolean } | undefined;
+const isHandlerKind = (value: unknown): value is HandlerKind => typeof value === 'string' && value in HANDLERS;
+const isDefaultAppKey = (value: unknown): value is DefaultAppKey => value === 'login' || value === 'desktop' || isHandlerKind(value);
+async function finderPreference(name: string) {
+  // Missing keys mean Finder still draws the desktop.
+  try { return (await promisify(execFile)('/usr/bin/defaults', ['read', 'com.apple.finder', name])).stdout.trim() !== '0'; }
+  catch { return true; }
+}
+async function defaultAppState(): Promise<DefaultAppState> {
+  const handlers = {} as Record<HandlerKind, string | null>;
+  for (const [kind, handler] of Object.entries(HANDLERS) as [HandlerKind, typeof HANDLERS[HandlerKind]][]) {
+    handlers[kind] = defaults?.defaultHandler(handler.type) ?? null;
+  }
+  const location = defaults?.appURL() ?? '';
+  return {
+    login: defaults?.loginEnabled() ?? false,
+    desktop: !(await finderPreference('CreateDesktop')),
+    handlers,
+    // Login items only register for an app installed in Applications.
+    installed: /^\/Applications\/.+\.app$/.test(location),
+    self: defaults?.bundleID() ?? '',
+  };
+}
+ipc('default-app-status', () => defaultAppState());
+ipc('default-app-set', async (key: unknown, value: unknown) => {
+  if (!isDefaultAppKey(key) || typeof value !== 'boolean') throw new Error(tr('无效的默认应用设置。'));
+  if (key === 'login') {
+    if (!defaults) throw new Error(tr('无法设置登录项。'));
+    defaults.setLogin(value);
+  } else if (key === 'desktop') {
+    await promisify(execFile)('/usr/bin/defaults', ['write', 'com.apple.finder', 'CreateDesktop', '-bool', value ? 'false' : 'true']);
+    // Finder only redraws the desktop after it restarts.
+    await promisify(execFile)('/usr/bin/killall', ['Finder']).catch(() => undefined);
+  } else {
+    const handler = HANDLERS[key];
+    const file = path.join(os.tmpdir(), `explorer-default-${process.pid}.${handler.extension}`);
+    await fs.writeFile(file, 'Mac Explorer');
+    try {
+      // LaunchServices records the election for the file's type, so a sample file is enough.
+      defaults?.setDefaultForFile(value ? '' : handler.system, file);
+    } finally {
+      await fs.rm(file, { force: true });
+    }
+  }
+  return defaultAppState();
+});
 function isThemeMode(value: unknown): value is ThemeMode { return value === 'light' || value === 'dark' || value === 'system'; }
 ipc('set-theme', async (mode: unknown) => {
   if (!isThemeMode(mode)) throw new Error(tr('无效的外观设置。'));
@@ -406,9 +468,53 @@ ipc('detach-tab', async (input: TabState, point: { x: number; y: number }, singl
   });
 });
 
+// Windows remember their geometry in userData the same way the appearance and language
+// preferences do, so a new window opens where the last one was left.
+function visibleEnough(area: Rectangle, bounds: Rectangle) {
+  const width = Math.min(bounds.x + bounds.width, area.x + area.width) - Math.max(bounds.x, area.x);
+  const height = Math.min(bounds.y + bounds.height, area.y + area.height) - Math.max(bounds.y, area.y);
+  return width >= 120 && height >= 80;
+}
+function usableBounds(saved: Record<string, unknown>): Rectangle | undefined {
+  const values = [saved.x, saved.y, saved.width, saved.height];
+  if (!values.every(value => typeof value === 'number' && Number.isFinite(value))) return undefined;
+  const [x, y, width, height] = values as number[];
+  const bounds = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+  if (bounds.width < 320 || bounds.height < 240) return undefined;
+  // Discard geometry that no longer touches a display: an unplugged monitor would otherwise
+  // reopen every window off screen, with no visible way back.
+  return screen.getAllDisplays().some(display => visibleEnough(display.workArea, bounds)) ? bounds : undefined;
+}
+async function loadWindowBounds() {
+  try {
+    const saved = JSON.parse(await fs.readFile(windowStateFile(), 'utf8')) as Record<string, unknown>;
+    return usableBounds(saved || {});
+  } catch { /* Open at the default size until a window records its geometry. */ }
+}
+async function saveWindowBounds(window: BrowserWindow) {
+  // Minimized and full screen windows report geometry that must not become the next default.
+  if (window.isDestroyed() || window.isMinimized() || window.isFullScreen()) return;
+  const bounds = window.getBounds();
+  savedWindowBounds = bounds;
+  try {
+    const file = windowStateFile();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file + '.tmp', JSON.stringify(bounds), 'utf8');
+    await fs.rename(file + '.tmp', file);
+  } catch { /* Keep the last written geometry when the preference cannot be saved. */ }
+}
+function rememberBounds(window: BrowserWindow) {
+  clearTimeout(rememberTimer);
+  rememberTimer = setTimeout(() => { void saveWindowBounds(window); }, 400);
+}
+
 function createWindow(initialTab?: TabState, position?: { x: number; y: number }) {
+  // A dragged tab states where it lands, so saved geometry applies only to ordinary new windows.
+  const restore = position ? undefined : savedWindowBounds;
   const window = new BrowserWindow({
-    ...position, width: 1260, height: 820, minWidth: 800, minHeight: 530, title: tr('文件资源管理器'),
+    ...position,
+    ...restore,
+    width: restore?.width ?? 1260, height: restore?.height ?? 820, minWidth: 800, minHeight: 530, title: tr('文件资源管理器'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff', titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 },
     show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false },
@@ -432,10 +538,32 @@ function createWindow(initialTab?: TabState, position?: { x: number; y: number }
   if (isDev) window.loadURL('http://127.0.0.1:5173/');
   else window.loadFile(path.join(__dirname, '../dist/index.html'));
   window.on('close', event => { if (extracting) event.preventDefault(); });
+  // Flush on close so quitting right after a drag still keeps the final geometry.
+  window.on('close', () => { void saveWindowBounds(window); });
+  // Resizing and dragging both report live and settled events; programmatic moves can omit the
+  // settled ones, so listen to every variant and let the throttle collapse the duplicates.
+  window.on('resize', () => rememberBounds(window));
+  window.on('resized', () => rememberBounds(window));
+  window.on('move', () => rememberBounds(window));
+  window.on('moved', () => rememberBounds(window));
   window.on('focus', () => { lastActiveWindow = window; const before = currentLanguage; const next = languageState(); if (next.locale !== before) { currentLanguage = next.locale; buildMenu(); for (const target of windows.keys()) target.webContents.send('language-changed', next); } });
   window.on('closed', () => { const state = windows.get(window); state?.watcher?.close(); state?.searchController?.abort(); clearTimeout(state?.watchTimer); windows.delete(window); if (lastActiveWindow === window) lastActiveWindow = undefined; });
   return window;
 }
+// Command+E raises the app from anywhere: it opens a window when none exists, restores a
+// minimized one, and otherwise brings the most recent window to the front.
+const SUMMON_ACCELERATOR = 'Command+E';
+function summon() {
+  const window = currentWindow();
+  if (!window || window.isDestroyed()) createWindow();
+  else {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  }
+  if (process.platform === 'darwin') app.focus({ steal: true });
+}
+
 const action = (name: string) => async () => {
   const contents = currentWindow()?.webContents;
   if (!contents || contents.isDestroyed()) return;
@@ -475,19 +603,26 @@ app.whenReady().then(async () => {
     const saved = JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'appearance.json'), 'utf8'));
     if (isThemeMode(saved.theme)) nativeTheme.themeSource = saved.theme;
   } catch { /* Keep the existing light appearance when no valid preference exists. */ }
+  savedWindowBounds = await loadWindowBounds();
   nativeTheme.on('updated', () => { for (const window of windows.keys()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff'); });
   currentLanguage = (await loadLanguage()).locale;
   buildMenu();
   readyForOpen = true;
   createWindow();
   if (process.platform === 'darwin') {
-    const gestures = require(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/scroll-gesture.node')) as { start(callback: (timestamp: number) => void): void };
+    const gesturePath = path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/scroll-gesture.node');
+    const gestures = require(gesturePath) as { start(callback: (timestamp: number) => void): void };
     gestures.start(timestamp => {
       const window = BrowserWindow.getFocusedWindow();
       if (window && !window.isDestroyed()) window.webContents.send('scroll-gesture-start', timestamp);
     });
+    try {
+      defaults = require(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/defaults.node')) as typeof defaults;
+    } catch { /* The default-app menu simply reports nothing when the addon is missing. */ }
   }
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
+  // Another application may already own the shortcut; then the raise simply stays unavailable.
+  globalShortcut.register(SUMMON_ACCELERATOR, summon);
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || testRoot) app.quit(); });
-app.on('will-quit', () => fileIcons.close());
+app.on('will-quit', () => { globalShortcut.unregisterAll(); fileIcons.close(); });
