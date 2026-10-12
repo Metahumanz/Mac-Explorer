@@ -13,6 +13,7 @@ import { archiveFolderName, isArchive } from '../shared/archives';
 import type { DefaultAppKey, DefaultAppState, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, HandlerKind, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 
 const api = window.explorer;
+const isMac = /Mac/i.test(navigator.platform);
 const PC = 'computer';
 const TRASH = 'trash';
 function isTrashLocation(value: string) { return value === TRASH || value.startsWith('trash:'); }
@@ -601,7 +602,7 @@ export default function App() {
         report({ succeeded: [output], errors: [] }, tr('已压缩'));
         setSelected(new Set([output])); setToast(tr('已创建 {0}', base(output)));
       }) },
-      { label: tr('剪切'), icon: <Scissors/>, shortcut: 'Ctrl+X', divider: true, action: () => copy(true, paths) },
+      { label: tr('剪切'), icon: <Scissors/>, shortcut: isMac ? '⌘X' : 'Ctrl+X', divider: true, action: () => copy(true, paths) },
       { label: tr('复制'), icon: <Copy/>, shortcut: '⌘C', action: () => copy(false, paths) },
       { label: tr('复制文件地址'), icon: <Copy/>, action: () => run(tr('复制地址…'), () => api.copyText(paths.join('\n')), tr('已复制文件地址')) },
       { label: tr('重命名'), icon: <TextCursorInput/>, shortcut: 'Return', disabled: paths.length !== 1, action: () => rename(target) },
@@ -677,7 +678,7 @@ export default function App() {
     if (action === 'new-tab') newTab(); if (action === 'choose-folder') chooseFolder();
     if (action === 'new-folder') create(true); if (action === 'refresh') refreshDirectory();
     if (action === 'hidden') setHidden(v => !v);
-    if (action === 'close-tab') closeTab(tab.id); if (action === 'copy') copy(false);
+    if (action === 'close-tab') closeTab(tab.id); if (action === 'copy') copy(false); if (action === 'cut') copy(true);
     if (action === 'paste') paste(); if (action === 'move-here') paste(true); if (action === 'undo') undo(); if (action === 'select-all') setSelected(new Set(visible.map(e => e.path)));
   };
   useEffect(() => api.onAction(action => actions.current(action)), []);
@@ -701,7 +702,7 @@ export default function App() {
           command = ({ v: () => paste(true), l: () => boot && navigate(join(boot.home, 'Downloads')), s: () => setNavigationPane(v => !v) } as Record<string, () => void>)[key];
         } else if (!event.ctrlKey && !event.altKey && !event.shiftKey) {
           command = ({
-            c: () => copy(false), v: () => paste(), z: undo,
+            c: () => copy(false), x: () => copy(true), v: () => paste(), z: undo,
             a: () => setSelected(new Set(visible.map(e => e.path))),
             t: () => newTab(), w: () => closeTab(tab.id),
             f: () => { searchRef.current?.focus(); searchRef.current?.select(); },
@@ -927,7 +928,7 @@ export default function App() {
     <div className="command-bar">
       <ToolButton label={tr('新建')} disabled={!writable || !!operation} className="text-tool" onClick={event => buttonMenu(event, [{ label: tr('文件夹'), icon: <FolderPlus/>, shortcut: '⇧⌘N', action: () => create(true) }, { label: tr('文本文档'), icon: <FilePlus2/>, action: () => create(false) }])}><Plus className="new-icon"/><span>{tr('新建')}</span><ChevronDown size={12}/></ToolButton>
       <span className="toolbar-separator"/>
-      <ToolButton label={tr('剪切 (Ctrl+X)')} disabled={viewingTrash || !selected.size || !!operation} onClick={() => copy(true)}><Scissors className="scissors-icon"/></ToolButton>
+      <ToolButton label={tr(isMac ? '剪切 (⌘X)' : '剪切 (Ctrl+X)')} disabled={viewingTrash || !selected.size || !!operation} onClick={() => copy(true)}><Scissors className="scissors-icon"/></ToolButton>
       <ToolButton label={tr('复制 (⌘C)')} disabled={!selected.size || !!operation} onClick={() => copy(false)}><Copy className="copy-icon"/></ToolButton>
       <ToolButton label={tr('粘贴 (⌘V)')} disabled={!writable || !clipboard.paths.length || !!operation} onClick={() => paste()}><ClipboardPaste/></ToolButton>
       <ToolButton label={tr('重命名 (Return)')} disabled={viewingTrash || !single || !!operation} onClick={() => rename()}><TextCursorInput className="rename-icon"/></ToolButton>

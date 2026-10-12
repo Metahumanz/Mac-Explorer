@@ -13,7 +13,7 @@ await fs.writeFile(path.join(docs, '.hidden-test'), 'hidden');
 const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   await app.evaluate(async ({ clipboard, ClipboardItem, shell }) => {
-    globalThis.savedClipboard = await Promise.all((await clipboard.read()).map(async item => new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));
+    globalThis.savedClipboard = await Promise.all((await clipboard.read()).filter(item => item.types.length).map(async item => new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));
     globalThis.opened = []; shell.openPath = async p => { globalThis.opened.push(p); return ''; };
   });
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);

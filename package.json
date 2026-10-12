@@ -23,6 +23,7 @@
     "package:release": "node scripts/make-icon.mjs && npm run build && node scripts/release.mjs",
     "test:text-edit": "npm run build && node scripts/text-edit-smoke.mjs",
     "test:shortcuts": "npm run build && node scripts/finder-shortcuts-smoke.mjs",
+    "test:cut": "npm run build && node scripts/cut-shortcut-smoke.mjs",
     "test:swipe": "npm run build && node scripts/swipe-navigation-smoke.mjs",
     "test:startup": "npm run build && node scripts/startup-smoke.mjs",
     "test:selection": "npm run build && node scripts/marquee-smoke.mjs",

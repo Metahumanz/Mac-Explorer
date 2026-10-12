@@ -148,6 +148,7 @@
   "搜索": "Search",
   "新建": "New",
   "剪切 (Ctrl+X)": "Cut (Ctrl+X)",
+  "剪切 (⌘X)": "Cut (⌘X)",
   "复制 (⌘C)": "Copy (⌘C)",
   "粘贴 (⌘V)": "Paste (⌘V)",
   "重命名 (Return)": "Rename (Return)",
