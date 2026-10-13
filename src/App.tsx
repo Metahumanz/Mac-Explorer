@@ -294,6 +294,8 @@ export default function App() {
   }, [loading, entries, revealedPaths]);
   const chosen = visible.filter(e => selected.has(e.path));
   const single = chosen.length === 1 ? chosen[0] : null;
+  // Like Windows: the selected folder, or the current folder when nothing is selected.
+  const pinTarget = selected.size ? (single?.isDirectory && !single.name.endsWith('.app') && !viewingTrash ? single.path : null) : location === TRASH || !isVirtual(location) ? location : null;
   const writable = !isVirtual(location) && !submittedQuery;
   useEffect(() => {
     let live = true; setPreview(null);
@@ -965,6 +967,7 @@ export default function App() {
       <ToolButton label={tr('查看')} className="text-tool" onClick={event => buttonMenu(event, viewMenu)}><List/><span>{tr('查看')}</span><ChevronDown size={12}/></ToolButton>
       <ToolButton label={tr('更多')} onClick={event => buttonMenu(event, [
         { label: tr('打开文件夹…'), icon: <FolderOpen/>, action: chooseFolder },
+        { label: pinTarget && places.some(place => place.path === pinTarget) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, disabled: !pinTarget, action: () => pinTarget && togglePin(pinTarget) },
         { label: tr('全选'), shortcut: '⌘A', action: () => setSelected(new Set(visible.map(e => e.path))) },
         { label: tr('取消选择'), action: () => setSelected(new Set()) },
         { label: undoLabel ? tr('撤销{0}', undoLabel) : tr('撤销'), icon: <Undo2/>, shortcut: '⌘Z', disabled: !undoLabel, divider: true, action: undo },

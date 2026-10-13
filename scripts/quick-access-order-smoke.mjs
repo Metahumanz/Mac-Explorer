@@ -43,7 +43,14 @@ try {
   assert.deepEqual(await order(), [first, 'A', ...reordered.slice(1)]);
   await page.reload(); await page.locator('.file-content[aria-busy="false"]').waitFor();
   assert.deepEqual(await order(), [first, 'A', ...reordered.slice(1)]);
-  console.log('PASS: Quick Access reorder before/after, folder pinning at row edges, centre drop moves, files not pinned, order persists.');
+  // The More menu toggles the selected folder; re-pinning appends it.
+  const more = async item => { await page.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: item }).click(); };
+  await page.getByRole('option', { name: 'A', exact: true }).click();
+  await more('从快速访问取消固定');
+  assert.deepEqual(await order(), reordered);
+  await more('固定到快速访问');
+  assert.deepEqual(await order(), [...reordered, 'A']);
+  console.log('PASS: Quick Access reorder before/after, folder pinning at row edges, centre drop moves, files not pinned, order persists, More menu pin toggle.');
 } finally {
   await app.close(); await fs.rm(root, { recursive: true, force: true });
 }
