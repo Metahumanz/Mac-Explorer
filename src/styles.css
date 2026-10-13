@@ -63,6 +63,8 @@ svg { flex-shrink: 0; }
 .workspace { display: flex; flex: 1; min-height: 0; }
 .sidebar { display: flex; flex-direction: column; width: 208px; min-width: 208px; padding: 10px 8px 8px; border-right: 1px solid var(--border, #e8e8e8); background: var(--surface-sidebar, #fcfcfc); overflow-y: auto; }
 .sidebar-top, .sidebar-section { display: flex; flex-direction: column; }
+.sidebar-section { position: relative; }
+.place-drop-line { position: absolute; left: 8px; right: 8px; height: 2px; margin-top: -1px; border-radius: 1px; background: var(--accent); pointer-events: none; }
 .nav-item { height: 36px; min-height: 36px; justify-content: flex-start; padding: 0 13px 0 24px; gap: 13px; width: 100%; border-radius: 4px; position: relative; text-align: left; font-size: 12px; }
 .nav-item > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-item.current { background: var(--surface-active, #eaeaea); }

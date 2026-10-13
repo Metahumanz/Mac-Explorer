@@ -15,6 +15,10 @@ import type { ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, 
 const api = window.explorer;
 const PC = 'computer';
 const TRASH = 'trash';
+// Internal drag types: a Quick Access item being reordered, and a file-list drag
+// made only of folders (drag data is unreadable until drop).
+const PLACE_TYPE = 'application/x-explorer-place';
+const FOLDERS_TYPE = 'application/x-explorer-folders';
 function isTrashLocation(value: string) { return value === TRASH || value.startsWith('trash:'); }
 type Tab = { id: string; location: string; history: string[]; index: number };
 type SortKey = 'name' | 'modified' | 'type' | 'size';
@@ -23,6 +27,7 @@ type MenuItem = { children?: MenuItem[]; radio?: boolean; label: string; icon?: 
 type Popup = { x: number; y: number; items: MenuItem[]; quickActions?: MenuItem[] };
 type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'shortcuts' };
 const makeTab = (location = ''): Tab => ({ id: crypto.randomUUID(), location, history: [location], index: 0 });
+const isPlaceDrag = (event: React.DragEvent) => event.dataTransfer.types.includes(PLACE_TYPE);
 function stored<T,>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
 function base(path: string) { return path.split('/').filter(Boolean).at(-1) || 'Macintosh HD'; }
 function parent(path: string) { return path.slice(0, path.lastIndexOf('/')) || '/'; }
@@ -130,6 +135,8 @@ export default function App() {
   const [checkboxes, setCheckboxes] = useState(() => stored('checkboxes', false));
   const [pins, setPins] = useState<string[]>(() => stored('pins', []));
   const [unpinnedDefaults, setUnpinnedDefaults] = useState<string[]>(() => stored('unpinnedDefaults', []));
+  const [placeOrder, setPlaceOrder] = useState<string[]>(() => stored('placeOrder', []));
+  const [placeMarker, setPlaceMarker] = useState<{ index: number; top: number } | null>(null);
   const [recent, setRecent] = useState<string[]>(() => stored('recent', []));
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
@@ -208,7 +215,7 @@ export default function App() {
     setTabs(initial); setActiveID(initial[0].id);
     void api.windowReady();
   }).catch(e => { setError(errorMessage(e)); setLoading(false); }); }, []);
-  useEffect(() => { for (const [key, value] of Object.entries({ view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, recent]);
+  useEffect(() => { for (const [key, value] of Object.entries({ view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent]);
   useEffect(() => { if (boot) localStorage.setItem('tabs', JSON.stringify(tabs.map(t => t.location))); }, [tabs, boot]);
   // Animate the existing surface, preserving focus, selection, and scroll state.
   useEffect(() => {
@@ -267,7 +274,11 @@ export default function App() {
     return () => window.removeEventListener('focus', update);
   }, []);
 
-  const places = useMemo<Place[]>(() => [...(boot?.places || []).filter(place => !unpinnedDefaults.includes(place.path)), ...pins.filter(p => !boot?.places.some(place => place.path === p)).map(p => ({ path: p, name: base(p), icon: 'folder' }))], [boot, pins, unpinnedDefaults]);
+  const places = useMemo<Place[]>(() => {
+    const rank = (path: string) => { const index = placeOrder.indexOf(path); return index < 0 ? placeOrder.length : index; };
+    return [...(boot?.places || []).filter(place => !unpinnedDefaults.includes(place.path)), ...pins.filter(p => !boot?.places.some(place => place.path === p)).map(p => ({ path: p, name: base(p), icon: 'folder' }))]
+      .sort((a, b) => rank(a.path) - rank(b.path));
+  }, [boot, pins, unpinnedDefaults, placeOrder]);
   const label = useCallback((value: string) => value === '/Applications' || value === `${boot?.home}/Applications` ? tr('应用程序') : value === TRASH ? tr('回收站') : value.startsWith('trash:') ? base(value.slice(6)) : value === PC ? tr('此电脑') : !value || value === boot?.home ? tr('个人文件夹') : boot?.places.find(p => p.path === value)?.name || places.find(p => p.path === value)?.name || base(value), [boot, places, language.locale]);
   const displayName = (entry: FileEntry) => entry.isDirectory && /\.app$/i.test(entry.name) ? entry.name.slice(0, -4) : extensions || entry.isDirectory || !entry.extension ? entry.name : entry.name.slice(0, -(entry.extension.length + 1));
   const visible = useMemo(() => {
@@ -472,6 +483,43 @@ export default function App() {
       setUnpinnedDefaults(previous => pinned ? [...new Set([...previous, path])] : previous.filter(p => p !== path));
       setPins(previous => previous.filter(p => p !== path));
     } else setPins(previous => pinned ? previous.filter(p => p !== path) : [...new Set([...previous, path])]);
+    if (!pinned) setPlaceOrder(previous => previous.filter(p => p !== path));
+  }
+  // Reordering splits a row at its middle. Pinning a dragged folder only uses
+  // the row edges; the centre keeps the regular move-into-folder drop.
+  function placeInsertion(event: React.DragEvent, path: string) {
+    const reorder = isPlaceDrag(event);
+    if (!reorder && !event.dataTransfer.types.includes(FOLDERS_TYPE)) return null;
+    const row = event.currentTarget.getBoundingClientRect();
+    const y = event.clientY - row.top; const zone = row.height / (reorder ? 2 : 4);
+    const after = y > row.height - zone;
+    if (!after && y >= zone) return null;
+    const node = (event.currentTarget.closest('.tree-node') ?? event.currentTarget).getBoundingClientRect();
+    const section = event.currentTarget.closest('.sidebar-section')!.getBoundingClientRect();
+    return { index: places.findIndex(place => place.path === path) + (after ? 1 : 0), top: (after ? node.bottom : node.top) - section.top };
+  }
+  function placeDragOver(event: React.DragEvent, path: string) {
+    const next = placeInsertion(event, path);
+    setPlaceMarker(previous => previous?.index === next?.index && previous?.top === next?.top ? previous : next);
+    if (!next) return false;
+    event.preventDefault(); event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move'; // File-list drags only allow move.
+    return true;
+  }
+  function dropPlace(event: React.DragEvent, path: string) {
+    const insertion = placeInsertion(event, path);
+    setPlaceMarker(null);
+    if (!insertion) return false;
+    event.preventDefault(); event.stopPropagation();
+    let moved: string[];
+    try { moved = isPlaceDrag(event) ? [event.dataTransfer.getData(PLACE_TYPE)] : JSON.parse(event.dataTransfer.getData('application/x-explorer-paths')); } catch { return true; }
+    const defaults = boot?.places.map(place => place.path) || [];
+    setPins(previous => [...new Set([...previous, ...moved.filter(p => !defaults.includes(p))])]);
+    setUnpinnedDefaults(previous => previous.filter(p => !moved.includes(p)));
+    const order = places.map(place => place.path);
+    const rest = (paths: string[]) => paths.filter(p => !moved.includes(p));
+    setPlaceOrder([...rest(order.slice(0, insertion.index)), ...moved, ...rest(order.slice(insertion.index))]);
+    return true;
   }
   function chooseFolder() { run(tr('选择文件夹…'), async () => { const path = await api.chooseFolder(); if (path) navigate(path); }); }
   function terminalItem(directory: string): MenuItem {
@@ -854,8 +902,12 @@ export default function App() {
       {visible.map((entry, index) => <div key={entry.path} data-path={entry.path} data-index={index} role="option" aria-selected={selected.has(entry.path)} aria-label={entry.name}
         className={`file-row ${selected.has(entry.path) ? 'selected' : ''} ${clipboard.cut && clipboard.paths.includes(entry.path) ? 'cut' : ''} ${dragOver === entry.path ? 'drop-target' : ''} ${entry.hidden ? 'hidden-file' : ''}`}
         onClick={event => select(entry, event)} onDoubleClick={() => openEntry(entry)} onContextMenu={event => contextMenu(event, entry)} draggable
-        onDragStart={event => { const paths = selected.has(entry.path) ? [...selected] : [entry.path]; event.dataTransfer.setData('application/x-explorer-paths', JSON.stringify(paths)); event.dataTransfer.effectAllowed = 'move'; setPopup(null); }}
-        onDragOver={event => { if (entry.isDirectory && !viewingTrash) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDragOver(entry.path); } }}
+        onDragStart={event => {
+          const paths = selected.has(entry.path) ? [...selected] : [entry.path];
+          event.dataTransfer.setData('application/x-explorer-paths', JSON.stringify(paths)); event.dataTransfer.effectAllowed = 'move'; setPopup(null);
+          if (!viewingTrash && paths.every(p => visible.some(e => e.path === p && e.isDirectory && !e.name.endsWith('.app')))) event.dataTransfer.setData(FOLDERS_TYPE, '1');
+        }}
+        onDragOver={event => { if (entry.isDirectory && !viewingTrash && !isPlaceDrag(event)) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDragOver(entry.path); } }}
         onDragLeave={() => setDragOver(null)} onDrop={event => { if (entry.isDirectory) drop(event, entry.path); }}>
         {checkboxes && <input className="item-checkbox" type="checkbox" aria-label={tr('选择 {0}', entry.name)} checked={selected.has(entry.path)} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onChange={event => { const checked = event.target.checked; setSelected(previous => { const next = new Set(previous); if (checked) next.add(entry.path); else next.delete(entry.path); return next; }); selectionAnchor.current = entry.path; }}/>}
         <div className="col-name"><FileGlyph entry={entry} dimension={view === 'icons' ? iconSize : view === 'tiles' ? 48 : view === 'content' ? 56 : 22}/>{editingName?.path === entry.path ? <InlineName key={editingName.path} name={editingName.name} directory={entry.isDirectory} onSave={finishRename} onCancel={() => { setEditingName(null); contentRef.current?.focus(); }}/> : <span className="entry-name" title={entry.name}>{displayName(entry)}{(view === 'tiles' || view === 'content') && <small>{type(entry)}{!entry.isDirectory && ` · ${size(entry.size)}`}</small>}{submittedQuery && <small>{parent(entry.path)}</small>}</span>}</div>
@@ -865,7 +917,7 @@ export default function App() {
     </div>;
   }
 
-  return <div className={`explorer-shell ${compact ? 'compact-view' : ''}`} onPointerDown={() => { if (popup) setPopup(null); }}>
+  return <div className={`explorer-shell ${compact ? 'compact-view' : ''}`} onPointerDown={() => { if (popup) setPopup(null); }} onDragEnd={() => setPlaceMarker(null)}>
     <header className="tab-strip">
       <div className="traffic-light-space"/>
       <div className="tabs" role="tablist" aria-label={tr('文件夹标签页')}>
@@ -934,9 +986,10 @@ export default function App() {
           <button className={`nav-item ${location === boot?.home ? 'current' : ''}`} onClick={() => boot && navigate(boot.home)}><PlaceIcon icon="folder"/><span>{tr('个人文件夹')}</span></button>
         </div>
         <div className="nav-divider"/>
-        <div className="sidebar-section" aria-label={tr('快速访问')}>
-          {places.map(place => place.path === TRASH ? <button key={TRASH} className={`nav-item ${viewingTrash ? 'current' : ''}`} onClick={() => navigate(TRASH)} onAuxClick={event => { if (event.button === 1) newTab(TRASH); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), action: () => newTab(TRASH) }, { label: tr('从快速访问取消固定'), icon: <Pin/>, action: () => togglePin(TRASH) }])}><PlaceIcon icon="trash"/><span>{tr('回收站')}</span><Pin size={12} className="pin-mark"/></button> : <NavigationTree key={place.path} place={{ ...place, name: label(place.path) }} location={location} hidden={hidden} pinned navigate={navigate} newTab={newTab} drop={drop}
+        <div className="sidebar-section" aria-label={tr('快速访问')} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setPlaceMarker(null); }}>
+          {places.map(place => place.path === TRASH ? <button key={TRASH} className={`nav-item ${viewingTrash ? 'current' : ''}`} draggable onDragStart={event => { event.dataTransfer.setData(PLACE_TYPE, TRASH); event.dataTransfer.effectAllowed = 'move'; }} onDragOver={event => placeDragOver(event, TRASH)} onDrop={event => dropPlace(event, TRASH)} onClick={() => navigate(TRASH)} onAuxClick={event => { if (event.button === 1) newTab(TRASH); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), action: () => newTab(TRASH) }, { label: tr('从快速访问取消固定'), icon: <Pin/>, action: () => togglePin(TRASH) }])}><PlaceIcon icon="trash"/><span>{tr('回收站')}</span><Pin size={12} className="pin-mark"/></button> : <NavigationTree key={place.path} place={{ ...place, name: label(place.path) }} location={location} hidden={hidden} pinned navigate={navigate} newTab={newTab} drop={drop} reorder={{ over: event => placeDragOver(event, place.path), drop: event => dropPlace(event, place.path) }}
             context={(event, target) => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(target.path) }, terminalItem(target.path), { label: places.some(place => place.path === target.path) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, action: () => togglePin(target.path) }])}/>)}
+          {placeMarker && <div className="place-drop-line" style={{ top: placeMarker.top }}/>}
         </div>
         <div className="nav-divider"/>
         <button className={`nav-item parent-nav ${location === PC ? 'current' : ''}`} onClick={() => navigate(PC)}><ChevronDown className="nav-chevron" size={12}/><PlaceIcon icon="computer"/><span>{tr('此电脑')}</span></button>
@@ -951,7 +1004,7 @@ export default function App() {
         <div ref={contentRef} tabIndex={0} className={`file-content view-${view} ${dragOver === location ? 'drop-target' : ''}`} aria-label={label(location)} aria-busy={loading}
           onPointerDown={startMarquee} onClickCapture={event => { if (suppressMarqueeClick.current) { event.preventDefault(); event.stopPropagation(); suppressMarqueeClick.current = false; } }}
           onContextMenu={event => contextMenu(event)}
-          onDragOver={event => { if (writable) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDragOver(location); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(null); }} onDrop={event => drop(event, location)}>
+          onDragOver={event => { if (writable && !isPlaceDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDragOver(location); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(null); }} onDrop={event => drop(event, location)}>
           {location === PC && !submittedQuery ? <div className="computer-content"><h2><ChevronDown size={14}/>{tr('设备和驱动器（{0}）', boot?.volumes.length || 0)}</h2><div className="drive-grid">{boot?.volumes.map(volume => <button className="drive-card" key={volume.path} onContextMenu={event => menuAt(event, [{ label: tr('打开'), action: () => navigate(volume.path) }, ...(volume.canEject ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])} onDoubleClick={() => navigate(volume.path)} onKeyDown={event => { if (event.key === 'Enter') navigate(volume.path); }}><HardDrive size={49} strokeWidth={1.2}/><span><strong>{volume.name}</strong><span className="storage-track"><span style={{ width: `${Math.max(0, Math.min(100, (1 - volume.free / volume.total) * 100))}%` }}/></span><small>{tr('{0} 可用，共 {1}', size(volume.free), size(volume.total))}</small></span></button>)}</div></div> : loading ? <Loading/> : visible.length ? fileRows() : <div className="empty-state">{submittedQuery ? <Search size={42} strokeWidth={1.2}/> : <FolderGlyph dimension={68}/>}<h2>{error ? tr('无法显示此位置') : submittedQuery ? tr('没有找到匹配的项目') : viewingTrash ? tr('回收站为空') : tr('此文件夹为空')}</h2><p>{error ? tr('检查访问权限，或返回上一个文件夹。') : submittedQuery ? tr('尝试其他名称，或到上一级文件夹中搜索。') : viewingTrash ? tr('这里显示回收站中的项目。') : tr('将文件拖到这里，或使用“新建”创建文件夹。')}</p>{error && <button className="secondary-button" onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button>}</div>}
           {selectionBox && <div className="selection-marquee" style={selectionBox} aria-hidden="true"/>}
         </div>
@@ -1093,9 +1146,10 @@ function InlineName({ name, directory, onSave, onCancel }: { name: string; direc
   }}/>;
 }
 
-function NavigationTree({ place, location, hidden, navigate, newTab, drop, context, pinned = false, level = 0, eject, ejecting = false }: {
+function NavigationTree({ place, location, hidden, navigate, newTab, drop, context, pinned = false, reorder, level = 0, eject, ejecting = false }: {
   place: Place; location: string; hidden: boolean; navigate: (path: string) => void; newTab: (path: string) => void;
-  drop: (event: React.DragEvent, path: string) => void; context: (event: MouseEvent, place: Place) => void; pinned?: boolean; level?: number; eject?: () => void; ejecting?: boolean;
+  drop: (event: React.DragEvent, path: string) => void; context: (event: MouseEvent, place: Place) => void; pinned?: boolean; level?: number;
+  reorder?: { over: (event: React.DragEvent) => boolean; drop: (event: React.DragEvent) => boolean }; eject?: () => void; ejecting?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false); const [children, setChildren] = useState<FileEntry[]>([]); const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const [over, setOver] = useState(false);
   useEffect(() => {
@@ -1105,7 +1159,10 @@ function NavigationTree({ place, location, hidden, navigate, newTab, drop, conte
     return () => { live = false; };
   }, [expanded, place.path, hidden, location]);
   return <div className="tree-node">
-    <div className={`tree-row ${location === place.path ? 'current' : ''} ${over ? 'drop-target' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setOver(true); }} onDragLeave={() => setOver(false)} onDrop={event => { setOver(false); drop(event, place.path); }}>
+    <div className={`tree-row ${location === place.path ? 'current' : ''} ${over ? 'drop-target' : ''}`} draggable={!!reorder}
+      onDragStart={reorder && (event => { event.dataTransfer.setData(PLACE_TYPE, place.path); event.dataTransfer.effectAllowed = 'move'; })}
+      onDragOver={event => { if (reorder?.over(event)) { setOver(false); return; } if (isPlaceDrag(event)) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setOver(true); }}
+      onDragLeave={() => setOver(false)} onDrop={event => { setOver(false); if (!reorder?.drop(event)) drop(event, place.path); }}>
       <button className="tree-toggle" style={{ left: 1 + level * 12 }} aria-label={`${expanded ? tr('折叠') : tr('展开')} ${place.name}`} aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{loading ? <Loader2 size={11} className="spinning"/> : <ChevronRight size={11}/>}</button>
       <button className={`nav-item ${location === place.path ? 'current' : ''}`} style={{ paddingLeft: 24 + level * 12, paddingRight: eject ? 36 : undefined }} onClick={() => navigate(place.path)} onAuxClick={event => { if (event.button === 1) newTab(place.path); }} onContextMenu={event => context(event, place)}>
         {place.icon === 'folder' ? <FolderGlyph dimension={20}/> : <PlaceIcon icon={place.icon}/>}<span>{place.name}</span>{pinned && <Pin size={12} className="pin-mark"/>}
