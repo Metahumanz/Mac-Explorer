@@ -7,10 +7,15 @@ import path from 'node:path';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-icons-'));
 const docs = path.join(root, 'Documents');
 await fs.mkdir(docs);
+const systemFolders = { Applications: 'applications', Desktop: 'desktop', Documents: 'document', Downloads: 'download', Pictures: 'image', Music: 'music', Movies: 'video' };
+for (const name of Object.keys(systemFolders)) {
+  if (name !== 'Documents') await fs.mkdir(path.join(root, name));
+  await fs.mkdir(path.join(docs, name));
+}
 await fs.mkdir(path.join(docs, '项目资料'));
 for (const name of ['项目说明.docx', '设计说明.pdf', '配置.json', '使用说明.txt', '设置.INI']) await fs.writeFile(path.join(docs, name), 'Temporary icon test fixture');
 await fs.mkdir('artifacts', { recursive: true });
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root } });
+const app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root } });
 const page = await app.firstWindow();
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const result = { executable: process.env.EXPLORER_APP_PATH || 'source build', pixelChecks: [], passed: false };
@@ -21,6 +26,7 @@ try {
   assert.equal(await ini.evaluate(el => el.naturalWidth), 256);
   assert.match(await ini.getAttribute('src'), /\/ini-[^/]+\.png$/);
   assert.equal(await page.getByRole('option', { name: '配置.json', exact: true }).locator('img.file-glyph').getAttribute('src').then(src => /\/ini-[^/]+\.png$/.test(src || '')), false);
+  assert.equal(await page.locator('.file-row .folder-badge').count(), 0, 'Nested namesakes remain ordinary folders');
   // Clicking the final breadcrumb once edits the existing location; it must not
   // push the same location into history or reset the input on subsequent clicks.
   await page.locator('.breadcrumbs button').last().click();
@@ -81,6 +87,44 @@ try {
     await fs.writeFile(`artifacts/native-icon-${size}.png`, png);
   }
   console.log('PASS: native icon service returns independent 64 / 256 / 512 pixel PNGs');
+  await page.getByRole('navigation', { name: '文件位置' }).getByRole('button', { name: '个人文件夹', exact: true }).click();
+  await page.getByRole('option', { name: 'Music', exact: true }).waitFor();
+  for (const [name, icon] of Object.entries(systemFolders)) {
+    assert.equal(await page.getByRole('option', { name, exact: true }).locator(`.folder-badge .icon-${icon}`).count(), 1);
+    assert.equal(await page.locator(`.sidebar .icon-${icon}`).count(), 1);
+  }
+  for (const mode of ['小图标', '大图标', '超大图标', '详细信息', '平铺', '内容']) {
+    await page.getByRole('button', { name: '查看', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: mode, exact: true }).click();
+    const badge = page.getByRole('option', { name: 'Music', exact: true }).locator('.folder-badge');
+    assert.equal(await badge.count(), 1);
+    assert.ok(await badge.evaluate(el => el.getBoundingClientRect().width <= el.parentElement.getBoundingClientRect().width));
+  }
+  await page.getByRole('button', { name: '大图标视图', exact: true }).click();
+  await page.getByRole('option', { name: 'Music', exact: true }).click();
+  await page.getByRole('button', { name: '查看', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: '详细信息窗格', exact: true }).click();
+  await page.locator('.preview-hero .badge-music').waitFor();
+  await page.getByRole('button', { name: '关闭详细信息', exact: true }).click();
+  await page.getByRole('button', { name: '预览窗格', exact: true }).click();
+  await page.locator('.preview-pane .badge-music').waitFor();
+  await page.getByRole('button', { name: '关闭预览', exact: true }).click();
+  await page.getByRole('option', { name: 'Music', exact: true }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '从快速访问取消固定', exact: true }).click();
+  assert.equal(await page.locator('.sidebar .icon-music').count(), 0);
+  assert.equal(await page.getByRole('option', { name: 'Music', exact: true }).locator('.badge-music').count(), 1);
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => window.explorer.setTheme(theme), theme);
+    await page.waitForFunction(dark => matchMedia('(prefers-color-scheme: dark)').matches === dark, theme === 'dark');
+    await page.mouse.move(900, 175);
+    await page.screenshot({ path: `artifacts/system-folders-${theme}.png`, animations: 'disabled' });
+  }
+  await page.getByRole('option', { name: 'Downloads', exact: true }).dblclick();
+  await page.locator('.file-content[aria-busy="false"]').waitFor();
+  assert.equal(await page.getByRole('tab', { selected: true }).locator('.badge-download').count(), 1);
+  assert.equal(await page.locator('.address-icon .icon-download').count(), 1);
+  console.log('PASS: actual system-folder paths share sidebar symbols across layouts, tabs, address and panes; nested namesakes and unpinned defaults stay correct');
+
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 600));
   await page.screenshot({ path: 'artifacts/icon-controls-compact.png' });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

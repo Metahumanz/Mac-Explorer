@@ -88,14 +88,14 @@ function FolderGlyph({ dimension = 38, badge }: { dimension?: number; badge?: st
       <path d="M5.4 12.7h10.3c2.9 0 4.1-2.7 7-2.7h19.9a2.4 2.4 0 0 1 2.4 2.4v23.2a2.4 2.4 0 0 1-2.4 2.4H5.4A2.4 2.4 0 0 1 3 35.6V15.1a2.4 2.4 0 0 1 2.4-2.4Z" fill={`url(#${id}-front)`} stroke="#d7a92c" strokeOpacity=".65" strokeWidth=".45"/>
       <path d="M5.6 13.15h10.1c2.9 0 4.2-2.7 7-2.7h19.7" stroke="#fff3c3" strokeOpacity=".8" strokeWidth=".4" strokeLinecap="round"/>
     </svg>
-    {badge && <span className={`folder-badge badge-${badge}`}><PlaceIcon icon={badge} size={dimension > 45 ? 20 : 14}/></span>}
+    {badge && <span className={`folder-badge badge-${badge}`}><PlaceIcon icon={badge} size={Math.max(8, Math.round(dimension * 0.32))}/></span>}
   </span>;
 }
-function FileGlyph({ entry, dimension = 22, state }: { entry: FileEntry; dimension?: number; state?: VcsState }) {
-  const glyph = <FileGlyphBase entry={entry} dimension={dimension}/>;
+function FileGlyph({ entry, dimension = 22, state, badge }: { entry: FileEntry; dimension?: number; state?: VcsState; badge?: string }) {
+  const glyph = <FileGlyphBase entry={entry} dimension={dimension} badge={badge}/>;
   return state ? <span className="vcs-glyph" style={{ width: dimension, height: dimension }} title={vcsStateLabel(state)}><span className="vcs-base-icon">{glyph}</span><span className={`vcs-badge vcs-${state}`} data-vcs-state={state} role="img" aria-label={vcsStateLabel(state)} title={vcsStateLabel(state)}>{vcsMarks[state]}</span></span> : glyph;
 }
-function FileGlyphBase({ entry, dimension = 22 }: { entry: FileEntry; dimension?: number }) {
+function FileGlyphBase({ entry, dimension = 22, badge }: { entry: FileEntry; dimension?: number; badge?: string }) {
   const [icon, setIcon] = useState('');
   const isINI = !entry.isDirectory && entry.extension === 'ini';
   const pixels = Math.min(512, Math.max(64, 2 ** Math.ceil(Math.log2(dimension * window.devicePixelRatio))));
@@ -104,7 +104,7 @@ function FileGlyphBase({ entry, dimension = 22 }: { entry: FileEntry; dimension?
     if (!isINI && (!entry.isDirectory || entry.name.endsWith('.app'))) api.icon(entry.path, pixels).then(value => { if (live) setIcon(value); }).catch(() => { if (live) setIcon(''); });
     return () => { live = false; };
   }, [entry, pixels, isINI]);
-  if (entry.isDirectory && !entry.name.endsWith('.app')) return <FolderGlyph dimension={dimension} />;
+  if (entry.isDirectory && !entry.name.endsWith('.app')) return <FolderGlyph dimension={dimension} badge={badge}/>;
   const style = { width: dimension, height: dimension };
   if (isINI) return <img className="file-glyph" style={style} src={iniIcon} alt="" draggable={false}/>;
   return icon ? <img className="file-glyph" style={style} src={icon} alt="" draggable={false}/> : <FileText className="file-glyph" style={style} strokeWidth={1.2}/>;
@@ -378,6 +378,7 @@ export default function App() {
       .sort((a, b) => rank(a.path) - rank(b.path));
   }, [boot, pins, unpinnedDefaults, placeOrder]);
   const label = useCallback((value: string) => value === '/Applications' || value === `${boot?.home}/Applications` ? tr('应用程序') : value === TRASH ? tr('回收站') : value === AIRDROP ? tr('隔空投送') : value === NETWORK ? tr('网络') : value.startsWith('trash:') ? base(value.slice(6)) : value === PC ? tr('此电脑') : !value || value === boot?.home ? tr('个人文件夹') : boot?.places.find(p => p.path === value)?.name || places.find(p => p.path === value)?.name || base(value), [boot, places, language.locale]);
+  const folderIcon = (value: string) => boot?.places.find(place => place.path === value)?.icon || (value === `${boot?.home}/Applications` ? 'applications' : undefined);
   const displayName = (entry: FileEntry) => entry.isDirectory && /\.app$/i.test(entry.name) ? entry.name.slice(0, -4) : extensions || entry.isDirectory || !entry.extension ? entry.name : entry.name.slice(0, -(entry.extension.length + 1));
   const visible = useMemo(() => {
     const items = entries.filter(e => hidden || !e.hidden || revealedPaths.includes(e.path));
@@ -1085,7 +1086,7 @@ export default function App() {
         onDragOver={event => { if (entry.isDirectory && !viewingTrash && !isPlaceDrag(event)) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDragOver(entry.path); } }}
         onDragLeave={() => setDragOver(null)} onDrop={event => { if (entry.isDirectory) drop(event, entry.path); }}>
         {checkboxes && <input className="item-checkbox" type="checkbox" aria-label={tr('选择 {0}', entry.name)} checked={selected.has(entry.path)} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onChange={event => { const checked = event.target.checked; setSelected(previous => { const next = new Set(previous); if (checked) next.add(entry.path); else next.delete(entry.path); return next; }); selectionAnchor.current = entry.path; }}/>}
-        <div className="col-name"><FileGlyph entry={entry} state={vcsStatus?.states[entry.path]} dimension={view === 'icons' ? iconSize : view === 'tiles' ? 48 : view === 'content' ? 56 : 22}/>{editingName?.path === entry.path ? <InlineName key={editingName.path} name={editingName.name} directory={entry.isDirectory} onSave={finishRename} onCancel={() => { setEditingName(null); contentRef.current?.focus(); }}/> : <span className="entry-name" title={entry.name}>{displayName(entry)}{(view === 'tiles' || view === 'content') && <small>{type(entry)}{!entry.isDirectory && ` · ${size(entry.size)}`}</small>}{submittedQuery && <small>{parent(entry.path)}</small>}</span>}</div>
+        <div className="col-name"><FileGlyph entry={entry} badge={folderIcon(entry.path)} state={vcsStatus?.states[entry.path]} dimension={view === 'icons' ? iconSize : view === 'tiles' ? 48 : view === 'content' ? 56 : 22}/>{editingName?.path === entry.path ? <InlineName key={editingName.path} name={editingName.name} directory={entry.isDirectory} onSave={finishRename} onCancel={() => { setEditingName(null); contentRef.current?.focus(); }}/> : <span className="entry-name" title={entry.name}>{displayName(entry)}{(view === 'tiles' || view === 'content') && <small>{type(entry)}{!entry.isDirectory && ` · ${size(entry.size)}`}</small>}{submittedQuery && <small>{parent(entry.path)}</small>}</span>}</div>
         {view === 'content' && <div className="content-metadata"><span>{tr('修改日期：')}{date(entry.modified)}</span><span title={entry.path}>{tr('位置：')}{parent(entry.path)}</span></div>}
         {view === 'details' && <><span className="col-modified">{date(entry.modified)}</span><span className="col-type">{type(entry)}</span><span className="col-size">{entry.isDirectory ? '' : size(entry.size)}</span></>}
       </div>)}
@@ -1128,7 +1129,7 @@ export default function App() {
           }}
           onDrop={event => { if (tabHover.current?.id === t.id) { clearTimeout(tabHover.current.timer); tabHover.current = null; } drop(event, t.location); }}>
           <button role="tab" aria-selected={t.id === tab.id} className="tab-label" onPointerDown={event => startTabDrag(event, t.id)} onPointerMove={moveTabDrag} onPointerUp={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onPointerCancel={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onKeyDown={event => { if (event.key === 'Escape') { tabDrag.current = null; event.currentTarget.style.transform = ''; } }} onClick={() => { if (suppressTabClick.current) { suppressTabClick.current = false; return; } setActiveID(t.id); resetNavigation(); }} onAuxClick={event => { if (event.button === 1) closeTab(t.id); }}>
-            {isVirtual(t.location) ? <PlaceIcon icon={isTrashLocation(t.location) ? 'trash' : t.location} size={16}/> : <FolderGlyph dimension={21}/>}<span>{label(t.location)}</span>
+            {isVirtual(t.location) ? <PlaceIcon icon={isTrashLocation(t.location) ? 'trash' : t.location} size={16}/> : <FolderGlyph dimension={21} badge={folderIcon(t.location)}/>}<span>{label(t.location)}</span>
           </button>
           <button className="tab-close" aria-label={tr('关闭 {0} 标签页', label(t.location))} title={shortcutLabel('关闭标签页', 'close-tab')} onClick={() => closeTab(t.id)}><X size={13}/></button>
         </div>)}
@@ -1144,7 +1145,7 @@ export default function App() {
         <ToolButton label={shortcutLabel('刷新', 'refresh')} onClick={refreshDirectory}><RotateCw className={loading ? 'spinning' : ''}/></ToolButton>
       </div>
       <div className={`address-bar ${editingAddress ? 'editing' : ''}`} onClick={editAddress}>
-        <span className="address-icon"><PlaceIcon icon={viewingTrash ? 'trash' : isVirtual(location) ? location : 'folder'} size={17}/></span>
+        <span className="address-icon"><PlaceIcon icon={viewingTrash ? 'trash' : isVirtual(location) ? location : folderIcon(location) || 'folder'} size={17}/></span>
         {editingAddress ? <form onSubmit={event => { event.preventDefault(); goAddress(); }}><input ref={addressRef} aria-label={tr('文件夹地址')} value={address} onChange={event => setAddress(event.target.value)} onBlur={() => setEditingAddress(false)} onKeyDown={event => { if (event.key === 'Escape') setEditingAddress(false); }}/></form> : <div className="breadcrumbs">
           {isVirtual(location) ? <button onClick={editAddress}>{label(location)}</button> : breadcrumbs.map(crumb => <span key={crumb.path}><ChevronRight size={13}/><button title={crumb.path === location ? tr('单击编辑路径') : crumb.path} onClick={event => { if (crumb.path !== location) { event.stopPropagation(); navigate(crumb.path); } }}>{crumb.name}</button></span>)}
         </div>}
@@ -1183,13 +1184,13 @@ export default function App() {
         </div>
         <div className="nav-divider"/>
         <div className="sidebar-section" aria-label={tr('快速访问')} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setPlaceMarker(null); }}>
-          {places.map(place => <NavigationTree key={place.path} place={{ ...place, name: label(place.path) }} location={location} hidden={hidden} pinned navigate={navigate} newTab={newTab} drop={drop} reorder={{ over: event => placeDragOver(event, place.path), drop: event => dropPlace(event, place.path) }}
+          {places.map(place => <NavigationTree key={place.path} place={{ ...place, name: label(place.path) }} folderIcon={folderIcon} location={location} hidden={hidden} pinned navigate={navigate} newTab={newTab} drop={drop} reorder={{ over: event => placeDragOver(event, place.path), drop: event => dropPlace(event, place.path) }}
             context={(event, target) => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(target.path) }, terminalItem(target.path), { label: places.some(place => place.path === target.path) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, action: () => togglePin(target.path) }])}/>)}
           {placeMarker && <div className="place-drop-line" style={{ top: placeMarker.top }}/>}
         </div>
         <div className="nav-divider"/>
         <button className={`nav-item parent-nav ${location === PC ? 'current' : ''}`} onClick={() => navigate(PC)}><ChevronDown className="nav-chevron" size={12}/><PlaceIcon icon="computer"/><span>{tr('此电脑')}</span></button>
-        {boot?.volumes.map(volume => <NavigationTree key={volume.path} place={volume} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} level={1} eject={volume.canEject ? () => ejectVolume(volume) : undefined} ejecting={!!operation} context={(event, target) => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(target.path) }, terminalItem(target.path), ...(volume.canEject && target.path === volume.path ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])}/>)}
+        {boot?.volumes.map(volume => <NavigationTree key={volume.path} place={volume} folderIcon={folderIcon} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} level={1} eject={volume.canEject ? () => ejectVolume(volume) : undefined} ejecting={!!operation} context={(event, target) => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(target.path) }, terminalItem(target.path), ...(volume.canEject && target.path === volume.path ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])}/>)}
         <button className={`nav-item ${viewingTrash ? 'current' : ''}`} onClick={() => navigate(TRASH)} onAuxClick={event => { if (event.button === 1) newTab(TRASH); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(TRASH) }])}><PlaceIcon icon="trash"/><span>{tr('回收站')}</span></button>
         {[AIRDROP, NETWORK].map(destination => <button key={destination} className={`nav-item ${location === destination ? 'current' : ''}`} onClick={() => navigate(destination)} onAuxClick={event => { if (event.button === 1) newTab(destination); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(destination) }])}
           onDragOver={event => { if (destination === AIRDROP && !isPlaceDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={event => drop(event, destination)}><PlaceIcon icon={destination}/><span>{label(destination)}</span></button>)}
@@ -1210,10 +1211,10 @@ export default function App() {
         </div>
       </main>
       {details && <aside className="details-pane" aria-label={tr('详细信息')}><div className="details-header"><h2>{tr('详细信息')}</h2><button aria-label={tr('关闭详细信息')} onClick={() => setDetails(false)}><X size={17}/></button></div>
-        {single ? <><div className="preview-hero">{preview?.kind === 'image' ? <img src={preview.content} alt={single.name}/> : <FileGlyph entry={single} dimension={70}/>}</div><h3>{single.name}</h3><p className="detail-kind">{type(single)}</p><dl><dt>{tr('位置')}</dt><dd title={parent(single.path)}>{parent(single.path)}</dd><dt>{tr('大小')}</dt><dd>{single.isDirectory ? tr('文件夹') : tr('{0}（{1} 字节）', size(single.size), single.size.toLocaleString(getLocale()))}</dd><dt>{tr('修改日期')}</dt><dd>{date(single.modified)}</dd><dt>{tr('创建日期')}</dt><dd>{date(single.created)}</dd>{single.isSymlink && <><dt>{tr('链接')}</dt><dd>{tr('符号链接')}</dd></>}</dl>{preview?.kind === 'text' && <div className="text-preview"><h4>{tr('内容预览')}</h4><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div>}<button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}<span>Space</span></button></> : <div className="details-empty">{chosen.length > 1 ? <Copy size={46} strokeWidth={1.1}/> : <FolderGlyph dimension={75}/>}<h3>{chosen.length > 1 ? tr('已选择 {0} 个项目', chosen.length) : label(location)}</h3><p>{chosen.length > 1 ? tr('文件大小合计 {0}', size(totalSelected)) : tr('选择一个文件，查看预览和详细信息。')}</p></div>}
+        {single ? <><div className="preview-hero">{preview?.kind === 'image' ? <img src={preview.content} alt={single.name}/> : <FileGlyph entry={single} dimension={70} badge={folderIcon(single.path)}/>}</div><h3>{single.name}</h3><p className="detail-kind">{type(single)}</p><dl><dt>{tr('位置')}</dt><dd title={parent(single.path)}>{parent(single.path)}</dd><dt>{tr('大小')}</dt><dd>{single.isDirectory ? tr('文件夹') : tr('{0}（{1} 字节）', size(single.size), single.size.toLocaleString(getLocale()))}</dd><dt>{tr('修改日期')}</dt><dd>{date(single.modified)}</dd><dt>{tr('创建日期')}</dt><dd>{date(single.created)}</dd>{single.isSymlink && <><dt>{tr('链接')}</dt><dd>{tr('符号链接')}</dd></>}</dl>{preview?.kind === 'text' && <div className="text-preview"><h4>{tr('内容预览')}</h4><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div>}<button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}<span>Space</span></button></> : <div className="details-empty">{chosen.length > 1 ? <Copy size={46} strokeWidth={1.1}/> : <FolderGlyph dimension={75}/>}<h3>{chosen.length > 1 ? tr('已选择 {0} 个项目', chosen.length) : label(location)}</h3><p>{chosen.length > 1 ? tr('文件大小合计 {0}', size(totalSelected)) : tr('选择一个文件，查看预览和详细信息。')}</p></div>}
       </aside>}
       {previewPane && <aside className="details-pane preview-pane" aria-label={tr('预览窗格')}><div className="details-header"><h2>{tr('预览')}</h2><button aria-label={tr('关闭预览')} onClick={() => setPreviewPane(false)}><X size={17}/></button></div>
-        {!single ? <div className="details-empty"><PanelRight size={46} strokeWidth={1.1}/><p>{chosen.length > 1 ? tr('请选择一个文件进行预览。') : tr('选择要预览的文件。')}</p></div> : <><h3>{single.name}</h3>{preview?.kind === 'image' ? <img className="pane-image-preview" src={preview.content} alt={single.name}/> : preview?.kind === 'text' ? <div className="text-preview"><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div> : <div className="details-empty"><FileGlyph entry={single} dimension={70}/><p>{preview ? single.isDirectory ? tr('文件夹不提供内容预览。') : tr('此文件无法在窗格中预览。') : tr('正在加载预览…')}</p>{!single.isDirectory && <button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}</button>}</div>}</>}
+        {!single ? <div className="details-empty"><PanelRight size={46} strokeWidth={1.1}/><p>{chosen.length > 1 ? tr('请选择一个文件进行预览。') : tr('选择要预览的文件。')}</p></div> : <><h3>{single.name}</h3>{preview?.kind === 'image' ? <img className="pane-image-preview" src={preview.content} alt={single.name}/> : preview?.kind === 'text' ? <div className="text-preview"><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div> : <div className="details-empty"><FileGlyph entry={single} dimension={70} badge={folderIcon(single.path)}/><p>{preview ? single.isDirectory ? tr('文件夹不提供内容预览。') : tr('此文件无法在窗格中预览。') : tr('正在加载预览…')}</p>{!single.isDirectory && <button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}</button>}</div>}</>}
       </aside>}
     </div>
 
@@ -1583,8 +1584,8 @@ function InlineName({ name, directory, onSave, onCancel }: { name: string; direc
   }}/>;
 }
 
-function NavigationTree({ place, location, hidden, navigate, newTab, drop, context, pinned = false, reorder, level = 0, eject, ejecting = false }: {
-  place: Place; location: string; hidden: boolean; navigate: (path: string) => void; newTab: (path: string) => void;
+function NavigationTree({ place, folderIcon, location, hidden, navigate, newTab, drop, context, pinned = false, reorder, level = 0, eject, ejecting = false }: {
+  place: Place; folderIcon: (path: string) => string | undefined; location: string; hidden: boolean; navigate: (path: string) => void; newTab: (path: string) => void;
   drop: (event: React.DragEvent, path: string) => void; context: (event: MouseEvent, place: Place) => void; pinned?: boolean; level?: number;
   reorder?: { over: (event: React.DragEvent) => boolean; drop: (event: React.DragEvent) => boolean }; eject?: () => void; ejecting?: boolean;
 }) {
@@ -1606,7 +1607,7 @@ function NavigationTree({ place, location, hidden, navigate, newTab, drop, conte
       </button>
       {eject && <button className="volume-eject" aria-label={tr('推出“{0}”', place.name)} title={tr('推出“{0}”', place.name)} disabled={ejecting} onClick={event => { event.stopPropagation(); eject(); }}><Eject size={15}/></button>}
     </div>
-    {expanded && <div role="group" aria-label={tr('{0} 的子文件夹', place.name)}>{error ? <p className="tree-note" title={error}>{tr('无法访问')}</p> : !loading && !children.length ? <p className="tree-note">{tr('没有子文件夹')}</p> : children.map(child => <NavigationTree key={child.path} place={{ path: child.path, name: child.name, icon: 'folder' }} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} context={context} level={Math.min(level + 1, 6)}/>)}</div>}
+    {expanded && <div role="group" aria-label={tr('{0} 的子文件夹', place.name)}>{error ? <p className="tree-note" title={error}>{tr('无法访问')}</p> : !loading && !children.length ? <p className="tree-note">{tr('没有子文件夹')}</p> : children.map(child => <NavigationTree key={child.path} place={{ path: child.path, name: child.name, icon: folderIcon(child.path) || 'folder' }} folderIcon={folderIcon} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} context={context} level={Math.min(level + 1, 6)}/>)}</div>}
   </div>;
 }
 function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' | 'settings' | 'vcs' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
