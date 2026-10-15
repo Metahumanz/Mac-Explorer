@@ -40,7 +40,7 @@ async function settings() {
   const dialog = page.getByRole('dialog', { name: '设置', exact: true }); await dialog.waitFor(); return dialog;
 }
 async function navigate(directory) {
-  await page.getByRole('button', { name: /编辑地址/ }).click();
+  await page.keyboard.press('Meta+Shift+g');
   const address = page.getByRole('textbox', { name: '文件夹地址', exact: true }); await address.fill(directory); await address.press('Enter');
 }
 try {

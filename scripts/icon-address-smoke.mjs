@@ -29,7 +29,7 @@ try {
   assert.equal(await page.locator('.file-row .folder-badge').count(), 0, 'Nested namesakes remain ordinary folders');
   // Clicking the final breadcrumb once edits the existing location; it must not
   // push the same location into history or reset the input on subsequent clicks.
-  await page.locator('.breadcrumbs button').last().click();
+  await page.locator('.breadcrumbs button:not(.crumb-chevron)').last().click();
   const address = page.getByRole('textbox', { name: '文件夹地址', exact: true });
   await address.waitFor();
   assert.equal(await address.inputValue(), docs);
