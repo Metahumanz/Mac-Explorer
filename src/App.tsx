@@ -196,6 +196,8 @@ export default function App() {
   const [placeOrder, setPlaceOrder] = useState<string[]>(() => stored('placeOrder', []));
   const [placeMarker, setPlaceMarker] = useState<{ index: number; top: number } | null>(null);
   const [recent, setRecent] = useState<string[]>(() => stored('recent', []));
+  // Addresses submitted from the address bar, newest first, like Explorer's typed paths.
+  const [typedPaths, setTypedPaths] = useState<string[]>(() => stored('typedPaths', []));
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [searchNote, setSearchNote] = useState('');
@@ -212,6 +214,12 @@ export default function App() {
   const viewingTrash = isTrashLocation(location);
   const [editingAddress, setEditingAddress] = useState(false);
   const [address, setAddress] = useState('');
+  // Suggestions follow what the user typed; arrowing through them only changes
+  // the input, so the list stays put. Until the first keystroke, show history.
+  const [addressQuery, setAddressQuery] = useState<string | null>(null);
+  const [addressActive, setAddressActive] = useState(-1);
+  // Subfolders read during this edit, by directory; filtering by prefix happens in memory.
+  const [addressFolders, setAddressFolders] = useState<Record<string, { name: string; hidden: boolean }[]>>({});
   const [refresh, setRefresh] = useState(0);
   const refreshIcons = useRef(false);
   function refreshDirectory() { refreshIcons.current = true; setRefresh(v => v + 1); void api.volumes().then(volumes => setBoot(previous => previous ? { ...previous, volumes } : previous)).catch(() => {}); }
@@ -312,7 +320,7 @@ export default function App() {
     setTabs(initial); setActiveID(initial[0].id);
     void api.windowReady();
   }).catch(e => { setError(errorMessage(e)); setLoading(false); }); }, []);
-  useEffect(() => { for (const [key, value] of Object.entries({ sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent]);
+  useEffect(() => { for (const [key, value] of Object.entries({ sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent, typedPaths })) localStorage.setItem(key, JSON.stringify(value)); }, [sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent, typedPaths]);
   useEffect(() => { if (boot) localStorage.setItem('tabs', JSON.stringify(tabs.map(t => t.location))); }, [tabs, boot]);
   // Animate the existing surface, preserving focus, selection, and scroll state.
   useEffect(() => {
@@ -825,17 +833,62 @@ export default function App() {
       { label: tr('隐藏的项目'), icon: <Eye/>, checked: hidden, action: () => setHidden(v => !v) },
     ] },
   ];
-  async function goAddress() {
-    let path = address.trim();
-    if (/^smb:/i.test(path)) { connectNetwork(path); return; }
+  function rememberAddress(value: string) { setTypedPaths(previous => [value, ...previous.filter(p => p !== value)].slice(0, 25)); }
+  function resolveAddress(value: string) {
+    let path = value;
     if (path === '~' || path.startsWith('~/')) path = boot!.home + path.slice(1);
+    return path.startsWith('/') ? path : join(isVirtual(location) ? boot!.home : location, path);
+  }
+  async function goAddress(value = address) {
+    let path = value.trim();
+    if (/^smb:/i.test(path)) { if (await connectNetwork(path)) rememberAddress(path); return; }
     if (path.startsWith('file://')) { try { path = decodeURIComponent(new URL(path).pathname); } catch { setError(tr('文件地址格式不正确。')); return; } }
-    if (!path.startsWith('/')) path = join(isVirtual(location) ? boot!.home : location, path);
-    await run(tr('正在打开位置…'), async () => {
+    path = resolveAddress(path);
+    let opened = '';
+    const succeeded = await run(tr('正在打开位置…'), async () => {
       const entry = await api.info(path);
       if (entry.isDirectory && !entry.name.endsWith('.app')) navigate(entry.path);
       else { await openFile(entry); setEditingAddress(false); }
+      opened = entry.path;
     });
+    if (succeeded && opened) rememberAddress(opened);
+  }
+  function addressMenu(event: MouseEvent, path: string) {
+    menuAt(event, [{ label: tr('复制地址'), icon: <Copy/>, action: () => run(tr('复制地址…'), () => api.copyText(path), tr('已复制地址')) }]);
+  }
+  // A breadcrumb chevron lists the subfolders of the crumb before it; the leading one lists volumes.
+  function crumbMenu(event: MouseEvent<HTMLButtonElement>, directory: string | null) {
+    event.stopPropagation();
+    if (popup) { setPopup(null); return; }
+    const rect = event.currentTarget.getBoundingClientRect(); const position = { x: rect.left, y: rect.bottom + 5 };
+    if (directory === null) { setPopup({ ...position, items: (boot?.volumes || []).map(volume => ({ label: volume.name, action: () => navigate(volume.path) })) }); return; }
+    api.list(directory).then(listing => {
+      const folders = listing.entries.filter(entry => entry.isDirectory && !entry.name.endsWith('.app') && (hidden || !entry.hidden)).sort((a, b) => a.name.localeCompare(b.name, getLocale(), { numeric: true }));
+      setPopup({ ...position, items: folders.length ? folders.map(folder => ({ label: folder.name, action: () => navigate(folder.path) })) : [{ label: tr('没有子文件夹'), disabled: true }] });
+    }).catch(error => setError(errorMessage(error)));
+  }
+  // Typing up to a slash lists that folder's subfolders by case-insensitive prefix.
+  const addressPrefix = addressQuery === null || /^(smb|file):/i.test(addressQuery.trim()) || !addressQuery.includes('/') ? null : {
+    parent: addressQuery.slice(0, addressQuery.lastIndexOf('/') + 1), name: addressQuery.slice(addressQuery.lastIndexOf('/') + 1).toLowerCase(),
+  };
+  const addressParent = editingAddress && addressPrefix && boot ? resolveAddress(addressPrefix.parent).replace(/(.)\/+$/, '$1') : null;
+  const addressSuggestions = !editingAddress ? [] : addressQuery === null ? typedPaths
+    : addressPrefix && addressParent && addressFolders[addressParent] ? addressFolders[addressParent].filter(folder => (hidden || !folder.hidden) && folder.name.toLowerCase().startsWith(addressPrefix.name)).slice(0, 5).map(folder => addressPrefix.parent + folder.name) : [];
+  useEffect(() => {
+    if (!addressParent || addressFolders[addressParent]) return;
+    let live = true;
+    api.list(addressParent).then(listing => listing.entries, () => []).then(entries => {
+      if (live) setAddressFolders(previous => ({ ...previous, [addressParent]: entries.filter(entry => entry.isDirectory && !entry.name.endsWith('.app')).map(entry => ({ name: entry.name, hidden: entry.hidden })).sort((a, b) => a.name.localeCompare(b.name, getLocale(), { numeric: true })) }));
+    });
+    return () => { live = false; };
+  }, [addressParent]);
+  function addressKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') { setEditingAddress(false); return; }
+    if ((event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || !addressSuggestions.length) return;
+    event.preventDefault();
+    const count = addressSuggestions.length;
+    const next = event.key === 'ArrowDown' ? (addressActive + 1) % count : addressActive <= 0 ? count - 1 : addressActive - 1;
+    setAddressActive(next); setAddress(addressSuggestions[next]);
   }
   function drop(event: React.DragEvent, destination: string) {
     event.preventDefault(); event.stopPropagation(); setDragOver(null);
@@ -856,7 +909,7 @@ export default function App() {
     });
   }
   function connectNetwork(address: string) {
-    void run(tr('正在连接服务器…'), async () => {
+    return run(tr('正在连接服务器…'), async () => {
       const mounts = await api.connectNetwork(address);
       if (!mounts) return;
       const volumes = await api.volumes();
@@ -926,7 +979,10 @@ export default function App() {
     };
     window.addEventListener('keydown', keydown); return () => window.removeEventListener('keydown', keydown);
   });
-  useEffect(() => { if (editingAddress) { addressRef.current?.focus(); addressRef.current?.select(); } }, [editingAddress]);
+  useEffect(() => {
+    if (editingAddress) { setAddressQuery(null); setAddressActive(-1); addressRef.current?.focus(); addressRef.current?.select(); }
+    else setAddressFolders({});
+  }, [editingAddress]);
   const historyNavigation = useRef({ historyGo, blocked: false, context: '' });
   historyNavigation.current = {
     historyGo, blocked: !!(modal || popup || operation || editingName || editingAddress),
@@ -1146,10 +1202,18 @@ export default function App() {
       </div>
       <div className={`address-bar ${editingAddress ? 'editing' : ''}`} onClick={editAddress}>
         <span className="address-icon"><PlaceIcon icon={viewingTrash ? 'trash' : isVirtual(location) ? location : folderIcon(location) || 'folder'} size={17}/></span>
-        {editingAddress ? <form onSubmit={event => { event.preventDefault(); goAddress(); }}><input ref={addressRef} aria-label={tr('文件夹地址')} value={address} onChange={event => setAddress(event.target.value)} onBlur={() => setEditingAddress(false)} onKeyDown={event => { if (event.key === 'Escape') setEditingAddress(false); }}/></form> : <div className="breadcrumbs">
-          {isVirtual(location) ? <button onClick={editAddress}>{label(location)}</button> : breadcrumbs.map(crumb => <span key={crumb.path}><ChevronRight size={13}/><button title={crumb.path === location ? tr('单击编辑路径') : crumb.path} onClick={event => { if (crumb.path !== location) { event.stopPropagation(); navigate(crumb.path); } }}>{crumb.name}</button></span>)}
+        {editingAddress ? <form onSubmit={event => { event.preventDefault(); goAddress(); }}><input ref={addressRef} aria-label={tr('文件夹地址')} aria-controls={addressSuggestions.length ? 'address-suggestions' : undefined} aria-activedescendant={addressActive >= 0 && addressSuggestions.length ? `address-suggestion-${addressActive}` : undefined} autoComplete="off" value={address} onChange={event => { setAddress(event.target.value); setAddressQuery(event.target.value); setAddressActive(-1); }} onBlur={() => setEditingAddress(false)} onKeyDown={addressKeyDown}/></form> : <div className="breadcrumbs" onContextMenu={event => { if (!isVirtual(location)) addressMenu(event, location); }}>
+          {isVirtual(location) ? <button onClick={editAddress}>{label(location)}</button> : <>
+            <button className="crumb-chevron" aria-label={tr('{0} 的子文件夹', tr('此电脑'))} onClick={event => crumbMenu(event, null)}><ChevronRight size={13}/></button>
+            {breadcrumbs.map(crumb => <span key={crumb.path}>
+              <button title={crumb.path === location ? tr('单击编辑路径') : crumb.path} onContextMenu={event => addressMenu(event, crumb.path)} onClick={event => { if (crumb.path !== location) { event.stopPropagation(); navigate(crumb.path); } }}>{crumb.name}</button>
+              <button className="crumb-chevron" aria-label={tr('{0} 的子文件夹', crumb.name)} onClick={event => crumbMenu(event, crumb.path)}><ChevronRight size={13}/></button>
+            </span>)}
+          </>}
         </div>}
-        <ToolButton label={shortcutLabel('编辑地址', 'address')} onClick={() => { setAddress(isVirtual(location) ? boot?.home || '/' : location); setEditingAddress(true); }}><ChevronDown size={14}/></ToolButton>
+        {addressSuggestions.length > 0 && <ul id="address-suggestions" className="address-suggestions" role="listbox" aria-label={addressQuery === null ? tr('最近输入的地址') : tr('匹配的文件夹')} onMouseDown={event => event.preventDefault()}>
+          {addressSuggestions.map((value, index) => <li key={value} id={`address-suggestion-${index}`} role="option" aria-selected={index === addressActive} title={value} onClick={() => void goAddress(value)}>{value}</li>)}
+        </ul>}
       </div>
       <form className="search-box" onSubmit={event => { event.preventDefault(); setSubmittedQuery(query.trim()); setSelected(new Set()); }}>
         <input ref={searchRef} disabled={location === AIRDROP} aria-label={tr('搜索文件')} placeholder={tr('在{0}中搜索', label(location))} value={query} onChange={event => { setQuery(event.target.value); if (!event.target.value) setSubmittedQuery(''); }}/>

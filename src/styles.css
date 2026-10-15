@@ -43,10 +43,15 @@ svg { flex-shrink: 0; }
 .address-icon { padding: 0 11px 0 13px; display: flex; }
 .address-bar form { flex: 1; min-width: 0; }
 .address-bar input { border: 0; background: transparent; padding: 5px 0; width: 100%; }
+.address-bar { position: relative; }
+.address-suggestions { position: absolute; z-index: 25; top: calc(100% + 3px); left: -1px; right: -1px; max-height: min(420px, calc(100vh - 120px)); overflow-y: auto; margin: 0; padding: 5px; list-style: none; background: var(--surface-toolbar, #fafafa); border: 1px solid var(--border, #e3e3e3); border-radius: 7px; box-shadow: 0 5px 23px #00000026, 0 1px 4px #00000016; }
+.address-suggestions li { padding: 7px 9px; border-radius: 4px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.address-suggestions li:hover, .address-suggestions li[aria-selected="true"] { background: var(--surface-active, #eaeaea); }
 .breadcrumbs { display: flex; flex: 1; min-width: 0; align-items: center; overflow: auto; scrollbar-width: none; white-space: nowrap; height: 100%; }
 .breadcrumbs > span { display: flex; align-items: center; gap: 2px; height: 100%; }
 .breadcrumbs > span > svg { color: var(--text-secondary, #727272); }
 .breadcrumbs button { white-space: nowrap; padding: 0 8px; height: 27px; border-radius: 3px; font-size: 12px; }
+.breadcrumbs .crumb-chevron { padding: 0 3px; color: var(--text-secondary, #727272); }
 .search-box { width: 245px; min-width: 160px; height: 35px; display: flex; align-items: center; border: 1px solid var(--border, #e5e5e5); border-radius: 4px; padding-right: 11px; background: var(--surface-input, #f9f9f9); }
 .search-box:focus-within { border-bottom: 2px solid var(--accent); background: var(--surface, #fff); }
 .search-box input { border: none; width: 100%; height: 100%; background: transparent; font-size: 12px; }

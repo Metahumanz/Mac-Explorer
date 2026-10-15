@@ -609,5 +609,9 @@
   "连接“{0}”": "Connect to “{0}”",
   "未发现共享设备": "No shared devices found",
   "可输入服务器地址连接。请确认设备位于同一局域网，并已开启文件共享。": "You can connect using a server address. Check that the device is on the same local network and has file sharing enabled.",
-  "正在连接服务器…": "Connecting to the server…"
+  "正在连接服务器…": "Connecting to the server…",
+  "最近输入的地址": "Recent addresses",
+  "匹配的文件夹": "Matching folders",
+  "复制地址": "Copy address",
+  "已复制地址": "Address copied"
 }

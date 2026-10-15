@@ -26,7 +26,7 @@ try {
   assert.deepEqual(await page.locator('.sidebar-section > .tree-node > .tree-row > .nav-item > span:last-of-type, .sidebar-section > .nav-item > span:last-of-type').allTextContents(), ['应用程序', '文档', 'Pinned2', 'Pinned1']);
   assert.equal(await page.locator('.entry-name', { hasText: 'Example' }).innerText(), 'Example');
   assert.equal(await page.locator('.entry-name', { hasText: 'keep' }).innerText(), 'keep.txt');
-  await page.getByRole('button', { name: '编辑地址 (⇧⌘G)', exact: true }).click();
+  await page.keyboard.press('Meta+Shift+g');
   const input = page.getByRole('textbox', { name: '文件夹地址', exact: true });
   const menu = async label => app.evaluate(async ({ Menu }, label) => {
     const item = Menu.getApplicationMenu().items.find(i => i.label === '编辑').submenu.items.find(i => i.label === label);
@@ -38,7 +38,7 @@ try {
   await page.waitForFunction(text => document.querySelector('[aria-label="文件夹地址"]')?.value === text, destination);
   await input.press('Enter');
   await page.locator('.file-content[aria-label="应用程序"][aria-busy=false]').waitFor();
-  await page.getByRole('button', { name: '编辑地址 (⇧⌘G)', exact: true }).click();
+  await page.keyboard.press('Meta+Shift+g');
   await input.fill('old'); await input.selectText();
   // Exercise the real context-menu handler and its native Paste menu role.
   await app.evaluate(({ Menu, BrowserWindow }) => {
