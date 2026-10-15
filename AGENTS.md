@@ -35,6 +35,14 @@ The repository uses `main` and began with an initial setup commit. Use concise, 
 
 Pull requests should explain the change, its purpose, and validation performed. Link relevant issues and include screenshots for visible interface changes. Keep each submission limited to one coherent task.
 
+## Release Notes Guidelines
+
+- Credit contributions inline after each update item: `（#123，@author）`, linking the PR and its author. Credit the actual contributors rather than only the person who merged the PR.
+- Verify attribution against the commits and merged PRs included since the previous release; do not present older contributions as new changes.
+- For direct commits without a PR, use `（@author，abc1234）` with links to the author and commit. Never invent a PR number or author.
+- Add a separate `贡献者` section when needed to acknowledge verified testing, feedback, or other contributions not already credited in the update items.
+- Reopen the published GitHub Release and verify the saved notes and attribution links after publishing or editing.
+
 ## Security & Configuration
 
 Keep Node access in the main process, validate IPC arguments, and preserve context isolation and CSP. Never overwrite collisions or permanently delete user files. Exclude credentials and generated artifacts. Do not replace Finder or alter system defaults without explicit authorization.
