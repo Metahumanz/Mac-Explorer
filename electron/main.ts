@@ -20,6 +20,8 @@ import { isArchive } from '../shared/archives';
 import { FileHistory } from './history';
 import { FileIcons } from './icons';
 import { VersionControl } from './vcs';
+import { FolderViews } from './folder-views';
+import { validFolderView, validLayout, validOverride, validSort, type FolderViewChange, type LegacyFolderViews } from '../shared/folder-views';
 import type { VcsAction } from '../shared/vcs';
 import { listTrash, TrashOrigins, snapshotTrash, emptyTrash } from './trash';
 import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ShareService, ThemeMode, Volume, NetworkServer } from '../shared/types';
@@ -168,7 +170,7 @@ async function bootstrap(): Promise<Bootstrap> {
   ];
   const places = (await Promise.all(candidates.map(async place => (await fs.stat(place.path).catch(() => null))?.isDirectory() ? place : null))).filter((p): p is Place => p !== null);
   const volumes = await readVolumes();
-  return { initialTab: windows.get(currentWindow()!)?.initialTab, language: languageState(), theme: nativeTheme.themeSource, home, places, volumes, initialPath: testRoot ? path.join(testRoot, 'Documents') : process.env.EXPLORER_START_PATH };
+  return { initialTab: windows.get(currentWindow()!)?.initialTab, language: languageState(), theme: nativeTheme.themeSource, home, places, volumes, folderViews: { defaults: folderViews.defaults, overrides: folderViews.overrides() }, initialPath: testRoot ? path.join(testRoot, 'Documents') : process.env.EXPLORER_START_PATH };
 }
 ipc('bootstrap', bootstrap);
 ipc('set-language', async (mode: unknown) => {
@@ -243,10 +245,11 @@ let wakeShortcutError = '';
 let savingShortcut = false;
 let versionControlEnabled = true;
 const versionControl = new VersionControl(path.join(app.getPath('userData'), 'vcs-backups'));
+const folderViews = new FolderViews(path.join(app.getPath('userData'), 'folder-views.json'));
 const versionControlFile = () => path.join(app.getPath('userData'), 'version-control.json');
 const shortcutFile = () => path.join(app.getPath('userData'), 'shortcuts.json');
 function appSettings(): AppSettings {
-  return { wakeShortcut, wakeShortcutError, operationShortcuts, versionControl: versionControlEnabled };
+  return { wakeShortcut, wakeShortcutError, operationShortcuts, versionControl: versionControlEnabled, folderViewDefaults: folderViews.defaults };
 }
 async function writeShortcutSettings(nextWake: string, nextOperations: OperationShortcuts) {
   const file = shortcutFile();
@@ -294,6 +297,48 @@ ipc('set-version-control', async (enabled: unknown) => {
     notifySettings();
     return appSettings();
   } finally { savingShortcut = false; }
+});
+function folderViewLocation(input: unknown) {
+  if (typeof input !== 'string' || !input || input.length > 4096 || input.includes('\0')) throw new Error(tr('无效的视图设置。'));
+  return input;
+}
+function folderViewDefaults(input: unknown) {
+  if (!validFolderView(input)) throw new Error(tr('无效的视图设置。'));
+  return input;
+}
+function notifyFolderViews(change: FolderViewChange) {
+  for (const owner of windows.keys()) owner.webContents.send('folder-views-changed', change);
+}
+ipc('set-folder-view', async (location: unknown, override: unknown) => {
+  const key = folderViewLocation(location);
+  if (!validOverride(override)) throw new Error(tr('无效的视图设置。'));
+  const { override: stored, removed } = await folderViews.set(key, override);
+  for (const location of removed) notifyFolderViews({ location, override: null });
+  notifyFolderViews({ location: key, override: stored });
+  return stored;
+});
+ipc('touch-folder-view', async (location: unknown) => {
+  const key = folderViewLocation(location);
+  if (await folderViews.touch(key)) notifyFolderViews({ location: key, override: null });
+});
+ipc('import-legacy-folder-views', async (input: unknown) => {
+  const legacy = input as LegacyFolderViews;
+  if (!legacy || typeof legacy !== 'object' || !legacy.layouts || typeof legacy.layouts !== 'object' || Array.isArray(legacy.layouts) || Object.keys(legacy.layouts).length > 10_000) throw new Error(tr('无效的视图设置。'));
+  const layouts = Object.fromEntries(Object.entries(legacy.layouts).filter(([location, layout]) => { try { folderViewLocation(location); return validLayout(layout); } catch { return false; } }));
+  await folderViews.importLegacy({ layouts, sort: validSort(legacy.sort) ? legacy.sort : undefined });
+  notifySettings();
+});
+ipc('set-folder-view-defaults', async (input: unknown) => {
+  await folderViews.setDefaults(folderViewDefaults(input));
+  notifySettings();
+  return appSettings();
+});
+ipc('reset-folder-views', async (input: unknown) => {
+  await folderViews.reset(input === undefined ? undefined : folderViewDefaults(input));
+  // New defaults first, so no window briefly shows the old defaults.
+  notifySettings();
+  notifyFolderViews({ reset: true });
+  return appSettings();
 });
 ipc('vcs-status', (directory: string, force: unknown = false) => versionControl.status(directory, force === true));
 ipc('vcs-diff', (directory: string, paths: string[]) => versionControl.diff(directory, paths));
@@ -739,6 +784,7 @@ app.whenReady().then(async () => {
     versionControlEnabled = saved.enabled !== false;
   } catch { /* Version control is enabled by default, including existing installs. */ }
   versionControl.setEnabled(versionControlEnabled);
+  await folderViews.load();
   nativeTheme.on('updated', () => { for (const window of windows.keys()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff'); });
   try {
     const saved = JSON.parse(await fs.readFile(shortcutFile(), 'utf8'));

@@ -1,6 +1,7 @@
 import type { LanguageMode, LanguageState } from './i18n';
 import type { OperationShortcuts } from './shortcuts';
 import type { VcsAction, VcsDiff, VcsPlan, VcsResult, VcsStatus } from './vcs';
+import type { FolderView, FolderViewChange, FolderViewOverride, LegacyFolderViews } from './folder-views';
 export interface FileEntry {
   path: string; name: string; isDirectory: boolean; isSymlink: boolean;
   size: number; modified: number; created: number; extension: string; hidden: boolean;
@@ -12,7 +13,7 @@ export interface Volume extends Place { total: number; free: number; canEject: b
 export interface NetworkServer { name: string; address: string }
 export type ThemeMode = 'light' | 'dark' | 'system';
 export interface TabState { location: string; history: string[]; index: number }
-export interface Bootstrap { initialTab?: TabState; language: LanguageState; theme: ThemeMode; home: string; places: Place[]; volumes: Volume[]; initialPath?: string }
+export interface Bootstrap { initialTab?: TabState; language: LanguageState; theme: ThemeMode; home: string; places: Place[]; volumes: Volume[]; folderViews: { defaults: FolderView; overrides: Record<string, FolderViewOverride> }; initialPath?: string }
 export interface Listing { path: string; entries: FileEntry[] }
 export interface TrashListing { entries: FileEntry[]; roots: string[]; unavailable: string[] }
 export interface SearchResult { entries: FileEntry[]; truncated: boolean; skipped: number }
@@ -21,7 +22,7 @@ export interface OperationResult { succeeded: string[]; errors: { path: string; 
 export type ClipboardInfo = { paths: string[]; cut: boolean };
 export type Preview = { kind: 'image' | 'text' | 'none'; content: string; truncated?: boolean };
 export type ExtractMode = 'choose' | 'here' | 'folder';
-export interface AppSettings { wakeShortcut: string; wakeShortcutError: string; operationShortcuts: OperationShortcuts; versionControl: boolean }
+export interface AppSettings { wakeShortcut: string; wakeShortcutError: string; operationShortcuts: OperationShortcuts; versionControl: boolean; folderViewDefaults: FolderView }
 export interface ArchivePreview { path: string; name: string; entries: { path: string; directory: boolean; size: number }[] }
 export interface AboutInfo { version: string; author: string; license: string; platform: string }
 export interface UpdateState {
@@ -65,6 +66,12 @@ export interface ExplorerAPI {
   setWakeShortcut(value: string): Promise<AppSettings>;
   setOperationShortcuts(value: OperationShortcuts): Promise<AppSettings>;
   onSettingsChanged(callback: (settings: AppSettings) => void): () => void;
+  setFolderView(location: string, override: FolderViewOverride): Promise<FolderViewOverride | null>;
+  touchFolderView(location: string): Promise<void>;
+  importLegacyFolderViews(legacy: LegacyFolderViews): Promise<void>;
+  setFolderViewDefaults(defaults: FolderView): Promise<AppSettings>;
+  resetFolderViews(defaults?: FolderView): Promise<AppSettings>;
+  onFolderViewsChanged(callback: (change: FolderViewChange) => void): () => void;
   list(path: string, refreshIcons?: boolean): Promise<Listing>;
   search(path: string, query: string, hidden: boolean): Promise<SearchResult>;
   cancelSearch(): Promise<void>;

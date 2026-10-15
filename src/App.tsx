@@ -14,6 +14,7 @@ import {
 import { createPortal } from 'react-dom';
 import { archiveFolderName, isArchive } from '../shared/archives';
 import { toolbarActions, defaultToolbar, normalizeToolbar, type ToolbarAction } from '../shared/toolbar';
+import { defaultFolderView, normalizeOverride, resolveFolderView, type FolderLayout, type FolderSort, type FolderView, type FolderViewOverride, type SortKey, type ViewMode } from '../shared/folder-views';
 import type { AppSettings, FileViewerSettings, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 import { vcsMarks, type VcsAction, type VcsState, type VcsStatus } from '../shared/vcs';
 import { VcsDialog, vcsStateLabel } from './VcsDialog';
@@ -33,10 +34,23 @@ function isEditing(element: EventTarget | null) {
 }
 function isTrashLocation(value: string) { return value === TRASH || value.startsWith('trash:'); }
 type Tab = { id: string; location: string; history: string[]; index: number };
-type SortKey = 'name' | 'modified' | 'type' | 'size';
-type View = 'details' | 'icons' | 'list' | 'tiles' | 'content';
-type DirectoryView = { view: View; iconSize: number };
-const defaultDirectoryView: DirectoryView = { view: 'icons', iconSize: 64 };
+type View = ViewMode;
+function withFolderView(views: Record<string, FolderViewOverride>, location: string, override: FolderViewOverride | null) {
+  const next = { ...views }; delete next[location];
+  if (override) next[location] = override;
+  return next;
+}
+// Earlier versions kept folder layouts and the global sort in localStorage.
+// Import them before the first bootstrap so the first listing already uses them.
+async function migrateFolderViews() {
+  const layouts = stored<unknown>('directoryViews', null); const sort = stored<unknown>('sort', null); const ascending = stored<unknown>('ascending', null);
+  if (layouts === null && sort === null && ascending === null) return;
+  await api.importLegacyFolderViews({
+    layouts: layouts && typeof layouts === 'object' && !Array.isArray(layouts) ? layouts as Record<string, FolderLayout> : {},
+    sort: { sort: sort ?? defaultFolderView.sort, ascending: ascending ?? defaultFolderView.ascending } as FolderSort,
+  });
+  for (const key of ['directoryViews', 'sort', 'ascending']) localStorage.removeItem(key);
+}
 type ToolbarTool = { name: string; label: string; icon: ReactNode; disabled: boolean; action: (event: MouseEvent<HTMLButtonElement>) => void };
 type MenuItem = { children?: MenuItem[]; radio?: boolean; label: string; icon?: ReactNode; action?: () => void; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean; divider?: boolean };
 type Popup = { x: number; y: number; items: MenuItem[]; quickActions?: MenuItem[] };
@@ -138,7 +152,7 @@ export default function App() {
   const [vcs, setVcs] = useState<{ directory: string; status: VcsStatus } | null>(null);
   useEffect(() => {
     let live = true;
-    const receive = (value: AppSettings) => { if (live) { setOperationShortcuts(value.operationShortcuts); setVcsEnabled(value.versionControl); } };
+    const receive = (value: AppSettings) => { if (live) { setOperationShortcuts(value.operationShortcuts); setVcsEnabled(value.versionControl); setFolderViewDefaults(value.folderViewDefaults); } };
     void api.settings().then(receive).catch(e => setError(errorMessage(e)));
     const stop = api.onSettingsChanged(receive);
     return () => { live = false; stop(); };
@@ -174,16 +188,28 @@ export default function App() {
   const cancelMarquee = useRef<(() => void) | null>(null);
   const suppressMarqueeClick = useRef(false);
   const selectionAnchor = useRef<string | null>(null);
-  const [directoryViews, setDirectoryViews] = useState<Record<string, DirectoryView>>(() => stored('directoryViews', {}));
-  const directoryView = directoryViews[location] ?? defaultDirectoryView;
-  const view = directoryView.view;
-  const iconSize = typeof directoryView.iconSize === 'number' && Number.isFinite(directoryView.iconSize) ? Math.min(128, Math.max(32, Math.round(directoryView.iconSize / 8) * 8)) : defaultDirectoryView.iconSize;
-  function changeView(changes: Partial<DirectoryView>) {
-    setDirectoryViews(previous => ({ ...previous, [location]: { ...(previous[location] ?? defaultDirectoryView), ...changes } }));
+  // The main process owns the defaults and per-folder overrides; this window
+  // mirrors them. Layout and sort override the defaults independently.
+  const [folderViewDefaults, setFolderViewDefaults] = useState<FolderView>(defaultFolderView);
+  const [folderViews, setFolderViews] = useState<Record<string, FolderViewOverride>>({});
+  const { view, iconSize, sort, ascending } = resolveFolderView(folderViewDefaults, folderViews[location]);
+  // Listeners registered once read the latest state here, and consecutive
+  // changes before a render build on each other rather than on that render.
+  const folderViewScope = useRef({ location, defaults: folderViewDefaults, folderViews });
+  folderViewScope.current = { location, defaults: folderViewDefaults, folderViews };
+  function changeFolderView(override: (effective: FolderView) => FolderViewOverride) {
+    const scope = folderViewScope.current;
+    if (!scope.location) return;
+    const current = scope.folderViews[scope.location] ?? {};
+    const next = override(resolveFolderView(scope.defaults, current));
+    scope.folderViews = withFolderView(scope.folderViews, scope.location, normalizeOverride(next, scope.defaults, current));
+    setFolderViews(scope.folderViews);
+    api.setFolderView(scope.location, next).catch(error => setError(errorMessage(error)));
   }
-  useEffect(() => { localStorage.setItem('directoryViews', JSON.stringify(directoryViews)); }, [directoryViews]);
-  const [sort, setSort] = useState<SortKey>(() => stored('sort', 'name'));
-  const [ascending, setAscending] = useState(() => stored('ascending', true));
+  const changeView = (changes: Partial<FolderLayout>) => changeFolderView(effective => ({ layout: { view: effective.view, iconSize: effective.iconSize, ...changes } }));
+  const changeSort = (changes: Partial<FolderSort>) => changeFolderView(effective => ({ sort: { sort: effective.sort, ascending: effective.ascending, ...changes } }));
+  useEffect(() => api.onFolderViewsChanged(change => setFolderViews(previous => 'reset' in change ? {} : withFolderView(previous, change.location, change.override))), []);
+  useEffect(() => { if (location) api.touchFolderView(location).catch(() => { /* Recency only. */ }); }, [location]);
   const [hidden, setHidden] = useState(() => stored('hidden', false));
   const [extensions, setExtensions] = useState(() => stored('extensions', true));
   const [details, setDetails] = useState(() => stored('details', false));
@@ -299,8 +325,9 @@ export default function App() {
     return () => { live = false; };
   }, [boot, openPaths, modal, operation, editingName, tabs]);
 
-  useEffect(() => { api.bootstrap().then(data => {
+  useEffect(() => { migrateFolderViews().catch(e => setError(errorMessage(e))).then(() => api.bootstrap()).then(data => {
     applyLanguage(data.language); setBoot(data); setTheme(data.theme);
+    setFolderViewDefaults(data.folderViews.defaults); setFolderViews(data.folderViews.overrides);
     if (!stored('finderQuickAccessOrder', false)) {
       const defaults = data.places.filter(place => ['applications', 'desktop', 'download', 'document'].includes(place.icon)).map(place => place.path);
       setPlaceOrder(previous => [...defaults, ...previous.filter(path => !defaults.includes(path))]);
@@ -312,7 +339,7 @@ export default function App() {
     setTabs(initial); setActiveID(initial[0].id);
     void api.windowReady();
   }).catch(e => { setError(errorMessage(e)); setLoading(false); }); }, []);
-  useEffect(() => { for (const [key, value] of Object.entries({ sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent]);
+  useEffect(() => { for (const [key, value] of Object.entries({ hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent]);
   useEffect(() => { if (boot) localStorage.setItem('tabs', JSON.stringify(tabs.map(t => t.location))); }, [tabs, boot]);
   // Animate the existing surface, preserving focus, selection, and scroll state.
   useEffect(() => {
@@ -805,9 +832,9 @@ export default function App() {
     menuAt(event, entry ? items.filter(item => ![tr('剪切'), tr('复制'), tr('重命名'), tr('移到回收站')].includes(item.label)) : items, quickActions);
   }
   const sortMenu: MenuItem[] = [
-    ...(['name', 'modified', 'type', 'size'] as SortKey[]).map(key => ({ label: ({ name: tr('名称'), modified: tr('修改日期'), type: tr('类型'), size: tr('大小') })[key], checked: sort === key, action: () => setSort(key) })),
-    { label: tr('递增'), checked: ascending, divider: true, action: () => setAscending(true) },
-    { label: tr('递减'), checked: !ascending, action: () => setAscending(false) },
+    ...(['name', 'modified', 'type', 'size'] as SortKey[]).map(key => ({ label: ({ name: tr('名称'), modified: tr('修改日期'), type: tr('类型'), size: tr('大小') })[key], checked: sort === key, action: () => changeSort({ sort: key }) })),
+    { label: tr('递增'), checked: ascending, divider: true, action: () => changeSort({ ascending: true }) },
+    { label: tr('递减'), checked: !ascending, action: () => changeSort({ ascending: false }) },
   ];
   const viewMenu: MenuItem[] = [
     ...[{ name: tr('超大图标'), size: 128, icon: <ViewGlyph mode="extra"/> }, { name: tr('大图标'), size: 64, icon: <ViewGlyph mode="large"/> }, { name: tr('中图标'), size: 48, icon: <ViewGlyph mode="medium"/> }, { name: tr('小图标'), size: 32, icon: <ViewGlyph mode="small"/> }].map(option => ({ label: option.name, icon: option.icon, radio: true, checked: view === 'icons' && iconSize === option.size, action: () => { changeView({ view: 'icons', iconSize: option.size }); } })),
@@ -824,6 +851,7 @@ export default function App() {
       { label: tr('文件扩展名'), icon: <FileType/>, checked: extensions, action: () => setExtensions(v => !v) },
       { label: tr('隐藏的项目'), icon: <Eye/>, checked: hidden, action: () => setHidden(v => !v) },
     ] },
+    { label: tr('应用到所有文件夹'), divider: true, action: () => { api.resetFolderViews({ view, iconSize, sort, ascending }).catch(error => setError(errorMessage(error))); } },
   ];
   async function goAddress() {
     let path = address.trim();
@@ -1044,10 +1072,9 @@ export default function App() {
     const zoomIcons = (event: WheelEvent) => {
       if (!event.ctrlKey || !event.deltaY) return;
       event.preventDefault();
-      setDirectoryViews(previous => {
-        const current = previous[location] ?? defaultDirectoryView;
-        return { ...previous, [location]: { view: 'icons', iconSize: Math.min(128, Math.max(32, current.iconSize + (event.deltaY < 0 ? 8 : -8))) } };
-      });
+      const scope = folderViewScope.current;
+      const current = resolveFolderView(scope.defaults, scope.folderViews[scope.location]);
+      changeView({ view: 'icons', iconSize: Math.min(128, Math.max(32, current.iconSize + (event.deltaY < 0 ? 8 : -8))) });
     };
     element?.addEventListener('wheel', zoomIcons, { passive: false });
     return () => element?.removeEventListener('wheel', zoomIcons);
@@ -1065,7 +1092,7 @@ export default function App() {
     return <div className={`file-items ${view === 'icons' ? `icon-grid ${iconSize === 32 ? 'small-icons' : ''}` : view === 'details' ? 'file-table' : view === 'content' ? 'file-content-view' : `file-${view}`} ${checkboxes ? 'with-checkboxes' : ''}`} style={view === 'icons' ? { '--file-icon-size': `${iconSize}px` } as CSSProperties : undefined} role="listbox" aria-label={tr('文件列表')} aria-multiselectable="true">
       {view === 'details' && <div className="table-heading" role="presentation">
         {checkboxes && <input className="select-all-checkbox" type="checkbox" aria-label={tr('全选文件')} checked={visible.length > 0 && chosen.length === visible.length} ref={element => { if (element) element.indeterminate = chosen.length > 0 && chosen.length < visible.length; }} onChange={event => setSelected(new Set(event.target.checked ? visible.map(entry => entry.path) : []))}/>}
-        {(['name', 'modified', 'type', 'size'] as SortKey[]).map(key => <button key={key} className={`col-${key}`} onClick={() => { if (sort === key) setAscending(v => !v); else { setSort(key); setAscending(true); } }}>{({ name: tr('名称'), modified: tr('修改日期'), type: tr('类型'), size: tr('大小') })[key]}{sort === key && <ChevronDown size={12} className={ascending ? 'rotated' : ''}/>}</button>)}
+        {(['name', 'modified', 'type', 'size'] as SortKey[]).map(key => <button key={key} className={`col-${key}`} onClick={() => changeSort(sort === key ? { ascending: !ascending } : { sort: key, ascending: true })}>{({ name: tr('名称'), modified: tr('修改日期'), type: tr('类型'), size: tr('大小') })[key]}{sort === key && <ChevronDown size={12} className={ascending ? 'rotated' : ''}/>}</button>)}
       </div>}
       {visible.map((entry, index) => <div key={entry.path} data-path={entry.path} data-index={index} role="option" aria-selected={selected.has(entry.path)} aria-label={entry.name} aria-description={vcsStatus?.states[entry.path] ? vcsStateLabel(vcsStatus.states[entry.path]) : undefined}
         className={`file-row ${selected.has(entry.path) ? 'selected' : ''} ${clipboard.cut && clipboard.paths.includes(entry.path) ? 'cut' : ''} ${dragOver === entry.path ? 'drop-target' : ''} ${entry.hidden ? 'hidden-file' : ''}`}
@@ -1374,6 +1401,7 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
   const [operationDraft, setOperationDraft] = useState<OperationShortcuts>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [foldersReset, setFoldersReset] = useState(false);
   const tabs = [{ id: 'general', label: tr('常规') }, { id: 'toolbar', label: tr('自定义工具栏') }, { id: 'shortcuts', label: tr('键盘快捷键') }, { id: 'about', label: tr('关于') }];
   useEffect(() => {
     let live = true;
@@ -1460,6 +1488,36 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
       }}/><span>{tr('启用 Git / SVN 状态角标和右键菜单')}</span></label>
         <SettingsHelp id={`${id}-vcs-note`} label={tr('版本控制说明')}><p>{tr('仅在仓库内启用。关闭后停止状态检测与刷新；需要已安装 Git 或 SVN 命令行工具。')}</p></SettingsHelp>
       </div></fieldset>
+      <fieldset className="settings-group"><legend>{tr('文件夹视图')}</legend>{(() => {
+        const defaults = settings?.folderViewDefaults ?? defaultFolderView;
+        const change = (changes: Partial<FolderView>) => {
+          const previous = settings; const next = { ...defaults, ...changes };
+          setSettings(current => current ? { ...current, folderViewDefaults: next } : current); setFoldersReset(false);
+          void save(async () => { try { return await api.setFolderViewDefaults(next); } catch (error) { setSettings(previous); throw error; } });
+        };
+        const layouts = [{ value: 'icons:128', label: tr('超大图标') }, { value: 'icons:64', label: tr('大图标') }, { value: 'icons:48', label: tr('中图标') }, { value: 'icons:32', label: tr('小图标') },
+          { value: 'list', label: tr('列表') }, { value: 'details', label: tr('详细信息') }, { value: 'tiles', label: tr('平铺') }, { value: 'content', label: tr('内容') }];
+        const layout = defaults.view === 'icons' ? `icons:${defaults.iconSize}` : defaults.view;
+        // Ctrl+scroll sizes and "Apply to all folders" can leave a size between the presets.
+        if (!layouts.some(option => option.value === layout)) layouts.splice(4, 0, { value: layout, label: tr('图标（{0} 像素）', defaults.iconSize) });
+        return <>
+          <div className="settings-fields">
+          <label className="settings-language"><span>{tr('默认布局')}</span><select aria-label={tr('默认布局')} value={layout} disabled={!settings || busy} onChange={event => {
+            const [view, size] = event.target.value.split(':');
+            change(view === 'icons' ? { view: 'icons', iconSize: Number(size) } : { view: view as FolderView['view'] });
+          }}>{layouts.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+          <label className="settings-language"><span>{tr('默认排序')}</span><select aria-label={tr('默认排序')} value={defaults.sort} disabled={!settings || busy} onChange={event => change({ sort: event.target.value as FolderView['sort'] })}>
+            <option value="name">{tr('名称')}</option><option value="modified">{tr('修改日期')}</option><option value="type">{tr('类型')}</option><option value="size">{tr('大小')}</option>
+          </select></label>
+          <label className="settings-language"><span>{tr('排序方向')}</span><select aria-label={tr('排序方向')} value={defaults.ascending ? 'ascending' : 'descending'} disabled={!settings || busy} onChange={event => change({ ascending: event.target.value === 'ascending' })}>
+            <option value="ascending">{tr('递增')}</option><option value="descending">{tr('递减')}</option>
+          </select></label>
+          </div>
+          <p className="settings-note">{tr('在文件夹中更改布局或排序只影响该文件夹，其余文件夹使用这里的默认值。')}</p>
+          <div className="settings-reset-row"><button type="button" className="secondary-button" disabled={!settings || busy} onClick={() => void save(async () => { const value = await api.resetFolderViews(); setFoldersReset(true); return value; })}>{tr('重置所有文件夹')}</button>
+            {foldersReset && <span className="settings-note" role="status">{tr('所有文件夹已跟随默认值。')}</span>}</div>
+        </>;
+      })()}</fieldset>
     </div>
     <div className="settings-panel" id={`${id}-panel-toolbar`} role="tabpanel" aria-labelledby={`${id}-tab-toolbar`} hidden={section !== 'toolbar'} tabIndex={0}>
       <p className="settings-note">{tr('勾选显示按钮，使用箭头调整顺序。更改自动保存。')}</p>

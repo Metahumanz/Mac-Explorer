@@ -13,7 +13,7 @@ The user's reference is binding: reproduce Windows 11 File Explorer in Operate m
 - Loading, empty directories, search progress, errors, cut state, multi-selection, collision failures, and progress feedback are explicit.
 - At smaller desktop sizes, shrink optional columns and hide the details pane before compromising navigation or the filename column.
 
-- View menu order follows the supplied Windows screenshot: four icon presets, list, details, tiles, content, details pane, preview pane, then Show. Keep a separate selection gutter and icon column; Show opens a viewport-clamped submenu with mouse and keyboard support.
+- View menu order follows the supplied Windows screenshot: four icon presets, list, details, tiles, content, details pane, preview pane, Show, then Apply to all folders. Keep a separate selection gutter and icon column; Show opens a viewport-clamped submenu with mouse and keyboard support.
 - Small icons use horizontal labels; list fills downward into columns; tiles show type/size; content adds date/location. Show settings and mutually exclusive panes persist without resetting navigation or pins.
 
 - More → Settings → General offers Light, Dark, and System, alongside the interface language. Preserve light appearance for existing installs until selected; persist nativeTheme before window creation. Dark uses #191919 file surfaces, #202020 navigation, #242424 menus/toolbars, readable neutral text, and #70c5ff accents. Never invert file icons or change system settings.
