@@ -30,7 +30,7 @@ try {
   const before = await fs.readFile(path.join(target, 'Contents/Resources/app.asar'));
   const module = path.join(root, 'updates.cjs');
   await build({ entryPoints: ['electron/updates.ts'], outfile: module, bundle: true, platform: 'node', format: 'cjs' });
-  app = await electron.launch({ args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+  app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
   const page = await app.firstWindow(); await page.locator('.file-content[aria-busy="false"]').waitFor();
   const result = await app.evaluate(async ({}, { module, target, root, archive, checksum, base64, installer }) => {
     const require = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');

@@ -8,7 +8,7 @@ await fs.mkdir(path.join(root, 'Documents'));
 await fs.mkdir('artifacts/settings', { recursive: true });
 let app;
 try {
-  app = await electron.launch({ colorScheme: null, args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_HIDDEN: '1' } });
+  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_HIDDEN: '1' } });
   const page = await app.firstWindow(); page.setDefaultTimeout(10_000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.getByRole('tab').waitFor();
