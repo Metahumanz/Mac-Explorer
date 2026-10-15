@@ -56,7 +56,8 @@ try {
   assert.equal(await dialog.locator('.archive-entry input:checked').count(), 4);
   await dialog.getByRole('button', { name: '项目 文件夹', exact: true }).dblclick();
   await dialog.getByRole('checkbox', { name: '选择 子目录', exact: true }).check();
-  await dialog.getByRole('combobox', { name: '解压位置' }).selectOption('folder');
+  await dialog.getByRole('button', { name: '解压位置', exact: true }).click();
+  await dialog.getByRole('menuitemradio', { name: '资料 $(test)', exact: true }).click();
   await dialog.getByRole('button', { name: '解压选中项', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.archive-result')?.textContent.includes('已解压到'));
   assert.equal(await fs.readFile(path.join(docs, '资料 $(test)/项目/子目录/内容.txt'), 'utf8'), 'nested');
@@ -108,6 +109,7 @@ try {
   await entry.dblclick(); await page.evaluate(() => window.explorer.setTheme('dark'));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 600));
   await page.waitForFunction(() => matchMedia('(prefers-color-scheme: dark)').matches);
+  await dialog.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
   await page.screenshot({ path: 'artifacts/archive-extract-dark.png' });
   assert.equal(await dialog.locator('.archive-list').evaluate(el => el.scrollWidth <= el.clientWidth), true);
   assert.equal(await dialog.locator('input[type=checkbox]').first().evaluate(el => el.getBoundingClientRect().width), 16);

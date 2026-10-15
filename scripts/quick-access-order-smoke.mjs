@@ -6,7 +6,7 @@ import path from 'node:path';
 import { dropNativeFiles } from './native-file-drop.mjs';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-quick-access-'));
-for (const folder of ['Documents/A', 'Documents/B', 'Desktop', 'Downloads']) await fs.mkdir(path.join(root, folder), { recursive: true });
+for (const folder of ['Applications', 'Documents/A', 'Documents/B', 'Desktop', 'Downloads']) await fs.mkdir(path.join(root, folder), { recursive: true });
 await fs.writeFile(path.join(root, 'Documents', 'note.txt'), 'preserved content');
 const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
@@ -21,7 +21,8 @@ try {
     await source.dragTo(place(name), { targetPosition: { x: box.width / 2, y: box.height * y } });
   };
   const initial = await order();
-  assert.ok(initial.length >= 3, `default places: ${initial}`);
+  assert.deepEqual(initial, ['应用程序', '桌面', '下载', '文档']);
+  assert.equal(await place('应用程序').locator('.icon-applications').count(), 1);
   const [first, second] = initial; const last = initial.at(-1);
   await dragTo(place(last), first, 0.4); // Upper half inserts before.
   assert.deepEqual(await order(), [last, ...initial.slice(0, -1)]);

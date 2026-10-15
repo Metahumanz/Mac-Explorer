@@ -6,6 +6,7 @@ import path from 'node:path';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-apps-address-'));
 await fs.mkdir(path.join(root, 'Documents', 'Example.app'), { recursive: true });
 await fs.mkdir(path.join(root, 'Applications'));
+for (const folder of ['Pinned1', 'Pinned2']) await fs.mkdir(path.join(root, folder));
 await fs.writeFile(path.join(root, 'Documents', 'keep.txt'), 'preserved');
 const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
@@ -14,6 +15,15 @@ try {
   });
   const page = await app.firstWindow();
   await page.locator('.file-content[aria-busy=false]').waitFor();
+  await page.evaluate(root => {
+    localStorage.setItem('pins', JSON.stringify([`${root}/Pinned1`, `${root}/Pinned2`, `${root}/Applications`]));
+    localStorage.setItem('placeOrder', JSON.stringify([`${root}/Documents`, 'trash', `${root}/Pinned2`, `${root}/Pinned1`, `${root}/Applications`]));
+    localStorage.removeItem('finderQuickAccessOrder');
+  }, root);
+  await page.reload(); await page.locator('.file-content[aria-busy=false]').waitFor();
+  assert.equal(await page.locator('.sidebar-section > .tree-node').first().locator('.tree-row > .nav-item > span:last-of-type').textContent(), '应用程序');
+  assert.equal(await page.locator('.sidebar-section .icon-applications').count(), 1);
+  assert.deepEqual(await page.locator('.sidebar-section > .tree-node > .tree-row > .nav-item > span:last-of-type, .sidebar-section > .nav-item > span:last-of-type').allTextContents(), ['应用程序', '文档', 'Pinned2', 'Pinned1']);
   assert.equal(await page.locator('.entry-name', { hasText: 'Example' }).innerText(), 'Example');
   assert.equal(await page.locator('.entry-name', { hasText: 'keep' }).innerText(), 'keep.txt');
   await page.getByRole('button', { name: '编辑地址 (⇧⌘G)', exact: true }).click();

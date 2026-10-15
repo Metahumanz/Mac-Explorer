@@ -15,26 +15,37 @@ try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   const shortcut = page.locator('.sidebar').getByRole('button', { name: '回收站', exact: true });
   const row = name => page.getByRole('option', { name, exact: true });
+  await shortcut.waitFor();
+  assert.equal(await page.locator('.sidebar-section').getByRole('button', { name: '回收站', exact: true }).count(), 0);
+  assert.equal(await shortcut.locator('.pin-mark').count(), 0);
+  assert.equal(await shortcut.evaluate(node => node.previousElementSibling?.classList.contains('tree-node')), true);
+  assert.equal(await shortcut.evaluate(node => node.previousElementSibling === [...node.parentElement.children].filter(child => child.classList.contains('tree-node')).at(-1)), true);
   await shortcut.click(); await row('本机.txt').waitFor(); await row('外接.txt').waitFor();
   assert.equal(await page.getByRole('button', { name: '新建', exact: true }).isDisabled(), true);
   await row('本机.txt').click();
-  for (const name of ['重命名 (Return)', '移到回收站 (⌘⌫)', '剪切 (Ctrl+X)']) assert.equal(await page.getByRole('button', { name, exact: true }).isDisabled(), true);
+  for (const name of ['重命名 (Return)', '移到回收站 (⌘⌫)', '剪切 (⌘X)']) assert.equal(await page.getByRole('button', { name, exact: true }).isDisabled(), true);
   await page.keyboard.press('Enter'); assert.equal(await page.getByLabel('名称', { exact: true }).count(), 0);
   await page.keyboard.press('Meta+Backspace'); assert.equal(await page.getByRole('dialog').count(), 0);
   await row('旧文件夹').dblclick(); await row('保留.txt').waitFor();
   await page.keyboard.press('Backspace'); await row('本机.txt').waitFor();
   await page.keyboard.press('Meta+['); await row('保留.txt').waitFor();
   await page.keyboard.press('Meta+]'); await row('本机.txt').waitFor();
-  await shortcut.click({ button: 'right' }); await page.getByRole('menuitem', { name: '从快速访问取消固定', exact: true }).click();
-  assert.equal(await shortcut.count(), 0);
+  await shortcut.click({ button: 'right' });
+  assert.equal(await page.getByRole('menuitem', { name: '从快速访问取消固定', exact: true }).count(), 0);
+  await page.getByRole('menuitem', { name: '在新标签页中打开', exact: true }).click();
+  await row('本机.txt').waitFor();
+  // Old pin and unpin preferences cannot duplicate or hide the fixed entry.
+  await page.evaluate(() => { localStorage.setItem('pins', JSON.stringify(['trash'])); localStorage.setItem('unpinnedDefaults', JSON.stringify(['trash'])); });
   await app.evaluate(({ ipcMain }) => {
     const bootstrap = ipcMain._invokeHandlers.get('bootstrap');
     ipcMain.removeHandler('bootstrap');
     ipcMain.handle('bootstrap', async (...args) => ({ ...await bootstrap(...args), initialPath: undefined }));
   });
-  await page.reload(); await page.locator('.file-content[aria-busy=false]').waitFor(); assert.equal(await shortcut.count(), 0);
+  await page.reload(); await page.locator('.file-content[aria-busy=false]').waitFor(); assert.equal(await shortcut.count(), 1);
   await page.getByRole('tab', { name: '回收站', exact: true }).click(); await row('本机.txt').waitFor();
-  await page.locator('.file-content').click({ button: 'right' }); await page.getByRole('menuitem', { name: '固定到快速访问', exact: true }).click(); await shortcut.waitFor();
+  await page.locator('.file-content').click({ button: 'right' });
+  assert.equal(await page.getByRole('menuitem', { name: '固定到快速访问', exact: true }).count(), 0);
+  await page.keyboard.press('Escape');
   await page.screenshot({ path: 'artifacts/trash-browser-fixture.png' });
   assert.equal(await fs.readFile(path.join(root, '.Trash', '本机.txt'), 'utf8'), 'home');
   assert.equal(await fs.readFile(path.join(root, '.Trash', '旧文件夹', '保留.txt'), 'utf8'), 'preserved');
@@ -57,5 +68,5 @@ try {
   await page.getByRole('button', { name: '前往设置', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: '无法打开系统设置，请手动前往' }).waitFor();
 
-  console.log('PASS: default trash shortcut, merged volume entries, folder/history navigation, readonly guards, persistent unpin/repin, fixture content preserved.');
+  console.log('PASS: fixed trash below volumes, legacy pin preferences, new-tab opening, merged volume entries, folder/history navigation, readonly guards, fixture content preserved.');
 } finally { await app.close(); await fs.rm(root, { recursive: true, force: true }); }

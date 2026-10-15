@@ -7,25 +7,35 @@ fail() { printf '安装失败：%s\n' "$*" >&2; exit 1; }
 [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]] || fail '目前仅支持 Apple Silicon（M 系列芯片）。'
 [[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ]] || fail '需要 macOS 13 或更高版本。'
 [[ "$EUID" -ne 0 ]] || fail '请使用普通用户运行，不要加 sudo。'
+prepared_update="${MAC_EXPLORER_PREPARED_UPDATE:-}"
 allow_unnotarized="${MAC_EXPLORER_ALLOW_UNNOTARIZED:-0}"
 [[ "$allow_unnotarized" == 0 || "$allow_unnotarized" == 1 ]] || fail 'MAC_EXPLORER_ALLOW_UNNOTARIZED 只能是 0 或 1。'
 
 repo='https://github.com/qixiaoyu27/Mac-Explorer'
-install_dir="${MAC_EXPLORER_INSTALL_DIR:-$HOME/Applications}"
-# Update an existing system-wide installation in place instead of creating a duplicate.
-if [[ -z "${MAC_EXPLORER_INSTALL_DIR:-}" && ! -e "$install_dir/Mac Explorer.app" && -e '/Applications/Mac Explorer.app' ]]; then
-  install_dir='/Applications'
-fi
+install_dir="${MAC_EXPLORER_INSTALL_DIR:-/Applications}"
 [[ "$install_dir" == /* ]] || fail '安装目录必须是绝对路径。'
 mkdir -p "$install_dir"
 [[ -w "$install_dir" ]] || fail "无法写入 $install_dir，请选择可写目录后重试。"
 destination="$install_dir/Mac Explorer.app"
 [[ ! -L "$destination" ]] || fail '目标应用是符号链接，请先自行检查。'
-if [[ -e "$destination" ]]; then
-  identity=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$destination/Contents/Info.plist" 2>/dev/null || true)
+existing="$destination"
+legacy_app="$HOME/Applications/Mac Explorer.app"
+if [[ "$install_dir" == /Applications && ! -e "$destination" && ( -e "$legacy_app" || -L "$legacy_app" ) ]]; then
+  existing="$legacy_app"
+fi
+[[ ! -L "$existing" ]] || fail '已有应用是符号链接，请先自行检查。'
+if [[ -e "$existing" ]]; then
+  identity=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$existing/Contents/Info.plist" 2>/dev/null || true)
   [[ "$identity" == local.macexplorer.desktop ]] || fail '目标位置存在其他应用，未作修改。'
 fi
 app_running() { pgrep -f '/Mac Explorer[.]app/Contents/MacOS/Mac Explorer($| )' >/dev/null; }
+relocate_existing() {
+  [[ "$existing" != "$destination" ]] || return 0
+  app_running && fail '请先退出 Mac Explorer，再重新运行此命令完成迁移。'
+  [[ ! -e "$destination" && ! -L "$destination" ]] || fail '目标位置已出现其他应用，原安装未作修改。'
+  mv "$existing" "$destination"
+  printf '已移至应用程序：%s\n' "$destination"
+}
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/mac-explorer-download.XXXXXX")
 stage=''
@@ -35,10 +45,11 @@ download_pid=''
 cleanup() {
   status=$?
   if [[ -n "$download_pid" ]]; then kill "$download_pid" 2>/dev/null || true; wait "$download_pid" 2>/dev/null || true; fi
-  if [[ "$installed" == 0 && -n "$backup" && ! -e "$destination" && -d "$backup" ]]; then
-    mv "$backup" "$destination" || printf '旧版本保留在：%s\n' "$backup" >&2
+  if [[ "$installed" == 0 && -n "$backup" && ! -e "$existing" && ! -L "$existing" && -d "$backup" ]]; then
+    mv "$backup" "$existing" || printf '旧版本保留在：%s\n' "$backup" >&2
   fi
-  [[ -z "$stage" ]] || rm -rf "$stage"
+  # A failed restoration must leave the temporary old app available for recovery.
+  if [[ -n "$stage" && ( "$installed" == 1 || -z "$backup" || ! -e "$backup" ) ]]; then rm -rf "$stage"; fi
   rm -rf "$work"
   exit "$status"
 }
@@ -88,26 +99,35 @@ download_archive() {
 }
 
 printf '正在查询最新版…\n'
-fetch "$repo/releases/latest/download/SHA256SUMS.txt" "$work/checksums"
+if [[ -n "$prepared_update" ]]; then
+  [[ "$prepared_update" == /* && -d "$prepared_update" && ! -L "$prepared_update" ]] || fail '无效的更新目录。'
+  cp "$prepared_update/SHA256SUMS.txt" "$work/checksums"
+else
+  fetch "$repo/releases/latest/download/SHA256SUMS.txt" "$work/checksums"
+fi
 entry=$(awk 'length($1)==64 && $1 !~ /[^[:xdigit:]]/ && $2 ~ /^Mac-Explorer-[0-9]+\.[0-9]+\.[0-9]+-mac-arm64\.zip$/ { print $1 " " $2 }' "$work/checksums")
 [[ -n "$entry" && "$entry" != *$'\n'* ]] || fail '发布校验文件格式不正确。'
 expected=${entry%% *}
 archive=${entry#* }
 version=${archive#Mac-Explorer-}
 version=${version%-mac-arm64.zip}
-if [[ -e "$destination" ]]; then
-  current_version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$destination/Contents/Info.plist" 2>/dev/null || true)
+if [[ -e "$existing" ]]; then
+  current_version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$existing/Contents/Info.plist" 2>/dev/null || true)
   [[ "$current_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail '无法识别已安装版本，未作修改。'
   printf '已安装：v%s · 最新版：v%s\n' "$current_version" "$version"
   comparison=$(version_compare "$current_version" "$version")
-  if [[ "$comparison" == 0 ]]; then printf '已是最新版，无需下载安装。\n'; exit 0; fi
-  if [[ "$comparison" == 1 ]]; then printf '本地版本较新，保留当前安装，不降级。\n'; exit 0; fi
+  if [[ "$comparison" == 0 ]]; then relocate_existing; printf '已是最新版，无需下载安装。\n'; exit 0; fi
+  if [[ "$comparison" == 1 ]]; then relocate_existing; printf '本地版本较新，保留当前安装，不降级。\n'; exit 0; fi
   printf '发现新版本，准备更新…\n'
 fi
 app_running && fail '请先退出 Mac Explorer，再重新运行此命令完成更新。'
 printf '正在下载 Mac Explorer %s…\n' "$version"
 # Pin the ZIP to the version selected from the checksum file, even during a new release.
-download_archive "$repo/releases/download/v$version/$archive"
+if [[ -n "$prepared_update" ]]; then
+  cp "$prepared_update/$archive" "$work/$archive"
+else
+  download_archive "$repo/releases/download/v$version/$archive"
+fi
 actual=$(shasum -a 256 "$work/$archive" | awk '{print $1}')
 [[ "$actual" == "$expected" ]] || fail '下载校验不一致，原安装未作修改。'
 printf '校验通过，正在准备安装…\n'
@@ -127,12 +147,12 @@ if [[ "$allow_unnotarized" == 1 ]]; then
   codesign --verify --deep --strict "$stage/Mac Explorer.app"
 fi
 app_running && fail '下载期间应用被打开，请先退出后重试。'
-if [[ -e "$destination" ]]; then
-  backup_dir="$install_dir/.Mac Explorer Backups"
-  mkdir -p "$backup_dir"
-  backup_parent=$(mktemp -d "$backup_dir/$(date +%Y%m%d-%H%M%S).XXXXXX")
-  backup="$backup_parent/Mac Explorer.app"
-  mv "$destination" "$backup"
+if [[ "$existing" != "$destination" && ( -e "$destination" || -L "$destination" ) ]]; then
+  fail '目标位置已出现其他应用，原安装未作修改。'
+fi
+if [[ -e "$existing" ]]; then
+  backup="$stage/previous.app"
+  mv "$existing" "$backup"
 fi
 mv "$stage/Mac Explorer.app" "$destination"
 installed=1
@@ -154,11 +174,6 @@ show_completion() {
   printf '  %s│%s\n' "$muted" "$reset"
   printf '  %s│  安装位置%s\n' "$muted" "$reset"
   printf '  %s│%s  %s\n' "$muted" "$reset" "$destination"
-  if [[ -n "$backup" ]]; then
-    printf '  %s│%s\n' "$muted" "$reset"
-    printf '  %s│  旧版本备份%s\n' "$muted" "$reset"
-    printf '  %s│%s  %s\n' "$muted" "$reset" "$backup"
-  fi
   printf '  %s│%s\n' "$muted" "$reset"
   printf '  %s├───────────────────────────────%s\n' "$muted" "$reset"
   printf '  %s│%s\n' "$muted" "$reset"

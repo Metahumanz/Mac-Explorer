@@ -25,12 +25,20 @@ Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户：熟悉�
 
 ## 下载与安装
 
+### 应用内在线更新
+
+在「设置 → 关于」查看版本、开发者、开源许可和项目链接。点击「检查更新」读取 GitHub Releases 的正式版本，更新说明请前往「GitHub 发布页」查看；有新版时可下载，校验完成后点击「重启并安装」。关闭设置窗口不会中断下载。
+
+安装器等待应用退出后才替换应用，保留偏好设置；旧应用仅在替换过程中临时保留，安装成功后直接清理，不留下旧版备份。替换失败会尝试还原并重新打开旧版；若还原失败，会保留临时旧应用供恢复。安装失败的日志保存在应用用户数据目录的 `updates/download-*/install.log`，「关于」仅显示简短失败提示，不展示日志内容。
+
+在线安装适用于已安装、位于可写目录的 Apple Silicon 版本；开发模式可以检查更新。当前发布使用临时签名、未经 Apple 公证，更新不会自动移除系统隔离标记，安装后可能仍需 macOS 确认。
+
 ### 一行命令安装或更新（推荐）
 
 打开 macOS 的「终端」，复制并执行：
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.40/scripts/install.sh)"
+MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.51/scripts/install.sh)"
 ```
 
 如果 Mac Explorer 让你用 Mac 更顺手，欢迎到 [GitHub 点个 ⭐ Star](https://github.com/qixiaoyu27/Mac-Explorer)，支持项目持续更新！
@@ -39,8 +47,8 @@ Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户：熟悉�
 
 无需安装 npm、Node.js 或 Homebrew，也不需要 `sudo`。命令会下载并运行[本仓库的安装脚本](scripts/install.sh)，自动获取最新版本、校验 SHA-256 和应用签名，安装后启动应用。
 
-- 首次默认安装到个人应用程序目录 `~/Applications`；若已有 `/Applications/Mac Explorer.app`，则在该位置更新，需要目录可写。
-- 再次执行同一命令会检查更新：已是最新版则跳过下载，发现新版才安装，不会降级较新的本地版本。需要更新时请先退出 Mac Explorer。旧版本备份在安装目录的 `.Mac Explorer Backups` 中，已有偏好设置保留。
+- 默认安装到系统「应用程序」目录 `/Applications/Mac Explorer.app`，已有该目录版本则原位更新。需要目录可写；无写入权限时会明确报错，不会自动改装到个人目录。
+- 再次执行同一命令会检查更新：已是最新版则跳过下载，发现新版才安装，不会降级较新的本地版本。需要更新时请先退出 Mac Explorer。安装成功后不保留旧版应用备份，已有偏好设置保留。
 - 下载时显示 `【已下载 MiB】/【总大小 MiB】 【进度百分比】`；网络尚未返回总大小时显示待确认，下载失败不会替换已有应用。
 - 默认保留下载隔离标记。如被系统拦截，请参考下方首次打开说明或选择下面的可选命令。
 - GitHub 连接失败时可重试，或使用下面的手动下载安装方式。
@@ -50,7 +58,7 @@ Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户：熟悉�
 如果你信任本项目，并同意移除 **Mac Explorer 这一个应用**的下载隔离标记，可以直接使用这一行：
 
 ```sh
-MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.40/scripts/install.sh)"
+MAC_EXPLORER_INSTALL_DIR=/Applications MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.51/scripts/install.sh)"
 ```
 
 它将下载、校验、移除该应用的隔离标记、安装和启动合并执行。SHA-256 和应用签名校验仍然保留，校验失败就停止；不需要 `sudo`，不关闭系统 Gatekeeper，也不修改其他应用。这不是 Apple 公证或安全背书，系统其他安全检查仍可能拦截。若系统明确提示恶意软件，请勿使用此方式继续运行。
@@ -153,6 +161,12 @@ ZIP、TAR.GZ、7z 已通过测试；其他格式（包括 RAR）取决于 macOS 
 
 在设置中切换到 **自定义工具栏** 标签页，勾选常用操作、用上下箭头调整顺序，或恢复默认布局。支持添加隔空投送、终端、撤销和刷新；更改自动保存并同步到其他窗口。详细信息视图的表头会在滚动时保持可见。
 
+## 隔空投送与网络共享
+
+侧栏的 **隔空投送** 可选择多个文件或文件夹，也可从文件列表或 Finder 拖入页面或侧栏入口，再在 macOS 窗口中选择接收设备。原文件保留在原位置；接收设备需要开启无线局域网、蓝牙并允许被发现。
+
+侧栏的 **网络** 查找局域网内通过 Bonjour 发布的 SMB 共享电脑，也支持手动输入 `smb://server/share`（路径栏同样支持）。账号、密码和共享选择由 macOS 系统窗口处理；挂载成功后在 Mac Explorer 内浏览。已连接的共享会显示在网络页和磁盘列表中。F5 或「重新查找」刷新设备列表；未发现设备时仍可手动连接。首次发现设备可能需要允许本地网络访问。不支持通过地址传入密码。
+
 ## 快捷键
 
 以下是默认按键，可在设置中自定义各项文件操作；输入框内保留标准文本编辑行为。
@@ -235,6 +249,7 @@ npm run dev
 | `npm run test:vcs` | 真实 Electron 中的 Git / SVN 角标、菜单、差异、提交、备份与设置持久化；SVN 测试需要本机安装 Subversion |
 | `npm run test:ui` | Electron 文件操作与键盘流程 |
 | `npm run test:toolbar` | 固定表头、工具栏配置和隔空投送调用（截获发送） |
+| `npm run test:connections` | 真实 Bonjour 发现、隔空投送页面/拖放、SMB 连接与导航；投送和挂载使用原生接口替身，不传输文件或挂载真实服务器 |
 | `npm run test:view` / `npm run test:theme` | 视图、复选框、外观与设置保存 |
 | `npm run test:icons` | 图标分辨率、尺寸和路径编辑 |
 | `npm run test:archive` / `npm run test:compression` | 归档浏览、解压、压缩与文件保留 |

@@ -34,7 +34,22 @@ try {
  await entry.waitFor(); await entry.dblclick();
  const dialog = page.getByRole('dialog', { name: path.basename(zip), exact: true });
  await dialog.waitFor();
- assert.deepEqual(await dialog.getByRole('combobox', { name: '解压位置' }).locator('option').allTextContents(), ['指定路径', '当前路径', path.basename(zip, '.zip')]);
+ const destination = dialog.getByRole('button', { name: '解压位置', exact: true });
+ await destination.click();
+ const destinationMenu = dialog.getByRole('menu', { name: '解压位置', exact: true });
+ assert.deepEqual(await destinationMenu.getByRole('menuitemradio').allTextContents(), ['指定路径', '当前路径', path.basename(zip, '.zip')]);
+ assert.equal(await destinationMenu.getByRole('menuitemradio', {name:'指定路径',exact:true}).getAttribute('aria-checked'), 'true');
+ await fs.mkdir('artifacts', { recursive: true });
+ await page.screenshot({ path: 'artifacts/archive-destination-light.png', animations: 'disabled' });
+ await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+ assert.equal(await destination.innerText(), '当前路径');
+ assert.equal(await destination.getAttribute('aria-expanded'), 'false');
+ assert.equal(await destination.evaluate(element => document.activeElement === element), true);
+ await destination.press('ArrowDown'); await page.keyboard.press('Escape');
+ assert.equal(await destination.getAttribute('aria-expanded'), 'false');
+ assert.equal(await dialog.isVisible(), true);
+ await destination.click(); await dialog.getByRole('heading', { name: path.basename(zip), exact: true }).click();
+ assert.equal(await destinationMenu.count(), 0);
  await dialog.getByRole('button', { name: '项目 文件夹', exact: true }).dblclick();
  await dialog.getByRole('button', { name: '子目录 文件夹', exact: true }).focus(); await page.keyboard.press('Enter');
  await dialog.getByRole('button', { name: '内容.txt', exact: true }).focus();
@@ -68,7 +83,7 @@ try {
  await page.screenshot({ path: 'artifacts/archive-preview.png' });
  await page.keyboard.press('Escape');
  await entry.click(); await page.keyboard.press('Meta+o'); await dialog.waitFor(); await page.keyboard.press('Escape');
- await entry.click({ button: 'right' }); await page.getByRole('menuitem', { name: '打开', exact: true }).click(); await dialog.waitFor(); await page.keyboard.press('Escape');
+ await entry.click({ button: 'right' }); await page.getByRole('menuitem', { name: /^打开(?:\s*⌘O)?$/ }).click(); await dialog.waitFor(); await page.keyboard.press('Escape');
  await page.keyboard.press('Control+l');
  await page.getByRole('textbox', { name: '文件夹地址', exact: true }).fill(zip);
  await page.getByRole('textbox', { name: '文件夹地址', exact: true }).press('Enter'); await dialog.waitFor(); await page.keyboard.press('Escape');
@@ -86,8 +101,12 @@ try {
  assert.deepEqual(await fs.readdir(docs), before); assert.deepEqual(await fs.readFile(zip), original);
  await page.evaluate(() => window.explorer.setTheme('dark')); await entry.dblclick(); await dialog.waitFor();
  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 600));
- await dialog.getByRole('combobox', { name: '解压位置' }).selectOption('folder');
- await page.screenshot({ path: 'artifacts/archive-preview-dark.png' });
+ await destination.click();
+ await destinationMenu.getByRole('menuitemradio', { name: path.basename(zip, '.zip'), exact: true }).click();
+ await destination.click();
+ await page.screenshot({ path: 'artifacts/archive-preview-dark.png', animations: 'disabled' });
+ assert.equal(await destinationMenu.evaluate(element => { const r = element.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; }), true);
+ await page.keyboard.press('Escape');
  assert.equal(await dialog.locator('.archive-actions').evaluate(el => el.scrollWidth <= el.clientWidth), true);
  assert.equal(await dialog.evaluate(el => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; }), true);
  assert.equal(await fs.readFile(temporaryOpens[0], 'utf8'), 'edited temporary copy');
@@ -95,6 +114,13 @@ try {
  assert.deepEqual(errors, []);
  console.log('PASS: archive file double-click/Enter, correct isolated content, quarantine inheritance, invalid selections, failed launch cleanup, temporary edits preserved, labels');
  console.log('PASS: TAR.GZ, empty ZIP, corrupt error without fallback, normal-file routing, no adjacent extraction or archive changes, compact dark dialog');
+} catch (error) {
+ if (app) {
+  const page = await app.firstWindow();
+  await page.screenshot({ path: 'artifacts/archive-failure.png' }).catch(() => {});
+  console.log('Failure UI:', await page.evaluate(() => ({ menus: [...document.querySelectorAll('[role=menu]')].map(element => element.textContent), dialogs: [...document.querySelectorAll('dialog')].map(element => ({ open: element.open, text: element.textContent?.slice(0, 200) })), active: document.activeElement?.outerHTML.slice(0, 300) })));
+ }
+ throw error;
 } finally {
  await app?.close();
  for (const file of temporaryOpens) {

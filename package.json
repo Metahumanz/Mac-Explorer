@@ -1,6 +1,6 @@
 {
   "name": "mac-explorer",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "private": true,
   "description": "A Windows 11-style file explorer for macOS",
   "main": "dist-electron/main.cjs",
@@ -17,6 +17,7 @@
     "test:theme": "npm run build && node scripts/theme-smoke.mjs",
     "test:view": "npm run build && node scripts/view-menu-smoke.mjs",
     "test:icons": "npm run build && node scripts/icon-address-smoke.mjs",
+    "test:drives": "npm run build && node scripts/drive-card-smoke.mjs",
     "package": "node scripts/make-icon.mjs && npm run build && electron-builder --mac dir --arm64 && codesign --force --deep --sign - 'release/mac-arm64/Mac Explorer.app'",
     "test:external": "npm run build && node scripts/external-open-smoke.mjs",
     "package:release": "node scripts/make-icon.mjs && npm run build && node scripts/release.mjs",
@@ -35,6 +36,7 @@
     "test:tabs": "npm run build && node scripts/tab-detach-smoke.mjs",
     "test:language": "npm run build && node scripts/language-smoke.mjs",
     "test:eject": "npm run build && node scripts/eject-smoke.mjs",
+    "test:connections": "npm run build && node scripts/connections-smoke.mjs",
     "test:trash-browser": "npm run build && node scripts/trash-browser-smoke.mjs && node scripts/trash-operations-smoke.mjs",
     "test:dock": "npm run build && node scripts/dock-menu-smoke.mjs",
     "test:file-drag": "npm run build && node scripts/file-drag-smoke.mjs",
@@ -49,7 +51,8 @@
     "test:new": "npm run build && node scripts/new-entry-smoke.mjs",
     "test:share": "npm run build && node scripts/share-menu-smoke.mjs",
     "test:operation-shortcuts": "npm run build && node scripts/operation-shortcuts-smoke.mjs",
-    "test:file-viewer": "npm run build && node scripts/file-viewer-smoke.mjs"
+    "test:file-viewer": "npm run build && node scripts/file-viewer-smoke.mjs",
+    "test:updates": "npm run build && node scripts/about-update-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",
@@ -89,6 +92,10 @@
       "identity": null,
       "icon": "build/icon.icns",
       "extendInfo": {
+        "NSLocalNetworkUsageDescription": "发现并连接局域网中的共享电脑和文件服务器。",
+        "NSBonjourServices": [
+          "_smb._tcp"
+        ],
         "NSDesktopFolderUsageDescription": "浏览和管理桌面中的文件。",
         "NSDocumentsFolderUsageDescription": "浏览和管理文稿中的文件。",
         "NSDownloadsFolderUsageDescription": "浏览和管理下载中的文件。",

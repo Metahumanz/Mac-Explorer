@@ -1,3 +1,5 @@
+import { AboutPanel } from './AboutPanel';
+import { AirDropPage, NetworkPage } from './ConnectionPages';
 import { bindingsFor, formatShortcut, shortcutActions, shortcutActionIDs, shortcutFromEvent, validateOperationShortcuts, validateWakeBinding, type OperationShortcuts, type ShortcutAction } from '../shared/shortcuts';
 import { t as tr, getLocale, setLocale, type LanguageState, type LanguageMode } from '../shared/i18n';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
@@ -6,7 +8,7 @@ import {
   ClipboardPaste, Copy, Download, ExternalLink, FilePlus2, FileText, Film, FolderOpen,
   FolderPlus, HardDrive, Image, Info, CircleHelp, LayoutGrid, List, Loader2, Sheet, Presentation,
   PanelLeft, Eye, FileType, SquareCheck, ChevronsDownUp,
-  Monitor, MoreHorizontal, Music2, PanelRight, Pin, Plus, RotateCw, Scissors, AppWindow,
+  Monitor, MoreHorizontal, Music2, PanelRight, Pin, Plus, RotateCw, Scissors, AppWindow, Globe,
   Search, Share2, Star, Sun, Moon, Terminal, TextCursorInput, Trash2, Undo2, X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -20,6 +22,8 @@ const api = window.explorer;
 const iniIcon = new URL('./assets/ini.png', import.meta.url).href;
 const PC = 'computer';
 const TRASH = 'trash';
+const AIRDROP = 'airdrop';
+const NETWORK = 'network';
 // Internal drag types: a Quick Access item being reordered, and a file-list drag
 // made only of folders (drag data is unreadable until drop).
 const PLACE_TYPE = 'application/x-explorer-place';
@@ -43,7 +47,7 @@ function stored<T,>(key: string, fallback: T): T { try { return JSON.parse(local
 function base(path: string) { return path.split('/').filter(Boolean).at(-1) || 'Macintosh HD'; }
 function parent(path: string) { return path.slice(0, path.lastIndexOf('/')) || '/'; }
 function join(path: string, name: string) { return `${path === '/' ? '' : path}/${name}`; }
-function isVirtual(location: string) { return !location || location === PC || isTrashLocation(location); }
+function isVirtual(location: string) { return !location || location === PC || location === AIRDROP || location === NETWORK || isTrashLocation(location); }
 function size(bytes: number) { return new Intl.NumberFormat(getLocale(), { maximumFractionDigits: bytes >= 1e9 ? 1 : 0 }).format(bytes / (bytes >= 1024 ** 3 ? 1024 ** 3 : bytes >= 1024 ** 2 ? 1024 ** 2 : bytes >= 1024 ? 1024 : 1)) + ' ' + (bytes >= 1024 ** 3 ? 'GB' : bytes >= 1024 ** 2 ? 'MB' : bytes >= 1024 ? 'KB' : tr('字节')); }
 function date(value: number) { return new Date(value).toLocaleString(getLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }); }
 function type(entry: FileEntry) {
@@ -58,7 +62,8 @@ function Eject({ size = 16 }: { size?: number }) {
 }
 
 function PlaceIcon({ icon, size: dimension = 18 }: { icon: string; size?: number }) {
-  const Component = ({ trash: Trash2, star: Star, desktop: Monitor, download: Download, document: FileText, image: Image, music: Music2, video: Film, drive: HardDrive, folder: FolderOpen, computer: Monitor } as Record<string, typeof FolderOpen>)[icon] || FolderOpen;
+  if (icon === 'applications') return <svg width={dimension} height={dimension} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="place-icon icon-applications" aria-hidden="true"><path d="m9 3 10 17M15 3 5 20M3 15h11m4 0h3"/></svg>;
+  const Component = ({ trash: Trash2, star: Star, desktop: Monitor, download: Download, document: FileText, image: Image, music: Music2, video: Film, drive: HardDrive, folder: FolderOpen, computer: Monitor, airdrop: Radar, network: Globe } as Record<string, typeof FolderOpen>)[icon] || FolderOpen;
   return <Component size={dimension} strokeWidth={1.6} className={`place-icon icon-${icon}`} aria-hidden="true" />;
 }
 function ViewGlyph({ mode }: { mode: 'extra' | 'large' | 'medium' | 'small' | 'list' | 'details' | 'tiles' | 'content' }) {
@@ -108,6 +113,18 @@ function ToolButton({ label, children, onClick, disabled = false, active = false
   return <button className={`tool-button ${active ? 'active' : ''} ${className}`} title={label} aria-label={label} disabled={disabled} onClick={onClick}>{children}</button>;
 }
 
+function DriveGlyph({ path }: { path: string }) {
+  const [icon, setIcon] = useState('');
+  const pixels = Math.min(512, Math.max(64, 64 * window.devicePixelRatio));
+  useEffect(() => {
+    let live = true;
+    setIcon('');
+    api.icon(path, pixels).then(value => { if (live) setIcon(value); }).catch(() => {});
+    return () => { live = false; };
+  }, [path, pixels]);
+  return icon ? <img className="drive-icon" src={icon} alt="" draggable={false}/> : <HardDrive className="drive-icon" strokeWidth={1.2} aria-hidden="true"/>;
+}
+
 export default function App() {
   const [toolbar, setToolbar] = useState(() => normalizeToolbar(stored('toolbar', null)));
   useEffect(() => { localStorage.setItem('toolbar', JSON.stringify(toolbar)); }, [toolbar]);
@@ -150,6 +167,7 @@ export default function App() {
   const [activeID, setActiveID] = useState('');
   const tab = tabs.find(t => t.id === activeID) || tabs[0];
   const location = tab.location;
+  const connectionPage = location === AIRDROP || location === NETWORK;
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectionBox, setSelectionBox] = useState<CSSProperties | null>(null);
@@ -283,8 +301,13 @@ export default function App() {
 
   useEffect(() => { api.bootstrap().then(data => {
     applyLanguage(data.language); setBoot(data); setTheme(data.theme);
+    if (!stored('finderQuickAccessOrder', false)) {
+      const defaults = data.places.filter(place => ['applications', 'desktop', 'download', 'document'].includes(place.icon)).map(place => place.path);
+      setPlaceOrder(previous => [...defaults, ...previous.filter(path => !defaults.includes(path))]);
+      localStorage.setItem('finderQuickAccessOrder', 'true');
+    }
     const saved = stored<unknown>('tabs', []);
-    const folders = Array.isArray(saved) ? saved.filter((p): p is string => typeof p === 'string' && (p === PC || isTrashLocation(p) || p.startsWith('/'))) : [];
+    const folders = Array.isArray(saved) ? saved.filter((p): p is string => typeof p === 'string' && ([PC, AIRDROP, NETWORK].includes(p) || isTrashLocation(p) || p.startsWith('/'))) : [];
     const initial = data.initialTab ? [{ ...data.initialTab, id: crypto.randomUUID() }] : (data.initialPath ? [data.initialPath] : [...new Set([data.home, ...folders])].slice(0, 12)).map(makeTab);
     setTabs(initial); setActiveID(initial[0].id);
     void api.windowReady();
@@ -294,7 +317,7 @@ export default function App() {
   // Animate the existing surface, preserving focus, selection, and scroll state.
   useEffect(() => {
     if (loading || loadedLocation.current !== location) return;
-    const surface = contentRef.current?.querySelector<HTMLElement>('.file-items, .computer-content, .empty-state');
+    const surface = contentRef.current?.querySelector<HTMLElement>('.file-items, .computer-content, .empty-state, .connection-page');
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
     if (!surface || reduced.matches) return;
     const animation = surface.animate([{ opacity: .65, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], {
@@ -310,6 +333,7 @@ export default function App() {
     const version = ++generation.current;
     setLoading(loadedLocation.current !== location || !!submittedQuery); setError(''); setSearchNote('');
     const load = async () => {
+      if (location === AIRDROP || location === NETWORK) return [];
       if (isTrashLocation(location)) {
         const result = await api.listTrash(location === TRASH ? undefined : location.slice(6));
         if (version === generation.current) {
@@ -350,10 +374,10 @@ export default function App() {
 
   const places = useMemo<Place[]>(() => {
     const rank = (path: string) => { const index = placeOrder.indexOf(path); return index < 0 ? placeOrder.length : index; };
-    return [...(boot?.places || []).filter(place => !unpinnedDefaults.includes(place.path)), ...pins.filter(p => !boot?.places.some(place => place.path === p)).map(p => ({ path: p, name: base(p), icon: 'folder' }))]
+    return [...(boot?.places || []).filter(place => !unpinnedDefaults.includes(place.path)), ...pins.filter(p => p !== TRASH && !boot?.places.some(place => place.path === p)).map(p => ({ path: p, name: base(p), icon: p === '/Applications' || p === `${boot?.home}/Applications` ? 'applications' : 'folder' }))]
       .sort((a, b) => rank(a.path) - rank(b.path));
   }, [boot, pins, unpinnedDefaults, placeOrder]);
-  const label = useCallback((value: string) => value === '/Applications' || value === `${boot?.home}/Applications` ? tr('应用程序') : value === TRASH ? tr('回收站') : value.startsWith('trash:') ? base(value.slice(6)) : value === PC ? tr('此电脑') : !value || value === boot?.home ? tr('个人文件夹') : boot?.places.find(p => p.path === value)?.name || places.find(p => p.path === value)?.name || base(value), [boot, places, language.locale]);
+  const label = useCallback((value: string) => value === '/Applications' || value === `${boot?.home}/Applications` ? tr('应用程序') : value === TRASH ? tr('回收站') : value === AIRDROP ? tr('隔空投送') : value === NETWORK ? tr('网络') : value.startsWith('trash:') ? base(value.slice(6)) : value === PC ? tr('此电脑') : !value || value === boot?.home ? tr('个人文件夹') : boot?.places.find(p => p.path === value)?.name || places.find(p => p.path === value)?.name || base(value), [boot, places, language.locale]);
   const displayName = (entry: FileEntry) => entry.isDirectory && /\.app$/i.test(entry.name) ? entry.name.slice(0, -4) : extensions || entry.isDirectory || !entry.extension ? entry.name : entry.name.slice(0, -(entry.extension.length + 1));
   const visible = useMemo(() => {
     const items = entries.filter(e => hidden || !e.hidden || revealedPaths.includes(e.path));
@@ -369,7 +393,7 @@ export default function App() {
   const chosen = visible.filter(e => selected.has(e.path));
   const single = chosen.length === 1 ? chosen[0] : null;
   // Like Windows: the selected folder, or the current folder when nothing is selected.
-  const pinTarget = selected.size ? (single?.isDirectory && !/\.app$/i.test(single.name) && !viewingTrash ? single.path : null) : location === TRASH || !isVirtual(location) ? location : null;
+  const pinTarget = selected.size ? (single?.isDirectory && !/\.app$/i.test(single.name) && !viewingTrash ? single.path : null) : !isVirtual(location) ? location : null;
   const writable = !isVirtual(location) && !submittedQuery;
   useEffect(() => {
     let live = true; setPreview(null);
@@ -598,7 +622,7 @@ export default function App() {
     event.preventDefault(); event.stopPropagation();
     let moved: string[];
     try { moved = isPlaceDrag(event) ? [event.dataTransfer.getData(PLACE_TYPE)] : JSON.parse(event.dataTransfer.getData('application/x-explorer-paths')); } catch { return true; }
-    if (!Array.isArray(moved) || !moved.length || moved.length > 10000 || !moved.every(p => typeof p === 'string' && !p.includes('\0') && (p.startsWith('/') || p === TRASH))) return true;
+    if (!Array.isArray(moved) || !moved.length || moved.length > 10000 || !moved.every(p => typeof p === 'string' && !p.includes('\0') && p.startsWith('/'))) return true;
     moved = [...new Set(moved)];
     const insert = () => {
       const defaults = boot?.places.map(place => place.path) || [];
@@ -626,7 +650,7 @@ export default function App() {
     if (event.button !== 0 || !event.isPrimary || loading || modal || editingName ||
       (event.target as Element).closest('.file-row, .table-heading, button, input') ||
       event.clientX >= bounds.left + area.clientWidth || event.clientY >= bounds.top + area.clientHeight ||
-      (location === PC && !submittedQuery)) return;
+      connectionPage || (location === PC && !submittedQuery)) return;
     event.preventDefault(); area.focus({ preventScroll: true }); setPopup(null);
     const original = new Set(selected);
     const originalAnchor = selectionAnchor.current;
@@ -723,7 +747,6 @@ export default function App() {
         ...(entry ? [{ label: entry.isDirectory ? tr('打开') : tr('快速查看'), icon: <FolderOpen/>, action: () => openEntry(entry) }, { label: tr('复制'), icon: <Copy/>, action: () => copy(false, paths) }] : []),
         { label: tr('刷新'), icon: <RotateCw/>, action: refreshDirectory },
         { label: hidden ? tr('不显示隐藏项目') : tr('显示隐藏的项目'), checked: hidden, action: () => setHidden(v => !v) },
-        { label: places.some(place => place.path === TRASH) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, action: () => togglePin(TRASH) },
       ]);
       return;
     }
@@ -803,6 +826,7 @@ export default function App() {
   ];
   async function goAddress() {
     let path = address.trim();
+    if (/^smb:/i.test(path)) { connectNetwork(path); return; }
     if (path === '~' || path.startsWith('~/')) path = boot!.home + path.slice(1);
     if (path.startsWith('file://')) { try { path = decodeURIComponent(new URL(path).pathname); } catch { setError(tr('文件地址格式不正确。')); return; } }
     if (!path.startsWith('/')) path = join(isVirtual(location) ? boot!.home : location, path);
@@ -814,11 +838,30 @@ export default function App() {
   }
   function drop(event: React.DragEvent, destination: string) {
     event.preventDefault(); event.stopPropagation(); setDragOver(null);
-    if (isVirtual(destination) || viewingTrash && trashRoots.some(root => destination === root || destination.startsWith(root + '/'))) return;
+    if (destination !== AIRDROP && isVirtual(destination) || viewingTrash && trashRoots.some(root => destination === root || destination.startsWith(root + '/'))) return;
     let paths: string[] = [];
     try { paths = JSON.parse(event.dataTransfer.getData('application/x-explorer-paths') || '[]'); } catch { /* External drop. */ }
     if (!paths.length) paths = Array.from(event.dataTransfer.files).map(file => api.filePath(file)).filter(Boolean);
-    if (paths.length) run(tr('正在移动拖入的文件…'), async () => report(await api.moveTo(paths, destination), tr('已移动')));
+    if (paths.length) {
+      if (destination === AIRDROP) sendAirDrop(paths);
+      else run(tr('正在移动拖入的文件…'), async () => report(await api.moveTo(paths, destination), tr('已移动')));
+    }
+  }
+
+  function sendAirDrop(paths?: string[]) {
+    void run(tr('正在打开隔空投送…'), async () => {
+      const files = paths ?? await api.chooseAirDropFiles();
+      if (files?.length) await api.airDrop(files);
+    });
+  }
+  function connectNetwork(address: string) {
+    void run(tr('正在连接服务器…'), async () => {
+      const mounts = await api.connectNetwork(address);
+      if (!mounts) return;
+      const volumes = await api.volumes();
+      setBoot(previous => previous ? { ...previous, volumes } : previous);
+      navigate(mounts[0]);
+    });
   }
 
   const actions = useRef<(action: string) => void>(() => {});
@@ -1108,7 +1151,7 @@ export default function App() {
         <ToolButton label={shortcutLabel('编辑地址', 'address')} onClick={() => { setAddress(isVirtual(location) ? boot?.home || '/' : location); setEditingAddress(true); }}><ChevronDown size={14}/></ToolButton>
       </div>
       <form className="search-box" onSubmit={event => { event.preventDefault(); setSubmittedQuery(query.trim()); setSelected(new Set()); }}>
-        <input ref={searchRef} aria-label={tr('搜索文件')} placeholder={tr('在{0}中搜索', label(location))} value={query} onChange={event => { setQuery(event.target.value); if (!event.target.value) setSubmittedQuery(''); }}/>
+        <input ref={searchRef} disabled={location === AIRDROP} aria-label={tr('搜索文件')} placeholder={tr('在{0}中搜索', label(location))} value={query} onChange={event => { setQuery(event.target.value); if (!event.target.value) setSubmittedQuery(''); }}/>
         {query ? <button type="button" title={tr('清除搜索')} aria-label={tr('清除搜索')} onClick={() => { setQuery(''); setSubmittedQuery(''); }}><X size={15}/></button> : <Search size={17}/>}<button className="sr-only" type="submit">{tr('搜索')}</button>
       </form>
     </div>
@@ -1140,13 +1183,16 @@ export default function App() {
         </div>
         <div className="nav-divider"/>
         <div className="sidebar-section" aria-label={tr('快速访问')} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setPlaceMarker(null); }}>
-          {places.map(place => place.path === TRASH ? <button key={TRASH} className={`nav-item ${viewingTrash ? 'current' : ''}`} draggable onDragStart={event => { event.dataTransfer.setData(PLACE_TYPE, TRASH); event.dataTransfer.effectAllowed = 'move'; }} onDragOver={event => placeDragOver(event, TRASH)} onDrop={event => dropPlace(event, TRASH)} onClick={() => navigate(TRASH)} onAuxClick={event => { if (event.button === 1) newTab(TRASH); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), action: () => newTab(TRASH) }, { label: tr('从快速访问取消固定'), icon: <Pin/>, action: () => togglePin(TRASH) }])}><PlaceIcon icon="trash"/><span>{tr('回收站')}</span><Pin size={12} className="pin-mark"/></button> : <NavigationTree key={place.path} place={{ ...place, name: label(place.path) }} location={location} hidden={hidden} pinned navigate={navigate} newTab={newTab} drop={drop} reorder={{ over: event => placeDragOver(event, place.path), drop: event => dropPlace(event, place.path) }}
+          {places.map(place => <NavigationTree key={place.path} place={{ ...place, name: label(place.path) }} location={location} hidden={hidden} pinned navigate={navigate} newTab={newTab} drop={drop} reorder={{ over: event => placeDragOver(event, place.path), drop: event => dropPlace(event, place.path) }}
             context={(event, target) => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(target.path) }, terminalItem(target.path), { label: places.some(place => place.path === target.path) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, action: () => togglePin(target.path) }])}/>)}
           {placeMarker && <div className="place-drop-line" style={{ top: placeMarker.top }}/>}
         </div>
         <div className="nav-divider"/>
         <button className={`nav-item parent-nav ${location === PC ? 'current' : ''}`} onClick={() => navigate(PC)}><ChevronDown className="nav-chevron" size={12}/><PlaceIcon icon="computer"/><span>{tr('此电脑')}</span></button>
         {boot?.volumes.map(volume => <NavigationTree key={volume.path} place={volume} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} level={1} eject={volume.canEject ? () => ejectVolume(volume) : undefined} ejecting={!!operation} context={(event, target) => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(target.path) }, terminalItem(target.path), ...(volume.canEject && target.path === volume.path ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])}/>)}
+        <button className={`nav-item ${viewingTrash ? 'current' : ''}`} onClick={() => navigate(TRASH)} onAuxClick={event => { if (event.button === 1) newTab(TRASH); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(TRASH) }])}><PlaceIcon icon="trash"/><span>{tr('回收站')}</span></button>
+        {[AIRDROP, NETWORK].map(destination => <button key={destination} className={`nav-item ${location === destination ? 'current' : ''}`} onClick={() => navigate(destination)} onAuxClick={event => { if (event.button === 1) newTab(destination); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(destination) }])}
+          onDragOver={event => { if (destination === AIRDROP && !isPlaceDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={event => drop(event, destination)}><PlaceIcon icon={destination}/><span>{label(destination)}</span></button>)}
       </nav>}
 
       <main className={`main-pane ${details || previewPane ? 'has-details' : ''}`}>
@@ -1154,12 +1200,12 @@ export default function App() {
         {error && <div className="error-bar" role="alert"><Info size={17}/><span>{error}</span>{error.includes(tr('完全磁盘访问权限')) && <button className="permission-settings-button" disabled={openingPrivacySettings} onClick={() => void openPrivacySettings()} title={tr('打开系统设置中的完全磁盘访问权限')}>{openingPrivacySettings ? tr('正在打开…') : tr('前往设置')}</button>}<button title={tr('关闭提示')} aria-label={tr('关闭错误提示')} onClick={() => setError('')}><X size={15}/></button></div>}
         {vcsStatus && <div className="vcs-summary" role="status"><span>{vcsStatus.kind === 'git' ? 'Git' : 'SVN'}{vcsStatus.branch ? ` · ${vcsStatus.branch}` : ''}</span>{vcsStatus.error ? <span className="vcs-error">{vcsStatus.error}</span> : <span>{tr('本地版本状态')}</span>}<button className="secondary-button" onClick={() => setRefresh(value => value + 1)}>{tr('刷新版本状态')}</button></div>}
         {viewingTrash && <div className="search-summary"><Trash2 size={16}/><span>{tr('回收站')}</span><small>{tr('还原到原位置；无法确定原位置时选择文件夹')}</small><button className="secondary-button" disabled={!selected.size || !!operation} onClick={() => restoreTrash()}>{tr('还原')}</button><button className="secondary-button" disabled={!!operation} onClick={clearTrash}>{tr('清空回收站…')}</button></div>}
-        {submittedQuery && <div className="search-summary"><Search size={16}/><span>{tr('“{0}” 的搜索结果', submittedQuery)}</span><small>{loading ? tr('正在搜索子文件夹…') : searchNote || tr('{0} 个匹配项目', visible.length)}</small><button onClick={() => { setQuery(''); setSubmittedQuery(''); }}>{tr('退出搜索')}</button></div>}
+        {submittedQuery && !connectionPage && <div className="search-summary"><Search size={16}/><span>{tr('“{0}” 的搜索结果', submittedQuery)}</span><small>{loading ? tr('正在搜索子文件夹…') : searchNote || tr('{0} 个匹配项目', visible.length)}</small><button onClick={() => { setQuery(''); setSubmittedQuery(''); }}>{tr('退出搜索')}</button></div>}
         <div ref={contentRef} tabIndex={0} className={`file-content view-${view} ${dragOver === location ? 'drop-target' : ''}`} aria-label={label(location)} aria-busy={loading}
           onPointerDown={startMarquee} onClickCapture={event => { if (suppressMarqueeClick.current) { event.preventDefault(); event.stopPropagation(); suppressMarqueeClick.current = false; } }}
           onContextMenu={event => contextMenu(event)}
-          onDragOver={event => { if (writable && !isPlaceDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDragOver(location); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(null); }} onDrop={event => drop(event, location)}>
-          {location === PC && !submittedQuery ? <div className="computer-content"><h2><ChevronDown size={14}/>{tr('设备和驱动器（{0}）', boot?.volumes.length || 0)}</h2><div className="drive-grid">{boot?.volumes.map(volume => <button className="drive-card" key={volume.path} onContextMenu={event => menuAt(event, [{ label: tr('打开'), action: () => navigate(volume.path) }, ...(volume.canEject ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])} onDoubleClick={() => navigate(volume.path)} onKeyDown={event => { if (event.key === 'Enter') navigate(volume.path); }}><HardDrive size={49} strokeWidth={1.2}/><span><strong>{volume.name}</strong><span className="storage-track"><span style={{ width: `${Math.max(0, Math.min(100, (1 - volume.free / volume.total) * 100))}%` }}/></span><small>{tr('{0} 可用，共 {1}', size(volume.free), size(volume.total))}</small></span></button>)}</div></div> : loading ? <Loading/> : visible.length ? fileRows() : <div className="empty-state">{submittedQuery ? <Search size={42} strokeWidth={1.2}/> : <FolderGlyph dimension={68}/>}<h2>{error ? tr('无法显示此位置') : submittedQuery ? tr('没有找到匹配的项目') : viewingTrash ? tr('回收站为空') : tr('此文件夹为空')}</h2><p>{error ? tr('检查访问权限，或返回上一个文件夹。') : submittedQuery ? tr('尝试其他名称，或到上一级文件夹中搜索。') : viewingTrash ? tr('这里显示回收站中的项目。') : tr('将文件拖到这里，或使用“新建”创建文件夹。')}</p>{error && <button className="secondary-button" onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button>}</div>}
+          onDragOver={event => { if ((writable || location === AIRDROP) && !isPlaceDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = location === AIRDROP ? 'copy' : 'move'; setDragOver(location); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(null); }} onDrop={event => drop(event, location)}>
+          {location === AIRDROP ? <AirDropPage busy={!!operation} choose={() => sendAirDrop()}/> : location === NETWORK ? <NetworkPage volumes={boot?.volumes || []} refresh={refresh} query={submittedQuery} busy={!!operation} connect={connectNetwork} open={navigate} rescan={refreshDirectory}/> : location === PC && !submittedQuery ? <div className="computer-content"><h2><ChevronDown size={14}/>{tr('设备和驱动器（{0}）', boot?.volumes.length || 0)}</h2><div className="drive-grid">{boot?.volumes.map(volume => <button className="drive-card" key={volume.path} onContextMenu={event => menuAt(event, [{ label: tr('打开'), action: () => navigate(volume.path) }, ...(volume.canEject ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])} onDoubleClick={() => navigate(volume.path)} onKeyDown={event => { if (event.key === 'Enter') navigate(volume.path); }}><DriveGlyph path={volume.path}/><span className="drive-info"><strong title={volume.name}>{volume.name}</strong><span className="drive-kind">{tr('本地磁盘')}</span><span className="storage-track" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, (1 - volume.free / volume.total) * 100))}%` }}/></span><span className="drive-capacity"><span>{tr('{0} 可用', size(volume.free))}</span><span>{tr('共 {0}', size(volume.total))}</span></span></span></button>)}</div></div> : loading ? <Loading/> : visible.length ? fileRows() : <div className="empty-state">{submittedQuery ? <Search size={42} strokeWidth={1.2}/> : <FolderGlyph dimension={68}/>}<h2>{error ? tr('无法显示此位置') : submittedQuery ? tr('没有找到匹配的项目') : viewingTrash ? tr('回收站为空') : tr('此文件夹为空')}</h2><p>{error ? tr('检查访问权限，或返回上一个文件夹。') : submittedQuery ? tr('尝试其他名称，或到上一级文件夹中搜索。') : viewingTrash ? tr('这里显示回收站中的项目。') : tr('将文件拖到这里，或使用“新建”创建文件夹。')}</p>{error && <button className="secondary-button" onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button>}</div>}
           {selectionBox && <div className="selection-marquee" style={selectionBox} aria-hidden="true"/>}
         </div>
       </main>
@@ -1171,7 +1217,7 @@ export default function App() {
       </aside>}
     </div>
 
-    <footer className="status-bar"><span>{loading ? tr('正在读取…') : location === PC && !submittedQuery ? tr('{0} 个驱动器', boot?.volumes.length || 0) : tr('{0} 个项目', visible.length)}</span>{selected.size > 0 && <><span className="status-divider"/><span>{tr('已选择 {0} 个项目', selected.size)}</span>{totalSelected > 0 && <span>{size(totalSelected)}</span>}</>}<span className="status-feedback" role="status">{operation ? <><Loader2 size={12} className="spinning"/>{operation}</> : toast ? <><Check size={13}/>{toast}</> : hidden ? tr('显示隐藏的项目') : ''}</span>{view === 'icons' && <label className="icon-size-control"><span>{tr('图标大小')}</span><input type="range" aria-label={tr('图标大小')} min={32} max={128} step={8} value={iconSize} onChange={event => changeView({ iconSize: Number(event.target.value) })}/><output>{iconSize}</output></label>}<button className={view === 'details' ? 'current' : ''} title={tr('详细信息视图')} aria-label={tr('详细信息视图')} aria-pressed={view === 'details'} onClick={() => changeView({ view: 'details' })}><List size={16}/></button><button className={view === 'icons' ? 'current' : ''} title={tr('大图标视图')} aria-label={tr('大图标视图')} aria-pressed={view === 'icons'} onClick={() => changeView({ view: 'icons' })}><LayoutGrid size={15}/></button></footer>
+    <footer className="status-bar"><span>{connectionPage ? label(location) : loading ? tr('正在读取…') : location === PC && !submittedQuery ? tr('{0} 个驱动器', boot?.volumes.length || 0) : tr('{0} 个项目', visible.length)}</span>{selected.size > 0 && <><span className="status-divider"/><span>{tr('已选择 {0} 个项目', selected.size)}</span>{totalSelected > 0 && <span>{size(totalSelected)}</span>}</>}<span className="status-feedback" role="status">{operation ? <><Loader2 size={12} className="spinning"/>{operation}</> : toast ? <><Check size={13}/>{toast}</> : hidden ? tr('显示隐藏的项目') : ''}</span>{!connectionPage && view === 'icons' && <label className="icon-size-control"><span>{tr('图标大小')}</span><input type="range" aria-label={tr('图标大小')} min={32} max={128} step={8} value={iconSize} onChange={event => changeView({ iconSize: Number(event.target.value) })}/><output>{iconSize}</output></label>}<button className={view === 'details' ? 'current' : ''} title={tr('详细信息视图')} aria-label={tr('详细信息视图')} aria-pressed={view === 'details'} onClick={() => changeView({ view: 'details' })}><List size={16}/></button><button className={view === 'icons' ? 'current' : ''} title={tr('大图标视图')} aria-label={tr('大图标视图')} aria-pressed={view === 'icons'} onClick={() => changeView({ view: 'icons' })}><LayoutGrid size={15}/></button></footer>
 
     {popup && <ContextMenu popup={popup} onClose={() => setPopup(null)}/>}
     {modal?.kind === 'archive' && <ArchiveDialog archive={modal.archive} onExtracted={() => setRefresh(v => v + 1)} onClose={() => setModal(null)}/>}
@@ -1183,13 +1229,22 @@ export default function App() {
 
 function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePreview; onClose: () => void; onExtracted: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const modeButton = useRef<HTMLButtonElement>(null);
   const lock = useRef(false);
   const [folder, setFolder] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<ExtractMode>('choose');
+  const [modeMenu, setModeMenu] = useState<Popup | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [failure, setFailure] = useState(false);
+  const modes = [{ value: 'choose', label: tr('指定路径') }, { value: 'here', label: tr('当前路径') }, { value: 'folder', label: archiveFolderName(archive.name) }] as const;
+  function closeModeMenu() { setModeMenu(null); modeButton.current?.focus(); }
+  function openModeMenu() {
+    ref.current?.getAnimations().forEach(animation => animation.finish());
+    const anchor = modeButton.current!.getBoundingClientRect();
+    setModeMenu({ x: anchor.left, y: anchor.bottom + 4, items: modes.map(option => ({ label: option.label, radio: true, checked: mode === option.value, action: () => setMode(option.value) })) });
+  }
   const items = useMemo(() => {
     const result = new Map<string, boolean>();
     for (const entry of archive.entries) {
@@ -1229,12 +1284,14 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
     } catch (e) { setFailure(true); setMessage(errorMessage(e)); }
     finally { lock.current = false; setBusy(false); }
   }
-  return <dialog ref={ref} className="modal archive-dialog" aria-labelledby="archive-title" onCancel={event => { event.preventDefault(); close(); }} onClose={close} onKeyDown={event => {
+  return <dialog ref={ref} className="modal archive-dialog" aria-labelledby="archive-title" onPointerDown={() => setModeMenu(null)} onCancel={event => { event.preventDefault(); close(); }} onClose={close} onKeyDown={event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); if (!busy) setSelected(new Set(items.map(([name]) => name))); }
   }}>
     <div className="archive-heading"><div className="modal-heading"><h2 id="archive-title">{archive.name}</h2><button disabled={busy} aria-label={tr('关闭压缩包预览')} onClick={close}><X size={18}/></button></div>
       <div className="archive-navigation"><ToolButton label={tr('压缩包内向上一级')} disabled={!folder || busy} onClick={() => enter(folder.slice(0, -1).slice(0, folder.slice(0, -1).lastIndexOf('/') + 1))}><ArrowUp/></ToolButton><span title={folder}>{folder || tr('压缩包根目录')}</span></div>
-      <div className="archive-actions"><label>{tr('解压位置')}<select aria-label={tr('解压位置')} title={mode === 'folder' ? archiveFolderName(archive.name) : undefined} disabled={busy} value={mode} onChange={event => setMode(event.target.value as ExtractMode)}><option value="choose">{tr('指定路径')}</option><option value="here">{tr('当前路径')}</option><option value="folder">{archiveFolderName(archive.name)}</option></select></label>
+      <div className="archive-actions"><label>{tr('解压位置')}<button ref={modeButton} className="secondary-button archive-destination" aria-label={tr('解压位置')} aria-describedby="archive-destination-value" aria-haspopup="menu" aria-expanded={!!modeMenu} title={modes.find(option => option.value === mode)!.label} disabled={busy} onPointerDown={event => event.stopPropagation()} onClick={() => modeMenu ? closeModeMenu() : openModeMenu()} onKeyDown={event => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openModeMenu(); }
+      }}><span id="archive-destination-value">{modes.find(option => option.value === mode)!.label}</span><ChevronDown size={14}/></button></label>
         <button className="secondary-button" disabled={busy || !selected.size} onClick={() => extract(false)}>{tr('解压选中项')}</button><button className="primary-button" disabled={busy || !archive.entries.length} onClick={() => extract(true)}>{tr('全部解压')}</button>
       </div>
     </div>
@@ -1246,6 +1303,7 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
       </button>
     </div>) : <p className="archive-empty">{tr('此压缩包为空')}</p>}</div>
     {message && <div className={`archive-result ${failure ? 'failed' : ''}`} role={failure ? 'alert' : 'status'}>{message}</div>}
+    {modeMenu && <ContextMenu popup={modeMenu} label={tr('解压位置')} onClose={closeModeMenu}/>}
     <div className="archive-footer"><span>{busy ? tr('正在处理压缩包，请稍候…') : tr('{0} 个项目 · 同名项目会跳过，不覆盖', items.length)}</span><button className="secondary-button" disabled={busy} onClick={close}>{tr('关闭')}</button></div>
   </dialog>;
 }
@@ -1315,7 +1373,7 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
   const [operationDraft, setOperationDraft] = useState<OperationShortcuts>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const tabs = [{ id: 'general', label: tr('常规') }, { id: 'toolbar', label: tr('自定义工具栏') }, { id: 'shortcuts', label: tr('键盘快捷键') }];
+  const tabs = [{ id: 'general', label: tr('常规') }, { id: 'toolbar', label: tr('自定义工具栏') }, { id: 'shortcuts', label: tr('键盘快捷键') }, { id: 'about', label: tr('关于') }];
   useEffect(() => {
     let live = true;
     const refresh = () => void api.fileViewerSettings().then(value => { if (live) { setFileViewer(value); setFileViewerError(''); } }).catch(error => { if (live) setFileViewerError(errorMessage(error)); });
@@ -1462,6 +1520,9 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
       {wakeConflict && <p className="settings-shortcut-error" role="alert">{wakeConflict}</p>}
       <button className="primary-button" disabled={!settings || busy || !!wakeConflict || shortcut === settings.wakeShortcut && !settings.wakeShortcutError} onClick={() => void save(() => api.setWakeShortcut(shortcut))}>{tr('保存快捷键')}</button>
     </fieldset>
+    </div>
+    <div className="settings-panel" id={`${id}-panel-about`} role="tabpanel" aria-labelledby={`${id}-tab-about`} hidden={section !== 'about'} tabIndex={0}>
+      <AboutPanel/>
     </div>
     {error && <p className="modal-error" role="alert">{error}</p>}
     <div className="modal-actions"><button className="primary-button" disabled={busy} onClick={onClose}>{tr('关闭')}</button></div>

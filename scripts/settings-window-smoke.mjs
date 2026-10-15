@@ -52,7 +52,7 @@ try {
  await page.waitForFunction(()=>Promise.all(document.querySelector('dialog').getAnimations().map(animation=>animation.finished)).then(()=>true));
  assert.equal(await page.locator('dialog').evaluate(element=>!element.style.left),true);
  assert.ok(await contained());
- for (const label of ['常规', '自定义工具栏', '键盘快捷键']) {
+ for (const label of ['常规', '自定义工具栏', '键盘快捷键', '关于']) {
   await page.getByRole('tab', {name: label, exact: true}).click();
   assert.ok(await contained());
   assert.equal(await page.getByRole('tabpanel').evaluate(element => element.scrollWidth <= element.clientWidth), true);
@@ -67,7 +67,7 @@ try {
  await app.evaluate(({Menu}) => Menu.getApplicationMenu().items.flatMap(item => item.submenu?.items || []).find(item => item.accelerator === 'Command+,').click());
  await page.getByRole('dialog', {name: 'Settings', exact: true}).waitFor();
  await page.waitForFunction(() => Promise.all(document.querySelector('dialog').getAnimations().map(animation => animation.finished)).then(() => true));
- for (const label of ['General', 'Customize toolbar', 'Keyboard shortcuts']) {
+ for (const label of ['General', 'Customize toolbar', 'Keyboard shortcuts', 'About']) {
   await page.getByRole('tab', {name: label, exact: true}).click(); assert.ok(await contained());
   assert.equal(await page.getByRole('tabpanel').evaluate(element => element.scrollWidth <= element.clientWidth), true);
  }

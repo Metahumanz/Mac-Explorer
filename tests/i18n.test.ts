@@ -16,7 +16,7 @@ test('language resolution handles traditional regions, scripts and unsupported s
   assert.equal(isLanguageMode('invalid'), false);
 });
 test('all extracted UI messages have English and Traditional Chinese with matching placeholders', () => {
-  const files = ['src/App.tsx', 'src/VcsDialog.tsx', ...fs.readdirSync('electron').filter(n => n.endsWith('.ts')).map(n => `electron/${n}`), 'shared/archives.ts', 'shared/shortcuts.ts'];
+  const files = ['src/App.tsx', 'src/ConnectionPages.tsx', 'src/AboutPanel.tsx', 'src/VcsDialog.tsx', ...fs.readdirSync('electron').filter(n => n.endsWith('.ts')).map(n => `electron/${n}`), 'shared/archives.ts', 'shared/shortcuts.ts'];
   for (const action of Object.values(shortcutActions)) for (const dictionary of [en, tw]) assert.equal(typeof (dictionary as Record<string, string>)[action.label], 'string', `Missing shortcut label: ${action.label}`);
   const placeholders = (text: string) => [...text.matchAll(/\{\d+\}/g)].map(m => m[0]).sort();
   for (const file of files) {

@@ -8,7 +8,8 @@ export interface FileEntry {
 export interface Place { path: string; name: string; icon: string }
 export interface ShareService { title: string; icon: string }
 export interface FileViewerSettings { enabled: boolean; canRestore: boolean; available: boolean; error: string }
-export interface Volume extends Place { total: number; free: number; canEject: boolean }
+export interface Volume extends Place { total: number; free: number; canEject: boolean; isNetwork: boolean }
+export interface NetworkServer { name: string; address: string }
 export type ThemeMode = 'light' | 'dark' | 'system';
 export interface TabState { location: string; history: string[]; index: number }
 export interface Bootstrap { initialTab?: TabState; language: LanguageState; theme: ThemeMode; home: string; places: Place[]; volumes: Volume[]; initialPath?: string }
@@ -22,6 +23,11 @@ export type Preview = { kind: 'image' | 'text' | 'none'; content: string; trunca
 export type ExtractMode = 'choose' | 'here' | 'folder';
 export interface AppSettings { wakeShortcut: string; wakeShortcutError: string; operationShortcuts: OperationShortcuts; versionControl: boolean }
 export interface ArchivePreview { path: string; name: string; entries: { path: string; directory: boolean; size: number }[] }
+export interface AboutInfo { version: string; author: string; license: string; platform: string }
+export interface UpdateState {
+  currentVersion: string; status: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'error';
+  latestVersion?: string; error?: string; downloaded: number; total: number; canInstall: boolean;
+}
 export interface ExplorerAPI {
   bootstrap(): Promise<Bootstrap>;
   detachTab(tab: TabState, point: { x: number; y: number }, single: boolean): Promise<void>;
@@ -31,12 +37,22 @@ export interface ExplorerAPI {
   openPrivacySettings(): Promise<void>;
   volumes(): Promise<Volume[]>;
   ejectVolume(path: string): Promise<Volume[]>;
+  discoverNetwork(): Promise<NetworkServer[]>;
+  connectNetwork(address: string): Promise<string[] | null>;
+  chooseAirDropFiles(): Promise<string[] | null>;
   listTrash(directory?: string): Promise<TrashListing>;
   restoreTrash(paths: string[], choose?: boolean): Promise<OperationResult | null>;
   emptyTrash(): Promise<OperationResult | null>;
   takeOpenPaths(): Promise<string[]>;
   onOpenPaths(callback: () => void): () => void;
   setTheme(mode: ThemeMode): Promise<ThemeMode>;
+  about(): Promise<AboutInfo>;
+  updateState(): Promise<UpdateState>;
+  checkUpdate(): Promise<UpdateState>;
+  downloadUpdate(): Promise<UpdateState>;
+  installUpdate(): Promise<UpdateState>;
+  onUpdateChanged(callback: (state: UpdateState) => void): () => void;
+  openProject(page: 'home' | 'issues' | 'license' | 'releases'): Promise<void>;
   settings(): Promise<AppSettings>;
   fileViewerSettings(): Promise<FileViewerSettings>;
   setFileViewer(enabled: boolean): Promise<FileViewerSettings>;

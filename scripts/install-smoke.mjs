@@ -66,7 +66,8 @@ fi`);
   assert.equal(await fs.readFile(env.TEST_DOWNLOAD_LOG, 'utf8'), downloads);
   await setVersion('0.1.9'); // Numeric, not lexicographic comparison.
   assert.match((await run()).stdout, /发现新版本/);
-  assert.equal((await fs.readdir(path.join(installDir, '.Mac Explorer Backups'))).length, 1);
+  await assert.rejects(fs.access(path.join(installDir, '.Mac Explorer Backups')));
+  assert.deepEqual((await fs.readdir(installDir)).filter(name => name.startsWith('.mac-explorer-install.')), []);
   for (const extra of [{ TEST_CORRUPT: '1' }, { TEST_NETWORK_FAILURE: '1' }, { TEST_RUNNING: '1' }, { TEST_MOVE_FAILURE: '1' }, { TEST_ZIP_FAILURE: '1' }]) {
     const older = await setVersion('0.1.9');
     await assert.rejects(run(extra), error => {
@@ -90,7 +91,59 @@ fi`);
   const older = await setVersion('0.1.9');
   await assert.rejects(run({ MAC_EXPLORER_ALLOW_UNNOTARIZED: '1', TEST_CORRUPT: '1' }));
   assert.deepEqual(await fs.readFile(path.join(app, 'Contents/Info.plist')), older);
-  console.log('PASS: install/update/rollback, default quarantine preserved, explicit opt-in removes only application quarantine, unrelated attributes/files preserved, corrupt opt-in download rejected; temporary fixtures only, no app launched.');
+  // Rewrite only real installation locations so default routing is tested in isolation.
+  const installer = await fs.readFile('scripts/install.sh', 'utf8');
+  assert.ok(installer.includes('install_dir="${MAC_EXPLORER_INSTALL_DIR:-/Applications}"'));
+  const systemDir = path.join(root, 'System Applications');
+  const legacyDir = path.join(root, 'Personal Applications'); await fs.mkdir(legacyDir);
+  const systemApp = path.join(systemDir, 'Mac Explorer.app');
+  const legacyApp = path.join(legacyDir, 'Mac Explorer.app');
+  const isolated = path.join(root, 'install-isolated.sh');
+  const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+  await fs.writeFile(isolated, installer.replace(':-/Applications}', `:-${systemDir}}`).replace('legacy_app="$HOME/Applications/Mac Explorer.app"', `legacy_app=${quote(legacyApp)}`).replace('"$install_dir" == /Applications', `"$install_dir" == ${quote(systemDir)}`));
+  await exec('/bin/bash', ['-n', isolated]);
+  const defaultRun = extra => exec('/bin/bash', [isolated], { env: { ...env, MAC_EXPLORER_INSTALL_DIR: '', ...extra }, maxBuffer: 1024 * 1024 });
+  await defaultRun();
+  await fs.access(path.join(systemApp, 'Contents/Info.plist'));
+  await assert.rejects(fs.access(legacyApp));
+  await fs.rename(systemApp, legacyApp);
+  for (const extra of [{ TEST_RUNNING: '1' }, { TEST_NETWORK_FAILURE: '1' }]) {
+    await assert.rejects(defaultRun(extra)); await fs.access(legacyApp); await assert.rejects(fs.access(systemApp));
+  }
+  const beforeMigration = await fs.readFile(path.join(legacyApp, 'Contents/Info.plist'));
+  assert.match((await defaultRun()).stdout, /已移至应用程序/);
+  assert.deepEqual(await fs.readFile(path.join(systemApp, 'Contents/Info.plist')), beforeMigration);
+  await assert.rejects(fs.access(legacyApp));
+  await fs.rename(systemApp, legacyApp);
+  await exec('/usr/libexec/PlistBuddy', ['-c', 'Set CFBundleShortVersionString 99.0.0', path.join(legacyApp, 'Contents/Info.plist')]);
+  await exec('codesign', ['--force', '--deep', '--sign', '-', legacyApp]);
+  assert.match((await defaultRun()).stdout, /不降级/);
+  assert.match(await fs.readFile(path.join(systemApp, 'Contents/Info.plist'), 'utf8'), /99.0.0/);
+  await fs.rename(systemApp, legacyApp);
+  await exec('/usr/libexec/PlistBuddy', ['-c', 'Set CFBundleShortVersionString 0.1.9', path.join(legacyApp, 'Contents/Info.plist')]);
+  await exec('codesign', ['--force', '--deep', '--sign', '-', legacyApp]);
+  const legacyBeforeUpdate = await fs.readFile(path.join(legacyApp, 'Contents/Info.plist'));
+  await assert.rejects(defaultRun({ TEST_MOVE_FAILURE: '1' }));
+  assert.deepEqual(await fs.readFile(path.join(legacyApp, 'Contents/Info.plist')), legacyBeforeUpdate);
+  await assert.rejects(fs.access(systemApp));
+  assert.deepEqual((await fs.readdir(systemDir)).filter(name => name.startsWith('.mac-explorer-install.')), []);
+  assert.match((await defaultRun()).stdout, /安装完成/);
+  await assert.rejects(fs.access(legacyApp));
+  await exec('codesign', ['--verify', '--deep', '--strict', systemApp]);
+  await fs.rename(systemApp, legacyApp);
+  const linkTarget = path.join(root, 'unrelated.app'); await fs.mkdir(linkTarget); await fs.writeFile(path.join(linkTarget, 'keep.txt'), 'keep');
+  await fs.symlink(linkTarget, systemApp);
+  await assert.rejects(defaultRun(), /符号链接/);
+  assert.equal(await fs.readFile(path.join(linkTarget, 'keep.txt'), 'utf8'), 'keep');
+  await fs.unlink(systemApp);
+  await fs.mkdir(systemApp); await fs.writeFile(path.join(systemApp, 'keep.txt'), 'keep');
+  await assert.rejects(defaultRun(), /其他应用/);
+  assert.equal(await fs.readFile(path.join(systemApp, 'keep.txt'), 'utf8'), 'keep');
+  await fs.rm(systemApp, { recursive: true });
+  await fs.rename(legacyApp, linkTarget + '.saved'); await fs.symlink(linkTarget, legacyApp);
+  await assert.rejects(defaultRun(), /符号链接/);
+  assert.equal(await fs.readFile(path.join(linkTarget, 'keep.txt'), 'utf8'), 'keep');
+  console.log('PASS: system Applications default, personal-app migration at same/newer/older versions, migration rollback and collision/symlink protection, custom install/update/rollback, quarantine preservation and opt-in; temporary fixtures only, no app launched.');
 } finally {
   await fs.rm(root, { recursive: true, force: true });
 }

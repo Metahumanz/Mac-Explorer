@@ -1,0 +1,98 @@
+import { _electron as electron } from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-about-'));
+await fs.mkdir(path.join(root, 'Documents'));
+await fs.mkdir('artifacts/settings', { recursive: true });
+let app;
+try {
+  app = await electron.launch({ colorScheme: null, args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_HIDDEN: '1' } });
+  const page = await app.firstWindow(); page.setDefaultTimeout(10_000);
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.getByRole('tab').waitFor();
+  const open = async (name = '关于') => {
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.flatMap(item => item.submenu?.items || []).find(item => item.accelerator === 'Command+,').click());
+    await page.getByRole('tab', { name, exact: true }).click();
+    await page.waitForFunction(() => Promise.all(document.querySelector('dialog').getAnimations().map(animation => animation.finished)).then(() => true));
+  };
+  await open();
+  const info = await page.evaluate(() => window.explorer.about());
+  assert.equal(info.version, JSON.parse(await fs.readFile('package.json', 'utf8')).version);
+  assert.equal(info.author, 'qixiaoyu27'); assert.equal(info.license, 'GPL-3.0-only');
+  await page.getByRole('heading', { name: 'Mac Explorer', exact: true }).waitFor();
+  await assert.rejects(page.evaluate(() => window.explorer.openProject('https://example.com')), /无效/);
+  await app.evaluate(({ shell }) => { globalThis.openedProjectURLs = []; shell.openExternal = async url => { globalThis.openedProjectURLs.push(url); }; });
+  await page.getByRole('button', { name: 'GitHub 发布页', exact: true }).click();
+  assert.deepEqual(await app.evaluate(() => globalThis.openedProjectURLs), ['https://github.com/qixiaoyu27/Mac-Explorer/releases']);
+  await assert.rejects(page.evaluate(() => window.explorer.installUpdate()), /下载/);
+  assert.equal((await page.evaluate(() => window.explorer.updateState())).canInstall, false);
+  await app.evaluate(() => {
+    globalThis.updateMode = 'available'; globalThis.updateRequests = [];
+    globalThis.fetch = async url => {
+      globalThis.updateRequests.push(url);
+      if (globalThis.updateMode === 'offline') throw new Error('Fixture offline');
+      const version = globalThis.updateMode === 'current' ? '0.0.1' : '0.1.999';
+      return new Response(JSON.stringify({ tag_name: `v${version}`, body: 'Fixture release notes\n<script>window.untrusted=true</script>', assets: [`Mac-Explorer-${version}-mac-arm64.zip`, 'SHA256SUMS.txt'].map(name => ({ name, size: 100, browser_download_url: `https://github.com/qixiaoyu27/Mac-Explorer/releases/download/v${version}/${name}` })) }), { status: 200 });
+    };
+  });
+  await page.getByRole('button', { name: '检查更新', exact: true }).click();
+  await page.getByText('发现新版本 0.1.999', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '下载更新', exact: true }).count(), 0);
+  assert.equal(await page.locator('.update-notes').count(), 0);
+  assert.equal(await page.getByText('Fixture release notes', { exact: false }).count(), 0);
+  assert.equal(await page.evaluate(() => window.untrusted), undefined);
+  await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+  await open(); await page.getByText('发现新版本 0.1.999', { exact: true }).waitFor();
+  assert.deepEqual(await app.evaluate(() => globalThis.updateRequests), ['https://api.github.com/repos/qixiaoyu27/Mac-Explorer/releases/latest']);
+  await app.evaluate(() => { globalThis.updateMode = 'offline'; });
+  await page.getByRole('button', { name: '检查更新', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Fixture offline' }).waitFor();
+  await app.evaluate(() => { globalThis.updateMode = 'current'; });
+  await page.getByRole('button', { name: '检查更新', exact: true }).click();
+  await page.getByText('当前已是最新版本。', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('alert').count(), 0);
+  // Renderer states use fixture IPC responses; no application is replaced by this UI test.
+  await app.evaluate(({ ipcMain, BrowserWindow }) => {
+    globalThis.fixtureUpdate = { currentVersion: '0.1.50', latestVersion: '0.1.999', status: 'available', downloaded: 0, total: 10 * 1024 ** 2, canInstall: true };
+    for (const name of ['update-state', 'download-update', 'install-update']) ipcMain.removeHandler(name);
+    ipcMain.handle('update-state', () => globalThis.fixtureUpdate);
+    ipcMain.handle('download-update', () => { globalThis.fixtureUpdate.status = 'downloading'; return globalThis.fixtureUpdate; });
+    ipcMain.handle('install-update', () => { globalThis.installRequested = true; globalThis.fixtureUpdate.status = 'installing'; return globalThis.fixtureUpdate; });
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send('update-changed', globalThis.fixtureUpdate);
+  });
+  await page.getByRole('button', { name: '下载更新', exact: true }).click();
+  await page.getByRole('progressbar', { name: '更新下载进度' }).waitFor();
+  const send = patch => app.evaluate(({ BrowserWindow }, patch) => {
+    Object.assign(globalThis.fixtureUpdate, patch);
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send('update-changed', globalThis.fixtureUpdate);
+  }, patch);
+  await send({ downloaded: 5 * 1024 ** 2 });
+  await page.getByText('5.0 / 10.0 MiB', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+  await open(); await page.getByText('5.0 / 10.0 MiB', { exact: true }).waitFor();
+  await send({ status: 'verifying', downloaded: 10 * 1024 ** 2 });
+  await page.getByText('正在校验更新包…', { exact: true }).waitFor();
+  await send({ status: 'ready' });
+  await page.getByRole('button', { name: '重启并安装', exact: true }).waitFor();
+  await page.screenshot({ path: path.resolve('artifacts/settings/about-light-fixture.png') });
+  const owner = await app.browserWindow(page); await owner.evaluate(window => window.setSize(800, 650));
+  await page.evaluate(() => window.explorer.setTheme('dark'));
+  await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+  await page.evaluate(() => window.explorer.setLanguage('en'));
+  await open('About');
+  await page.getByRole('button', { name: 'Restart and install', exact: true }).waitFor();
+  assert.equal(await page.getByRole('tabpanel').evaluate(element => element.scrollWidth <= element.clientWidth), true);
+  await page.screenshot({ path: path.resolve('artifacts/settings/about-dark-english-fixture.png') });
+  await page.getByRole('button', { name: 'Restart and install', exact: true }).click();
+  await page.getByText('Quitting to install the update…', { exact: true }).waitFor();
+  assert.equal(await app.evaluate(() => globalThis.installRequested), true);
+  await page.getByRole('button', { name: 'Close settings', exact: true }).click();
+  await page.evaluate(() => window.explorer.setLanguage('zh-TW'));
+  await send({ status: 'ready' }); await open('關於');
+  await page.getByRole('button', { name: '重新啟動並安裝', exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  assert.deepEqual(errors, []);
+  console.log('PASS: real About metadata and update IPC, version check/network failure/retry/no downgrade, URL validation, development install block, release-page link and no inline release notes; fixture download/progress/reopen/install action, light/dark/English/Traditional Chinese, small window. No installed app replaced.');
+} finally { await app?.close().catch(() => {}); await fs.rm(root, { recursive: true, force: true }); }

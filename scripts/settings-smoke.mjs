@@ -20,7 +20,7 @@ async function openSettings() {
  for(const name of ['外观','语言','键盘快捷键']) assert.equal(await page.getByRole('menuitem',{name,exact:true}).count(),0);
  await page.getByRole('menuitem',{name:'设置…',exact:true}).click();
  await page.getByRole('dialog',{name:'设置',exact:true}).waitFor();
- assert.deepEqual(await page.getByRole('dialog').getByRole('tab').allTextContents(),['常规','自定义工具栏','键盘快捷键']);
+ assert.deepEqual(await page.getByRole('dialog').getByRole('tab').allTextContents(),['常规','自定义工具栏','键盘快捷键','关于']);
  await page.getByRole('tab',{name:'键盘快捷键',exact:true}).click();
  await page.waitForFunction(()=>!document.querySelector('input[aria-label="唤醒快捷键"]').disabled);
 }
@@ -103,6 +103,8 @@ try {
  await general.focus();await general.press('ArrowRight');
  assert.equal(await page.getByRole('tab',{name:'自定义工具栏',exact:true}).getAttribute('aria-selected'),'true');
  await page.keyboard.press('End');
+ assert.equal(await page.getByRole('tab',{name:'关于',exact:true}).getAttribute('aria-selected'),'true');
+ await page.keyboard.press('ArrowLeft');
  await page.getByRole('heading',{name:'文件操作快捷键',exact:true}).waitFor();
  assert.equal(await page.locator('.operation-shortcut').count(),27);
  await page.keyboard.press('Home');
@@ -115,7 +117,7 @@ try {
    await page.screenshot({path:path.resolve(`artifacts/settings/${prefix}-${index}-fixture.png`)});
   }
  }
- const labels=['常规','自定义工具栏','键盘快捷键'];
+ const labels=['常规','自定义工具栏','键盘快捷键','关于'];
  await captureTabs('light',labels);
  await general.click();
  await page.getByRole('radio',{name:'深色',exact:true}).click();
@@ -128,7 +130,7 @@ try {
  await page.getByRole('dialog',{name:'Settings',exact:true}).waitFor();
  await page.waitForFunction(()=>Promise.all(document.querySelector('dialog').getAnimations().map(animation=>animation.finished)).then(()=>true));
  assert.equal(await page.locator('dialog').evaluate(element=>element.scrollWidth<=element.clientWidth),true);
- await captureTabs('english',['General','Customize toolbar','Keyboard shortcuts']);
+ await captureTabs('english',['General','Customize toolbar','Keyboard shortcuts','About']);
  console.log('Startup conflict injection:',process.env.EXPLORER_APP_PATH?'source-only; packaged startup registration verified':'passed');
- console.log('PASS: consolidated settings entry; three Windows-style tabs, arrow/Home/End navigation, shortcut reference, light/dark/English at 800px, native entry; no default Command+E; custom shortcut capture/save/clear/restart, conflict preservation, wake restore/new-window callback, login startup UI and API removed.');
+ console.log('PASS: consolidated settings entry; four Windows-style tabs, arrow/Home/End navigation, shortcut reference, light/dark/English at 800px, native entry; no default Command+E; custom shortcut capture/save/clear/restart, conflict preservation, wake restore/new-window callback, login startup UI and API removed.');
 } finally {await app?.close().catch(()=>{});await fs.rm(root,{recursive:true,force:true,maxRetries:3});}

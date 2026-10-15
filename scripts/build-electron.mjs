@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import nodeAPIHeaders from 'node-api-headers';
 
 fs.mkdirSync('dist-electron/native', { recursive: true });
+fs.copyFileSync('scripts/install.sh', 'dist-electron/native/install.sh');
+fs.copyFileSync('scripts/update-install.sh', 'dist-electron/native/update-install.sh');
 fs.cpSync('electron/templates', 'dist-electron/templates', { recursive: true });
 const gestureSource = 'electron/native/ScrollGesture.mm';
 const gestureBinary = 'dist-electron/native/scroll-gesture.node';
@@ -36,6 +38,12 @@ if (!fs.existsSync(volumesBinary) || fs.statSync(volumesSource).mtimeMs > fs.sta
   execFileSync('codesign', ['--force', '--sign', '-', volumesBinary], { stdio: 'inherit' });
 }
 const terminalSource = 'electron/native/DefaultTerminal.swift';
+const networkSource = 'electron/native/Network.swift';
+const networkBinary = 'dist-electron/native/network';
+if (!fs.existsSync(networkBinary) || fs.statSync(networkSource).mtimeMs > fs.statSync(networkBinary).mtimeMs) {
+  execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', networkSource, '-o', networkBinary], { stdio: 'inherit' });
+  execFileSync('codesign', ['--force', '--sign', '-', networkBinary], { stdio: 'inherit' });
+}
 const viewerSource = 'electron/native/FileViewer.swift';
 const viewerBinary = 'dist-electron/native/file-viewer';
 if (!fs.existsSync(viewerBinary) || Math.max(fs.statSync(viewerSource).mtimeMs, fs.statSync('scripts/build-electron.mjs').mtimeMs) > fs.statSync(viewerBinary).mtimeMs) {

@@ -2,11 +2,11 @@ import AppKit
 
 let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsLocalKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey]
 func volumes() throws -> [[String: Any]] {
-    let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys), options: []) ?? []
+    let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]) ?? []
     return try urls.filter { $0.path == "/" || $0.path.hasPrefix("/Volumes/") }.map { url in
         let values = try url.resourceValues(forKeys: keys)
         let ejectable = url.path != "/" && (values.volumeIsEjectable == true || values.volumeIsRemovable == true || values.volumeIsLocal == false)
-        return ["path": url.path, "name": values.volumeName ?? url.lastPathComponent, "icon": "drive", "total": values.volumeTotalCapacity ?? 0, "free": values.volumeAvailableCapacity ?? 0, "canEject": ejectable]
+        return ["path": url.path, "name": values.volumeName ?? url.lastPathComponent, "icon": "drive", "total": values.volumeTotalCapacity ?? 0, "free": values.volumeAvailableCapacity ?? 0, "canEject": ejectable, "isNetwork": values.volumeIsLocal == false]
     }
 }
 do {

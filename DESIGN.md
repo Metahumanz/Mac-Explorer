@@ -5,6 +5,7 @@ The user's reference is binding: reproduce Windows 11 File Explorer in Operate m
 - Mica-like pale neutral tab strip, white active tab, quiet gray command bar, white file surface, fine gray separators.
 - Four horizontal bands: 48px tabs, 60px navigation, 56px commands, flexible content; 30px status bar.
 - 208px navigation pane; compact 36px rows; recognizable yellow folder shapes, outlined 16–18px command icons, colored navigation glyphs.
+- Keep the separate personal-folder entry at the top. Quick Access starts with Applications, Desktop, Downloads, and Documents, followed by other available defaults and custom pins; preserve explicit drag ordering. Applications uses an outlined App Store-style A glyph at the same size and stroke weight as the other sidebar icons.
 - System UI font with Chinese fallbacks, 13px body, 12px metadata, 20px home title. No marketing typography.
 - Blue #0067c0 for focused/selected states, pale blue #e5f3ff selection, 4px control radii. Preserve macOS traffic lights.
 - Single-clicking the address-bar background or current breadcrumb enters path editing; ancestor breadcrumbs remain navigation links. Menus open beside their trigger and stay inside the viewport. File rows open on double-click and select on single-click.
@@ -19,6 +20,8 @@ The user's reference is binding: reproduce Windows 11 File Explorer in Operate m
 - Settings follows the Windows Explorer options dialog: a compact title bar, bordered tabs for General, Customize toolbar, and Keyboard shortcuts, grouped form controls, a scrolling content pane, and a fixed Close footer. Appearance, language, and toolbar choices apply immediately; wake and operation shortcuts have separate Save actions. Each operation supports recording, clearing, and restoring defaults; recording replaces all default aliases. Validate effective bindings against other operations, wake, and common reserved combinations before saving. Keep menu hints and accelerators synchronized across windows while preserving standard text editing. Arrow keys, Home, and End navigate tabs. More has one Settings entry.
 
 ## Motion
+
+AirDrop and Network are virtual sidebar locations with their own tabs and history. Keep the existing Explorer shell: AirDrop has a plain page title, outlined drop area and one Choose files action; Network has a labeled SMB address form, compact shared-computer rows, connected shares and explicit discovery/loading/error/empty states. Native recipient selection and network authentication remain system windows; mounted-file browsing stays in the app. Preserve light/dark tokens, narrow-window layout, keyboard access and source files on every sharing path.
 
 Settings defaults to 560 × 700 CSS pixels, capped to fit the application viewport. Drag its title bar to reposition it within the viewport; focused title bars also support arrow-key movement. Keep the title bar and Close footer visible when resizing, and center the dialog when reopened.
 

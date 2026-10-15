@@ -1,3 +1,6 @@
+import { AppUpdates } from './updates';
+import { networkAddress } from './network';
+import packageInfo from '../package.json';
 import { bindingsFor, normalizeShortcut, validWakeShortcut, validateWakeBinding, validateOperationShortcuts, type OperationShortcuts } from '../shared/shortcuts';
 import { languageState, loadLanguage, saveLanguage } from './language';
 import { fileViewerSettings } from './file-viewer';
@@ -19,7 +22,7 @@ import { FileIcons } from './icons';
 import { VersionControl } from './vcs';
 import type { VcsAction } from '../shared/vcs';
 import { listTrash, TrashOrigins, snapshotTrash, emptyTrash } from './trash';
-import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ShareService, ThemeMode, Volume } from '../shared/types';
+import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ShareService, ThemeMode, Volume, NetworkServer } from '../shared/types';
 
 let currentLanguage = 'zh-CN';
 // Preserve the requesting window across awaits, even when focus changes.
@@ -36,6 +39,12 @@ let rememberTimer: NodeJS.Timeout | undefined;
 const testRoot = process.env.EXPLORER_TEST_ROOT;
 if (testRoot) app.setPath('userData', path.join(testRoot, '.app-data'));
 app.setName('Mac Explorer');
+let activeRequests = 0;
+let installingUpdate = false;
+const updates = new AppUpdates(app.getVersion(), path.join(app.getPath('userData'), 'updates'),
+  app.isPackaged && !testRoot && process.platform === 'darwin' && process.arch === 'arm64' ? path.dirname(path.dirname(path.dirname(process.execPath))) : undefined,
+  path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/update-install.sh'),
+  state => { for (const owner of windows.keys()) owner.webContents.send('update-changed', state); });
 const openPaths: string[] = [];
 let readyForOpen = false;
 // LaunchServices can deliver documents before app.whenReady or the renderer exists.
@@ -64,8 +73,11 @@ function ipc(name: string, handler: (...args: any[]) => unknown) {
     const trusted = isDev ? url?.startsWith('http://127.0.0.1:5173/') : url === pathToFileURL(path.join(__dirname, '../dist/index.html')).href;
     const owner = BrowserWindow.fromWebContents(event.sender);
     if (!owner || !windows.has(owner) || !trusted) throw new Error(tr('不受信任的请求。'));
+    if (installingUpdate && !['update-state', 'about'].includes(name)) throw new Error(tr('正在准备重启，请稍候。'));
+    activeRequests++;
     try { return await requestWindow.run(owner, () => handler(...args)); }
     catch (error) { throw new Error(readableError(error)); }
+    finally { activeRequests--; }
   });
 }
 const FILE_URL_TYPE = 'electron application/osclipboard;format="public.file-url"';
@@ -110,6 +122,34 @@ async function readVolumes(input?: string): Promise<Volume[]> {
   }
 }
 ipc('volumes', () => readVolumes());
+const networkHelper = path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/network');
+let networkDiscovery: Promise<NetworkServer[]> | undefined;
+let connectingNetwork = false;
+ipc('network-discover', () => {
+  if (!networkDiscovery) networkDiscovery = promisify(execFile)(networkHelper, ['discover'], { timeout: 10000 }).then(({ stdout }) => JSON.parse(stdout) as NetworkServer[]).catch(error => {
+    throw new Error(tr('无法发现网络设备：{0}。请检查本地网络权限或手动输入服务器地址。', error.stderr?.trim() || readableError(error)));
+  }).finally(() => { networkDiscovery = undefined; });
+  return networkDiscovery;
+});
+ipc('network-connect', async (input: unknown) => {
+  const address = networkAddress(input);
+  if (connectingNetwork) throw new Error(tr('正在连接服务器，请先完成或取消系统登录窗口。'));
+  connectingNetwork = true;
+  try {
+    const { stdout } = await promisify(execFile)(networkHelper, ['connect', address], { timeout: 120000 });
+    const mounts: string[] | null = JSON.parse(stdout);
+    if (mounts === null) return null;
+    if (!Array.isArray(mounts) || !mounts.length) throw new Error(tr('服务器未返回可用的共享文件夹。'));
+    for (const mount of mounts) if (!(await fs.stat(absolute(mount))).isDirectory()) throw new Error(tr('服务器未返回可用的共享文件夹。'));
+    return mounts;
+  } catch (error) {
+    throw new Error(tr('无法连接服务器：{0}。', (error as { stderr?: string }).stderr?.trim() || readableError(error)));
+  } finally { connectingNetwork = false; }
+});
+ipc('choose-airdrop-files', async () => {
+  const result = await dialog.showOpenDialog(currentWindow()!, { title: tr('选择要隔空投送的文件'), properties: ['openFile', 'openDirectory', 'multiSelections'] });
+  return result.canceled ? null : result.filePaths;
+});
 ipc('eject-volume', async (input: unknown) => {
   const requested = absolute(input);
   if (testRoot && requested !== process.env.EXPLORER_TEST_EJECT_VOLUME) throw new Error(tr('测试实例只能推出指定的临时磁盘。'));
@@ -118,6 +158,7 @@ ipc('eject-volume', async (input: unknown) => {
 async function bootstrap(): Promise<Bootstrap> {
   const home = testRoot || os.homedir();
   const candidates: Place[] = [
+    { name: tr('应用程序'), path: testRoot ? path.join(home, 'Applications') : '/Applications', icon: 'applications' },
     { name: tr('桌面'), path: path.join(home, 'Desktop'), icon: 'desktop' },
     { name: tr('下载'), path: path.join(home, 'Downloads'), icon: 'download' },
     { name: tr('文档'), path: path.join(home, 'Documents'), icon: 'document' },
@@ -126,7 +167,6 @@ async function bootstrap(): Promise<Bootstrap> {
     { name: tr('视频'), path: path.join(home, 'Movies'), icon: 'video' },
   ];
   const places = (await Promise.all(candidates.map(async place => (await fs.stat(place.path).catch(() => null))?.isDirectory() ? place : null))).filter((p): p is Place => p !== null);
-  places.push({ name: tr('回收站'), path: 'trash', icon: 'trash' });
   const volumes = await readVolumes();
   return { initialTab: windows.get(currentWindow()!)?.initialTab, language: languageState(), theme: nativeTheme.themeSource, home, places, volumes, initialPath: testRoot ? path.join(testRoot, 'Documents') : process.env.EXPLORER_START_PATH };
 }
@@ -218,6 +258,21 @@ function notifySettings() {
   buildMenu();
   for (const owner of windows.keys()) owner.webContents.send('settings-changed', appSettings());
 }
+ipc('about', () => ({ version: app.getVersion(), author: packageInfo.author, license: packageInfo.license, platform: `macOS · ${process.arch === 'arm64' ? 'Apple Silicon' : process.arch}` }));
+ipc('update-state', () => updates.restore());
+ipc('check-update', () => updates.check());
+ipc('download-update', () => updates.download());
+ipc('install-update', async () => {
+  if (activeRequests > 1 || extracting) throw new Error(tr('正在处理文件，请等待完成后再安装更新。'));
+  installingUpdate = true;
+  try { const state = await updates.install(process.pid); setImmediate(() => app.quit()); return state; }
+  catch (error) { installingUpdate = false; throw error; }
+});
+ipc('open-project', (page: unknown) => {
+  const destinations = { home: '', issues: '/issues', license: '/blob/main/LICENSE', releases: '/releases' };
+  if (typeof page !== 'string' || !Object.hasOwn(destinations, page)) throw new Error(tr('无效的项目链接。'));
+  return shell.openExternal(`https://github.com/qixiaoyu27/Mac-Explorer${destinations[page as keyof typeof destinations]}`);
+});
 ipc('settings', appSettings);
 ipc('file-viewer-settings', () => fileViewerSettings());
 ipc('set-file-viewer', async (enabled: unknown) => {
@@ -524,7 +579,7 @@ ipc('window-ready', () => {
   state.ready?.();
 });
 ipc('detach-tab', async (input: TabState, point: { x: number; y: number }, single: boolean) => {
-  const validLocation = (value: unknown) => typeof value === 'string' && value.length <= 32768 && !value.includes('\0') && (value === 'computer' || value === 'trash' || value.startsWith('/') || value.startsWith('trash:/'));
+  const validLocation = (value: unknown) => typeof value === 'string' && value.length <= 32768 && !value.includes('\0') && (['computer', 'airdrop', 'network', 'trash'].includes(value) || value.startsWith('/') || value.startsWith('trash:/'));
   if (!input || !Array.isArray(input.history) || !input.history.length || input.history.length > 10000 || !input.history.every(validLocation) || !Number.isInteger(input.index) || input.index < 0 || input.index >= input.history.length || input.location !== input.history[input.index] || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || typeof single !== 'boolean') throw new Error(tr('无效的标签页。'));
   const owner = currentWindow()!;
   const area = screen.getDisplayNearestPoint({ x: Math.round(point.x), y: Math.round(point.y) }).workArea;
