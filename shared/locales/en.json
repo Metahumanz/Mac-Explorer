@@ -619,5 +619,20 @@
   "在文件夹中更改布局或排序只影响该文件夹，其余文件夹使用这里的默认值。": "Changing the layout or sort inside a folder affects only that folder; other folders use these defaults.",
   "重置所有文件夹": "Reset all folders",
   "所有文件夹已跟随默认值。": "All folders now use the defaults.",
-  "无效的视图设置。": "Invalid view settings."
+  "无效的视图设置。": "Invalid view settings.",
+  "切换到第 1 个标签页": "Switch to tab 1",
+  "切换到第 2 个标签页": "Switch to tab 2",
+  "切换到第 3 个标签页": "Switch to tab 3",
+  "切换到第 4 个标签页": "Switch to tab 4",
+  "切换到第 5 个标签页": "Switch to tab 5",
+  "切换到第 6 个标签页": "Switch to tab 6",
+  "切换到第 7 个标签页": "Switch to tab 7",
+  "切换到第 8 个标签页": "Switch to tab 8",
+  "切换到最后一个标签页": "Switch to the last tab",
+  "超大图标视图": "Extra large icons view",
+  "中图标视图": "Medium icons view",
+  "小图标视图": "Small icons view",
+  "列表视图": "List view",
+  "平铺视图": "Tiles view",
+  "内容视图": "Content view"
 }

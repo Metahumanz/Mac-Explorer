@@ -34,7 +34,7 @@ const row = name => page.getByRole('option', { name, exact: true });
 const nativeKey = label => app.evaluate(({ Menu }, label) => Menu.getApplicationMenu().items.flatMap(item => item.submenu?.items || []).find(item => item.label === label)?.accelerator ?? '', label);
 try {
   await launch(); await settings();
-  assert.equal(await page.locator('.operation-shortcut').count(), 27);
+  assert.equal(await page.locator('.operation-shortcut').count(), 42);
   assert.equal(await binding('重命名').inputValue(), 'Return / F2');
   for (const [key, message] of [['Control+c', '复制'], ['Meta+,', '保留']]) {
     await binding('重命名').press(key);
@@ -140,5 +140,5 @@ try {
   await page.screenshot({ path: path.resolve('artifacts/operation-shortcuts/edit-dark-fixture.png') });
   await dismiss();
   assert.equal(await fs.readFile(path.join(docs, 'renamed.txt'), 'utf8'), 'preserved content');
-  console.log('PASS: 27 editable operations; live alias/wake/reserved conflict checks and IPC enforcement; rename/native-menu remapping, old keys disabled, input copy/paste preserved, multi-window sync, failed-write rollback, restart persistence, clear and restore. Temporary fixtures only.');
+  console.log('PASS: 42 editable operations; live alias/wake/reserved conflict checks and IPC enforcement; rename/native-menu remapping, old keys disabled, input copy/paste preserved, multi-window sync, failed-write rollback, restart persistence, clear and restore. Temporary fixtures only.');
 } finally { if (app) await close().catch(() => {}); await fs.rm(root, { recursive: true, force: true, maxRetries: 3 }); }

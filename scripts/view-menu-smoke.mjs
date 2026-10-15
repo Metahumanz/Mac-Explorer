@@ -51,8 +51,8 @@ try {
   await page.getByRole('option', { name: '子目录.txt', exact: true }).waitFor();
   await assertIcons(48);
   await go(downloads, '下载.txt'); await assertIcons(64);
-  await page.keyboard.press('Meta+2'); await page.locator('.file-items.file-table').waitFor();
-  await page.keyboard.press('Meta+1'); await assertIcons(64);
+  await page.keyboard.press('Control+Shift+6'); await page.locator('.file-items.file-table').waitFor();
+  await page.keyboard.press('Control+Shift+2'); await assertIcons(64);
   const slider = page.getByRole('slider', { name: '图标大小' });
   await slider.focus(); await slider.press('ArrowRight'); await assertIcons(72);
   await page.locator('.file-content').hover();
@@ -77,7 +77,7 @@ try {
   await go(docs, '预览.txt'); await page.locator('.file-items.file-table').waitFor();
   console.log('PASS: large default ignores legacy globals; saved medium/custom sizes retained; directory/size isolation, history, tabs, keyboard, slider, wheel and reload persistence');
   await viewButton.click();
-  assert.deepEqual(await page.locator('.context-menu > div > button').evaluateAll(items => items.map(item => item.textContent.trim())), ['超大图标', '大图标', '中图标', '小图标', '列表', '详细信息', '平铺', '内容', '详细信息窗格', '预览窗格', '显示', '应用到所有文件夹']);
+  assert.deepEqual(await page.locator('.context-menu > div > button').evaluateAll(items => items.map(item => item.querySelector('.menu-label')?.textContent.trim() || item.textContent.trim())), ['超大图标', '大图标', '中图标', '小图标', '列表', '详细信息', '平铺', '内容', '详细信息窗格', '预览窗格', '显示', '应用到所有文件夹']);
   await page.keyboard.press('End'); await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowRight');
   await page.getByRole('menu', { name: '显示', exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.textContent.trim() === '导航窗格');

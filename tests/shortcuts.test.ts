@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindingsFor, formatShortcut, normalizeShortcut, shortcutFromEvent, validateOperationShortcuts, validateWakeBinding, validWakeShortcut } from '../shared/shortcuts';
+import { bindingsFor, formatShortcut, migrateOperationShortcuts, normalizeShortcut, shortcutActions, shortcutActionIDs, shortcutFromEvent, validateOperationShortcuts, validateWakeBinding, validWakeShortcut } from '../shared/shortcuts';
 
 test('normalizes modifier order and rejects malformed shortcuts', () => {
   assert.equal(normalizeShortcut('Shift+Alt+Command+K'), 'Command+Alt+Shift+K');
@@ -37,4 +37,29 @@ test('rejects conflicts with other actions, compatibility aliases, wake and rese
 });
 test('rejects invalid IPC values instead of dropping or partially accepting them', () => {
   for (const value of [null, [], { unknown: ['Command+K'] }, { copy: 'Command+K' }, { copy: [''] }, { copy: ['Command+K', 'Command+K'] }, { copy: ['K'] }, { copy: Array(9).fill('F2') }]) assert.throws(() => validateOperationShortcuts(value));
+});
+
+test('numbered tabs and eight layouts have distinct, non-reserved defaults', () => {
+  assert.deepEqual(validateOperationShortcuts({}), {});
+  for (let number = 1; number <= 8; number++) assert.deepEqual(bindingsFor(`tab-${number}` as keyof typeof shortcutActions, {}), [`Command+${number}`]);
+  assert.deepEqual(bindingsFor('last-tab', {}), ['Command+9']);
+  const layouts = ['extra-large-icons', 'icons', 'medium-icons', 'small-icons', 'list', 'details', 'tiles', 'content'] as const;
+  layouts.forEach((action, index) => {
+    assert.deepEqual(bindingsFor(action, {}), [`Control+Shift+${index + 1}`]);
+    assert.equal(shortcutFromEvent({ code: `Digit${index + 1}`, key: '!@#$%^&*'[index], metaKey: false, ctrlKey: true, altKey: false, shiftKey: true }), bindingsFor(action, {})[0]);
+  });
+});
+
+test('legacy custom bindings and wake take priority over new defaults without resetting other actions', () => {
+  assert.deepEqual(migrateOperationShortcuts({}), {});
+  const legacy = { rename: ['Alt+Command+R'], copy: [], icons: ['Command+3'], details: ['Control+Shift+5'], refresh: ['Command+8'] };
+  const migrated = migrateOperationShortcuts(legacy, 'Command+9');
+  assert.deepEqual(migrated, { ...legacy, rename: ['Command+Alt+R'], 'tab-3': [], 'tab-8': [], 'last-tab': [], list: [] });
+  assert.deepEqual(validateOperationShortcuts(migrated, 'Command+9'), migrated);
+  assert.deepEqual(migrateOperationShortcuts(migrated, 'Command+9'), migrated);
+  assert.deepEqual(legacy.rename, ['Alt+Command+R']);
+  assert.deepEqual(migrateOperationShortcuts({ icons: ['Command+1'], details: ['Command+2'] }), { icons: ['Command+1'], details: ['Command+2'], 'tab-1': [], 'tab-2': [] });
+  assert.throws(() => validateOperationShortcuts({ rename: ['Command+3'] }), /相同快捷键/);
+  for (const value of [null, [], { unknown: [] }, { rename: ['Command+Shift+3'] }, { rename: ['K'] }, { rename: ['Command+K'], copy: ['Command+K'] }]) assert.throws(() => migrateOperationShortcuts(value));
+  assert.equal(shortcutActionIDs.length, 42);
 });

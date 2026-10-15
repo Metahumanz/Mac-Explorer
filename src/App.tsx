@@ -448,6 +448,12 @@ export default function App() {
     } else if (!isVirtual(location) && location !== '/') navigate(parent(location));
   }
   function newTab(destination = boot?.home || '') { const next = makeTab(destination); setTabs(previous => [...previous, next]); setActiveID(next.id); resetNavigation(); }
+  function selectTab(index: number) {
+    const next = tabs[index];
+    if (!next || next.id === tab.id) return;
+    setActiveID(next.id); resetNavigation();
+    document.querySelectorAll<HTMLElement>('.tabs [role="tab"]')[index]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
   const tabDrag = useRef<{ id: string; y: number; top: number; bottom: number } | null>(null);
   const detaching = useRef(false);
   const suppressTabClick = useRef(false);
@@ -837,11 +843,11 @@ export default function App() {
     { label: tr('递减'), checked: !ascending, action: () => changeSort({ ascending: false }) },
   ];
   const viewMenu: MenuItem[] = [
-    ...[{ name: tr('超大图标'), size: 128, icon: <ViewGlyph mode="extra"/> }, { name: tr('大图标'), size: 64, icon: <ViewGlyph mode="large"/> }, { name: tr('中图标'), size: 48, icon: <ViewGlyph mode="medium"/> }, { name: tr('小图标'), size: 32, icon: <ViewGlyph mode="small"/> }].map(option => ({ label: option.name, icon: option.icon, radio: true, checked: view === 'icons' && iconSize === option.size, action: () => { changeView({ view: 'icons', iconSize: option.size }); } })),
-    { label: tr('列表'), icon: <ViewGlyph mode="list"/>, radio: true, checked: view === 'list', action: () => changeView({ view: 'list' }) },
-    { label: tr('详细信息'), icon: <ViewGlyph mode="details"/>, radio: true, checked: view === 'details', action: () => changeView({ view: 'details' }) },
-    { label: tr('平铺'), icon: <ViewGlyph mode="tiles"/>, radio: true, checked: view === 'tiles', action: () => changeView({ view: 'tiles' }) },
-    { label: tr('内容'), icon: <ViewGlyph mode="content"/>, radio: true, checked: view === 'content', action: () => changeView({ view: 'content' }) },
+    ...([{ name: tr('超大图标'), size: 128, action: 'extra-large-icons', icon: <ViewGlyph mode="extra"/> }, { name: tr('大图标'), size: 64, action: 'icons', icon: <ViewGlyph mode="large"/> }, { name: tr('中图标'), size: 48, action: 'medium-icons', icon: <ViewGlyph mode="medium"/> }, { name: tr('小图标'), size: 32, action: 'small-icons', icon: <ViewGlyph mode="small"/> }] as const).map(option => ({ label: option.name, icon: option.icon, shortcut: shortcutHint(option.action), radio: true, checked: view === 'icons' && iconSize === option.size, action: () => { changeView({ view: 'icons', iconSize: option.size }); } })),
+    { label: tr('列表'), icon: <ViewGlyph mode="list"/>, shortcut: shortcutHint('list'), radio: true, checked: view === 'list', action: () => changeView({ view: 'list' }) },
+    { label: tr('详细信息'), icon: <ViewGlyph mode="details"/>, shortcut: shortcutHint('details'), radio: true, checked: view === 'details', action: () => changeView({ view: 'details' }) },
+    { label: tr('平铺'), icon: <ViewGlyph mode="tiles"/>, shortcut: shortcutHint('tiles'), radio: true, checked: view === 'tiles', action: () => changeView({ view: 'tiles' }) },
+    { label: tr('内容'), icon: <ViewGlyph mode="content"/>, shortcut: shortcutHint('content'), radio: true, checked: view === 'content', action: () => changeView({ view: 'content' }) },
     { label: tr('详细信息窗格'), icon: <PanelRight/>, checked: details, divider: true, action: () => toggleDetails() },
     { label: tr('预览窗格'), icon: <PanelRight/>, checked: previewPane, action: togglePreview },
     { label: tr('显示'), divider: true, children: [
@@ -897,6 +903,10 @@ export default function App() {
   actions.current = action => {
     if (modal) return;
     if (action === 'settings') { showModal({ kind: 'settings' }); return; }
+    if (action.startsWith('tab-') || action === 'last-tab') {
+      if (!editingName) selectTab(action === 'last-tab' ? tabs.length - 1 : Number(action.slice(4)) - 1);
+      return;
+    }
     if (isEditing(document.activeElement)) return;
     const commands: Record<string, () => void> = {
       'choose-folder': chooseFolder,
@@ -912,7 +922,11 @@ export default function App() {
       'new-tab': () => newTab(), 'close-tab': () => closeTab(tab.id),
       'next-tab': () => { const index = tabs.findIndex(t => t.id === tab.id); setActiveID(tabs[(index + 1) % tabs.length].id); resetNavigation(); },
       'previous-tab': () => { const index = tabs.findIndex(t => t.id === tab.id); setActiveID(tabs[(index + tabs.length - 1) % tabs.length].id); resetNavigation(); },
-      icons: () => changeView({ view: 'icons', iconSize: iconSize === 32 ? 64 : iconSize }),
+      'extra-large-icons': () => changeView({ view: 'icons', iconSize: 128 }),
+      icons: () => changeView({ view: 'icons', iconSize: 64 }),
+      'medium-icons': () => changeView({ view: 'icons', iconSize: 48 }),
+      'small-icons': () => changeView({ view: 'icons', iconSize: 32 }),
+      list: () => changeView({ view: 'list' }), tiles: () => changeView({ view: 'tiles' }), content: () => changeView({ view: 'content' }),
       details: () => changeView({ view: 'details' }), preview: togglePreview,
       hidden: () => setHidden(v => !v), 'details-pane': () => toggleDetails(), refresh: refreshDirectory,
     };
@@ -924,7 +938,7 @@ export default function App() {
       if (event.defaultPrevented || event.isComposing || modal || popup) return;
       const accelerator = shortcutFromEvent(event);
       const action = accelerator && shortcutActionIDs.find(id => bindingsFor(id, operationShortcuts).includes(accelerator));
-      if (isEditing(event.target)) {
+      if (isEditing(event.target) && !(action && (action.startsWith('tab-') || action === 'last-tab') && !editingName)) {
         // Keep the existing address/search entry points without taking text-editing keys.
         if (action === 'address' && ['Control+L', 'Alt+D'].includes(accelerator!)) { event.preventDefault(); editAddress(); }
         if (action === 'search' && ['Control+F', 'Control+E'].includes(accelerator!)) { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); }
@@ -1623,11 +1637,11 @@ function ContextMenu({ popup, onClose, parentButton, label }: { popup: Popup; on
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length;
       buttons[next]?.focus();
     }
-  }}>{popup.quickActions && <><div className="menu-quick-actions">{popup.quickActions.map(item => <button key={item.label} role="menuitem" title={item.shortcut ? `${item.label} (${item.shortcut})` : item.label} disabled={item.disabled} onClick={() => { onClose(); item.action?.(); }}><span className="menu-icon">{item.icon}</span><span>{item.label}</span></button>)}</div><div className="menu-divider"/></>}{popup.items.map((item, i) => <div key={i}>{item.divider && <div className="menu-divider"/>}<button role={item.radio ? 'menuitemradio' : item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'} aria-checked={item.checked} aria-haspopup={item.children ? 'menu' : undefined} aria-expanded={item.children ? submenu?.item === item : undefined} disabled={item.disabled} className={item.danger ? 'danger-item' : ''}
+  }}>{popup.quickActions && <><div className="menu-quick-actions">{popup.quickActions.map(item => <button key={item.label} role="menuitem" title={item.shortcut ? `${item.label} (${item.shortcut})` : item.label} disabled={item.disabled} onClick={() => { onClose(); item.action?.(); }}><span className="menu-icon">{item.icon}</span><span>{item.label}</span></button>)}</div><div className="menu-divider"/></>}{popup.items.map((item, i) => <div key={i}>{item.divider && <div className="menu-divider"/>}<button aria-label={item.label} aria-description={item.shortcut || undefined} role={item.radio ? 'menuitemradio' : item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'} aria-checked={item.checked} aria-haspopup={item.children ? 'menu' : undefined} aria-expanded={item.children ? submenu?.item === item : undefined} disabled={item.disabled} className={item.danger ? 'danger-item' : ''}
     onMouseEnter={event => { if (item.children) openSubmenu(item, event.currentTarget); else setSubmenu(null); }}
     onKeyDown={event => { if (item.children && event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openSubmenu(item, event.currentTarget, true); } }}
     onClick={event => { if (item.children) openSubmenu(item, event.currentTarget, true); else { onClose(); item.action?.(); } }}>
-    {hasMarks && <span className="menu-mark">{item.checked && (item.radio ? <span className="menu-radio-dot"/> : <Check size={12}/>)}</span>}<span className="menu-icon">{item.icon}</span><span>{item.label}</span>{item.children ? <ChevronRight className="submenu-arrow" size={14}/> : <kbd>{item.shortcut}</kbd>}</button></div>)}</div>
+    {hasMarks && <span className="menu-mark">{item.checked && (item.radio ? <span className="menu-radio-dot"/> : <Check size={12}/>)}</span>}<span className="menu-icon">{item.icon}</span><span className="menu-label">{item.label}</span>{item.children ? <ChevronRight className="submenu-arrow" size={14}/> : <kbd>{item.shortcut}</kbd>}</button></div>)}</div>
     {submenu?.item.children && createPortal(<ContextMenu popup={{ x: 0, y: 0, items: submenu.item.children.map(item => ({ ...item, action: () => { onClose(); item.action?.(); } })) }} parentButton={submenu.button} label={submenu.item.label} onClose={() => setSubmenu(null)}/>, document.body)}
   </>;
 }

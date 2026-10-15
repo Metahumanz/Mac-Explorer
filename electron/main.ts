@@ -1,7 +1,7 @@
 import { AppUpdates } from './updates';
 import { networkAddress } from './network';
 import packageInfo from '../package.json';
-import { bindingsFor, normalizeShortcut, validWakeShortcut, validateWakeBinding, validateOperationShortcuts, type OperationShortcuts } from '../shared/shortcuts';
+import { bindingsFor, migrateOperationShortcuts, normalizeShortcut, validWakeShortcut, validateWakeBinding, validateOperationShortcuts, type OperationShortcuts } from '../shared/shortcuts';
 import { languageState, loadLanguage, saveLanguage } from './language';
 import { fileViewerSettings } from './file-viewer';
 import { t as tr } from '../shared/i18n';
@@ -254,7 +254,7 @@ function appSettings(): AppSettings {
 async function writeShortcutSettings(nextWake: string, nextOperations: OperationShortcuts) {
   const file = shortcutFile();
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file + '.tmp', JSON.stringify({ wakeShortcut: nextWake, operationShortcuts: nextOperations }), 'utf8');
+  await fs.writeFile(file + '.tmp', JSON.stringify({ operationShortcutsVersion: 2, wakeShortcut: nextWake, operationShortcuts: nextOperations }), 'utf8');
   await fs.rename(file + '.tmp', file);
 }
 function notifySettings() {
@@ -788,7 +788,10 @@ app.whenReady().then(async () => {
   nativeTheme.on('updated', () => { for (const window of windows.keys()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff'); });
   try {
     const saved = JSON.parse(await fs.readFile(shortcutFile(), 'utf8'));
-    try { operationShortcuts = validateOperationShortcuts(saved.operationShortcuts ?? {}); } catch { /* Invalid mappings fall back to defaults. */ }
+    try {
+      operationShortcuts = saved.operationShortcutsVersion === 2 ? validateOperationShortcuts(saved.operationShortcuts ?? {}) :
+        migrateOperationShortcuts(saved.operationShortcuts ?? {}, validWakeShortcut(saved.wakeShortcut) ? saved.wakeShortcut : '');
+    } catch { /* Invalid mappings fall back to defaults. */ }
     if (validWakeShortcut(saved.wakeShortcut) && saved.wakeShortcut) {
       wakeShortcut = normalizeShortcut(saved.wakeShortcut)!;
       try {

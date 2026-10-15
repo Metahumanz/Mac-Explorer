@@ -53,8 +53,8 @@ try {
   await row('已改名.txt').click(); await page.keyboard.press('Meta+d'); await row('已改名 - 副本.txt').waitFor();
   await page.keyboard.press('Meta+Shift+n'); await page.getByLabel('名称', { exact: true }).fill('新目录');
   await page.getByLabel('名称', { exact: true }).press('Enter'); await row('新目录').waitFor();
-  await page.keyboard.press('Meta+1'); await page.locator('.icon-grid').waitFor();
-  await page.keyboard.press('Meta+2'); await page.locator('.file-table').waitFor();
+  await page.keyboard.press('Control+Shift+2'); await page.locator('.icon-grid').waitFor();
+  await page.keyboard.press('Control+Shift+6'); await page.locator('.file-table').waitFor();
   await page.keyboard.press('Meta+Shift+.'); await row('.hidden-test').waitFor();
   await page.keyboard.press('Meta+Shift+p'); await page.locator('.preview-pane').waitFor();
   await page.keyboard.press('Meta+Shift+p'); assert.equal(await page.locator('.preview-pane').count(), 0);

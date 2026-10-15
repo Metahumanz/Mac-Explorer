@@ -22,8 +22,23 @@ export const shortcutActions = {
   'close-tab': { label: '关闭标签页', defaults: ['Command+W', 'Control+W'] },
   'next-tab': { label: '下一个标签页', defaults: ['Control+Tab'] },
   'previous-tab': { label: '上一个标签页', defaults: ['Control+Shift+Tab'] },
-  icons: { label: '大图标视图', defaults: ['Command+1'] },
-  details: { label: '详细信息视图', defaults: ['Command+2'] },
+  'tab-1': { label: '切换到第 1 个标签页', defaults: ['Command+1'] },
+  'tab-2': { label: '切换到第 2 个标签页', defaults: ['Command+2'] },
+  'tab-3': { label: '切换到第 3 个标签页', defaults: ['Command+3'] },
+  'tab-4': { label: '切换到第 4 个标签页', defaults: ['Command+4'] },
+  'tab-5': { label: '切换到第 5 个标签页', defaults: ['Command+5'] },
+  'tab-6': { label: '切换到第 6 个标签页', defaults: ['Command+6'] },
+  'tab-7': { label: '切换到第 7 个标签页', defaults: ['Command+7'] },
+  'tab-8': { label: '切换到第 8 个标签页', defaults: ['Command+8'] },
+  'last-tab': { label: '切换到最后一个标签页', defaults: ['Command+9'] },
+  'extra-large-icons': { label: '超大图标视图', defaults: ['Control+Shift+1'] },
+  icons: { label: '大图标视图', defaults: ['Control+Shift+2'] },
+  'medium-icons': { label: '中图标视图', defaults: ['Control+Shift+3'] },
+  'small-icons': { label: '小图标视图', defaults: ['Control+Shift+4'] },
+  list: { label: '列表视图', defaults: ['Control+Shift+5'] },
+  details: { label: '详细信息视图', defaults: ['Control+Shift+6'] },
+  tiles: { label: '平铺视图', defaults: ['Control+Shift+7'] },
+  content: { label: '内容视图', defaults: ['Control+Shift+8'] },
   preview: { label: '预览窗格', defaults: ['Command+Shift+P'] },
   hidden: { label: '隐藏的项目', defaults: ['Command+Shift+.'] },
   'details-pane': { label: '详细信息窗格', defaults: ['Command+I', 'Control+I', 'Alt+Enter'] },
@@ -115,4 +130,20 @@ export function validateWakeBinding(value: unknown, overrides: OperationShortcut
   if (reserved.has(normalized)) throw new Error(tr('“{0}”是应用或系统保留组合。', formatShortcut(normalized)));
   validateOperationShortcuts(overrides, normalized);
   return normalized;
+}
+
+export function migrateOperationShortcuts(value: unknown, wake = ''): OperationShortcuts {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(tr('无效的操作快捷键设置。'));
+  // Check explicit bindings first; new defaults must yield to existing user choices.
+  const disabled = Object.fromEntries(shortcutActionIDs.map(id => [id, []]));
+  validateOperationShortcuts({ ...disabled, ...value }, wake);
+  const result: OperationShortcuts = {};
+  for (const [id, keys] of Object.entries(value)) result[id as ShortcutAction] = (keys as string[]).map(key => normalizeShortcut(key)!);
+  const used = new Set([normalizeShortcut(wake), ...Object.values(result).flat()]);
+  for (const action of shortcutActionIDs) {
+    if (Object.hasOwn(result, action)) continue;
+    const defaults = shortcutActions[action].defaults;
+    if (defaults.some(key => used.has(key))) result[action] = defaults.filter(key => !used.has(key));
+  }
+  return validateOperationShortcuts(result, wake);
 }
