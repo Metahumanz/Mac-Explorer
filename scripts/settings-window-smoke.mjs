@@ -19,7 +19,7 @@ try {
  const bounds=()=>page.locator('dialog').evaluate(element=>{const r=element.getBoundingClientRect();return {left:r.left,top:r.top,width:r.width,height:r.height};});
  const contained=()=>page.locator('dialog').evaluate(element=>{const r=element.getBoundingClientRect();return r.left>=11&&r.top>=11&&r.right<=innerWidth-11&&r.bottom<=innerHeight-11;});
  await owner.evaluate(window=>window.setSize(1100,900));
- await page.waitForFunction(()=>Math.abs(document.querySelector('dialog').getBoundingClientRect().height-700)<1);
+ await page.waitForFunction(()=>innerWidth===1100&&innerHeight===900&&Math.abs(document.querySelector('dialog').getBoundingClientRect().height-700)<1);
  assert.equal(Math.round((await bounds()).width),560);
  await page.screenshot({path:path.resolve('artifacts/settings/taller-fixture.png')});
  const handle=page.getByRole('group',{name:'拖动或使用方向键移动设置窗口',exact:true});
