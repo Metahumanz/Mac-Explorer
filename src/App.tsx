@@ -1,34 +1,42 @@
+import { bindingsFor, formatShortcut, shortcutActions, shortcutActionIDs, shortcutFromEvent, validateOperationShortcuts, validateWakeBinding, type OperationShortcuts, type ShortcutAction } from '../shared/shortcuts';
 import { t as tr, getLocale, setLocale, type LanguageState, type LanguageMode } from '../shared/i18n';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   Archive, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ArrowDownWideNarrow, Radar, Check, ChevronDown, ChevronRight,
   ClipboardPaste, Copy, Download, ExternalLink, FilePlus2, FileText, Film, FolderOpen,
-  FolderPlus, HardDrive, Image, Info, Keyboard, LayoutGrid, List, Loader2,
+  FolderPlus, HardDrive, Image, Info, CircleHelp, LayoutGrid, List, Loader2, Sheet, Presentation,
   PanelLeft, Eye, FileType, SquareCheck, ChevronsDownUp,
-  Languages, Monitor, MoreHorizontal, Music2, PanelRight, Pin, Plus, RotateCw, Scissors, AppWindow,
-  Search, Share2, Star, Sun, Moon, SunMoon, Terminal, TextCursorInput, Trash2, Undo2, X,
+  Monitor, MoreHorizontal, Music2, PanelRight, Pin, Plus, RotateCw, Scissors, AppWindow,
+  Search, Share2, Star, Sun, Moon, Terminal, TextCursorInput, Trash2, Undo2, X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { archiveFolderName, isArchive } from '../shared/archives';
 import { toolbarActions, defaultToolbar, normalizeToolbar, type ToolbarAction } from '../shared/toolbar';
-import type { AppSettings, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import type { AppSettings, FileViewerSettings, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import { vcsMarks, type VcsAction, type VcsState, type VcsStatus } from '../shared/vcs';
+import { VcsDialog, vcsStateLabel } from './VcsDialog';
 
 const api = window.explorer;
-const isMac = /Mac/i.test(navigator.platform);
+const iniIcon = new URL('./assets/ini.png', import.meta.url).href;
 const PC = 'computer';
 const TRASH = 'trash';
 // Internal drag types: a Quick Access item being reordered, and a file-list drag
 // made only of folders (drag data is unreadable until drop).
 const PLACE_TYPE = 'application/x-explorer-place';
 const FOLDERS_TYPE = 'application/x-explorer-folders';
+function isEditing(element: EventTarget | null) {
+  return element instanceof Element && !!element.closest('input, textarea, select, [contenteditable="true"]');
+}
 function isTrashLocation(value: string) { return value === TRASH || value.startsWith('trash:'); }
 type Tab = { id: string; location: string; history: string[]; index: number };
 type SortKey = 'name' | 'modified' | 'type' | 'size';
 type View = 'details' | 'icons' | 'list' | 'tiles' | 'content';
-type ToolbarTool = { name: string; label: string; icon: ReactNode; disabled: boolean; action: () => void };
+type DirectoryView = { view: View; iconSize: number };
+const defaultDirectoryView: DirectoryView = { view: 'icons', iconSize: 64 };
+type ToolbarTool = { name: string; label: string; icon: ReactNode; disabled: boolean; action: (event: MouseEvent<HTMLButtonElement>) => void };
 type MenuItem = { children?: MenuItem[]; radio?: boolean; label: string; icon?: ReactNode; action?: () => void; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean; divider?: boolean };
 type Popup = { x: number; y: number; items: MenuItem[]; quickActions?: MenuItem[] };
-type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'shortcuts' } | { kind: 'settings' };
+type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'settings' } | { kind: 'vcs'; directory: string; paths: string[]; action: VcsAction | 'diff' };
 const makeTab = (location = ''): Tab => ({ id: crypto.randomUUID(), location, history: [location], index: 0 });
 const isPlaceDrag = (event: React.DragEvent) => event.dataTransfer.types.includes(PLACE_TYPE);
 function stored<T,>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
@@ -78,16 +86,22 @@ function FolderGlyph({ dimension = 38, badge }: { dimension?: number; badge?: st
     {badge && <span className={`folder-badge badge-${badge}`}><PlaceIcon icon={badge} size={dimension > 45 ? 20 : 14}/></span>}
   </span>;
 }
-function FileGlyph({ entry, dimension = 22 }: { entry: FileEntry; dimension?: number }) {
+function FileGlyph({ entry, dimension = 22, state }: { entry: FileEntry; dimension?: number; state?: VcsState }) {
+  const glyph = <FileGlyphBase entry={entry} dimension={dimension}/>;
+  return state ? <span className="vcs-glyph" style={{ width: dimension, height: dimension }} title={vcsStateLabel(state)}><span className="vcs-base-icon">{glyph}</span><span className={`vcs-badge vcs-${state}`} data-vcs-state={state} role="img" aria-label={vcsStateLabel(state)} title={vcsStateLabel(state)}>{vcsMarks[state]}</span></span> : glyph;
+}
+function FileGlyphBase({ entry, dimension = 22 }: { entry: FileEntry; dimension?: number }) {
   const [icon, setIcon] = useState('');
+  const isINI = !entry.isDirectory && entry.extension === 'ini';
   const pixels = Math.min(512, Math.max(64, 2 ** Math.ceil(Math.log2(dimension * window.devicePixelRatio))));
   useEffect(() => {
     let live = true;
-    if (!entry.isDirectory || entry.name.endsWith('.app')) api.icon(entry.path, pixels).then(value => { if (live) setIcon(value); }).catch(() => { if (live) setIcon(''); });
+    if (!isINI && (!entry.isDirectory || entry.name.endsWith('.app'))) api.icon(entry.path, pixels).then(value => { if (live) setIcon(value); }).catch(() => { if (live) setIcon(''); });
     return () => { live = false; };
-  }, [entry, pixels]);
+  }, [entry, pixels, isINI]);
   if (entry.isDirectory && !entry.name.endsWith('.app')) return <FolderGlyph dimension={dimension} />;
   const style = { width: dimension, height: dimension };
+  if (isINI) return <img className="file-glyph" style={style} src={iniIcon} alt="" draggable={false}/>;
   return icon ? <img className="file-glyph" style={style} src={icon} alt="" draggable={false}/> : <FileText className="file-glyph" style={style} strokeWidth={1.2}/>;
 }
 function ToolButton({ label, children, onClick, disabled = false, active = false, className = '' }: { label: string; children: ReactNode; onClick: (event: MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; active?: boolean; className?: string }) {
@@ -102,18 +116,28 @@ export default function App() {
     window.addEventListener('storage', sync);
     return () => window.removeEventListener('storage', sync);
   }, []);
+  const [operationShortcuts, setOperationShortcuts] = useState<OperationShortcuts>({});
+  const [vcsEnabled, setVcsEnabled] = useState<boolean | null>(null);
+  const [vcs, setVcs] = useState<{ directory: string; status: VcsStatus } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const receive = (value: AppSettings) => { if (live) { setOperationShortcuts(value.operationShortcuts); setVcsEnabled(value.versionControl); } };
+    void api.settings().then(receive).catch(e => setError(errorMessage(e)));
+    const stop = api.onSettingsChanged(receive);
+    return () => { live = false; stop(); };
+  }, []);
+  function shortcutHint(action: ShortcutAction) { return formatShortcut(bindingsFor(action, operationShortcuts)[0] || ''); }
+  function shortcutLabel(label: string, action: ShortcutAction) { const hint = shortcutHint(action); return hint ? tr('{0} ({1})', tr(label), hint) : tr(label); }
   const [theme, setTheme] = useState<ThemeMode>('light');
-  const [language, setLanguage] = useState<LanguageState>({ mode: 'zh-CN', locale: 'zh-CN' });
+  const [language, setLanguage] = useState<LanguageState>({ mode: 'system', locale: 'zh-CN' });
   function applyLanguage(state: LanguageState) {
     setLocale(state.locale); setLanguage(state);
     document.documentElement.lang = state.locale; document.title = tr('文件资源管理器');
   }
   async function changeLanguage(mode: LanguageMode) {
-    await run(tr('正在切换语言…'), async () => {
-      applyLanguage(await api.setLanguage(mode));
-      setBoot(await api.bootstrap()); setToast(''); setError(''); setTrashOperationError('');
-      setRefresh(value => value + 1);
-    });
+    applyLanguage(await api.setLanguage(mode));
+    setBoot(await api.bootstrap()); setToast(''); setError(''); setTrashOperationError('');
+    setRefresh(value => value + 1);
   }
   useEffect(() => api.onLanguageChanged(state => {
     applyLanguage(state); setPopup(null); setToast(''); setTrashOperationError('');
@@ -132,8 +156,14 @@ export default function App() {
   const cancelMarquee = useRef<(() => void) | null>(null);
   const suppressMarqueeClick = useRef(false);
   const selectionAnchor = useRef<string | null>(null);
-  const [view, setView] = useState<View>(() => stored('view', 'details'));
-  const [iconSize, setIconSize] = useState(() => { const value = stored<number>('iconSize', 64); return typeof value === 'number' && Number.isFinite(value) ? Math.min(128, Math.max(32, Math.round(value / 8) * 8)) : 64; });
+  const [directoryViews, setDirectoryViews] = useState<Record<string, DirectoryView>>(() => stored('directoryViews', {}));
+  const directoryView = directoryViews[location] ?? defaultDirectoryView;
+  const view = directoryView.view;
+  const iconSize = typeof directoryView.iconSize === 'number' && Number.isFinite(directoryView.iconSize) ? Math.min(128, Math.max(32, Math.round(directoryView.iconSize / 8) * 8)) : defaultDirectoryView.iconSize;
+  function changeView(changes: Partial<DirectoryView>) {
+    setDirectoryViews(previous => ({ ...previous, [location]: { ...(previous[location] ?? defaultDirectoryView), ...changes } }));
+  }
+  useEffect(() => { localStorage.setItem('directoryViews', JSON.stringify(directoryViews)); }, [directoryViews]);
   const [sort, setSort] = useState<SortKey>(() => stored('sort', 'name'));
   const [ascending, setAscending] = useState(() => stored('ascending', true));
   const [hidden, setHidden] = useState(() => stored('hidden', false));
@@ -176,6 +206,39 @@ export default function App() {
   const [undoLabel, setUndoLabel] = useState<string | null>(null);
   const [popup, setPopup] = useState<Popup | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
+  const vcsStatus = vcsEnabled && vcs?.directory === location && !submittedQuery ? vcs.status : null;
+  useEffect(() => {
+    if (!boot || !vcsEnabled || isVirtual(location) || submittedQuery) { setVcs(null); return; }
+    let live = true; let busy = false; let repository = false;
+    const update = async (force = false) => {
+      if (!live || busy) return;
+      busy = true;
+      try {
+        const status = await api.vcsStatus(location, force);
+        if (live) {
+          repository = !!status && !status.error;
+          setVcs(previous => {
+            if (!status) return null;
+            if (previous?.directory === location && JSON.stringify(previous.status) === JSON.stringify(status)) return previous;
+            return { directory: location, status };
+          });
+        }
+      } catch { if (live) setVcs(null); }
+      finally { busy = false; }
+    };
+    const focus = () => { void update(true); };
+    void update(true);
+    // shortcut: refresh active repositories every five seconds; use native repository events if measured scans become costly.
+    const timer = setInterval(() => { if (repository && document.hasFocus() && document.visibilityState === 'visible') void update(); }, 5000);
+    window.addEventListener('focus', focus);
+    return () => { live = false; clearInterval(timer); window.removeEventListener('focus', focus); };
+  }, [boot, location, submittedQuery, refresh, vcsEnabled]);
+  useEffect(() => {
+    const sync = () => { void api.captureShortcut(!!modal || isEditing(document.activeElement)).catch(() => {}); };
+    const blur = () => queueMicrotask(sync);
+    sync(); document.addEventListener('focusin', sync); document.addEventListener('focusout', blur);
+    return () => { document.removeEventListener('focusin', sync); document.removeEventListener('focusout', blur); };
+  }, [modal]);
   const [modalValue, setModalValue] = useState('');
   const [modalError, setModalError] = useState('');
   const [editingName, setEditingName] = useState<{ path: string; name: string } | null>(null);
@@ -226,7 +289,7 @@ export default function App() {
     setTabs(initial); setActiveID(initial[0].id);
     void api.windowReady();
   }).catch(e => { setError(errorMessage(e)); setLoading(false); }); }, []);
-  useEffect(() => { for (const [key, value] of Object.entries({ view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [view, iconSize, sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent]);
+  useEffect(() => { for (const [key, value] of Object.entries({ sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent })) localStorage.setItem(key, JSON.stringify(value)); }, [sort, ascending, hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent]);
   useEffect(() => { if (boot) localStorage.setItem('tabs', JSON.stringify(tabs.map(t => t.location))); }, [tabs, boot]);
   // Animate the existing surface, preserving focus, selection, and scroll state.
   useEffect(() => {
@@ -399,10 +462,12 @@ export default function App() {
   function paste(move = false) { if (writable) run(tr('正在粘贴…'), async () => { report(await api.paste(location, move), move ? tr('已移动') : tr('已粘贴')); setClipboard(await api.clipboardGet()); }); }
   function undo() { if (!viewingTrash && undoLabel) run(tr('正在撤销…'), async () => report(await api.undo(), tr('已撤销'))); }
   function showModal(next: Modal) { setPopup(null); setModalError(''); setModal(next); setModalValue('name' in next ? next.name : ''); }
-  function create(directory: boolean) {
+  function create(kind: 'folder' | 'txt' | 'docx' | 'xlsx' | 'pptx') {
     if (!writable) return;
     run(tr('正在新建…'), async () => {
-      const stem = directory ? tr('新建文件夹') : tr('新建文本文档'); const ext = directory ? '' : '.txt';
+      const directory = kind === 'folder';
+      const stem = { folder: tr('新建文件夹'), txt: tr('新建文本文档'), docx: tr('新建 Word 文档'), xlsx: tr('新建 Excel 工作簿'), pptx: tr('新建 PowerPoint 演示文稿') }[kind];
+      const ext = directory ? '' : `.${kind}`;
       let name = stem + ext; let index = 2;
       while (entries.some(e => e.name === name)) name = `${stem} (${index++})${ext}`;
       const path = await api.create(location, name, directory);
@@ -411,6 +476,13 @@ export default function App() {
       setSelected(new Set([path])); setEditingName({ path, name });
     });
   }
+  const newMenu: MenuItem[] = [
+    { label: tr('文件夹'), icon: <FolderPlus/>, shortcut: shortcutHint('new-folder'), action: () => create('folder') },
+    { label: tr('文本文档'), icon: <FilePlus2/>, action: () => create('txt') },
+    { label: tr('Word 文档'), icon: <FileText/>, action: () => create('docx') },
+    { label: tr('Excel 工作簿'), icon: <Sheet/>, action: () => create('xlsx') },
+    { label: tr('PowerPoint 演示文稿'), icon: <Presentation/>, action: () => create('pptx') },
+  ];
   function rename(entry = single) { if (entry && !viewingTrash) { setPopup(null); setEditingName({ path: entry.path, name: entry.name }); } }
   async function finishRename(name: string) {
     if (!editingName || operationLock.current) return;
@@ -474,7 +546,7 @@ export default function App() {
     });
   }
   async function submitModal(skipTrashConfirmation = false) {
-    if (!modal || (modal.kind === 'shortcuts' || modal.kind === 'archive' || modal.kind === 'settings') || operationLock.current) return;
+    if (!modal || (modal.kind === 'archive' || modal.kind === 'settings' || modal.kind === 'vcs') || operationLock.current) return;
     operationLock.current = true; setOperation(tr('正在处理…')); setModalError('');
     try {
       if (modal.kind === 'trash') {
@@ -629,6 +701,17 @@ export default function App() {
   }
   function menuAt(event: MouseEvent, items: MenuItem[], quickActions?: MenuItem[]) { event.preventDefault(); event.stopPropagation(); setPopup({ x: event.clientX, y: event.clientY, items, quickActions }); }
   function buttonMenu(event: MouseEvent<HTMLButtonElement>, items: MenuItem[]) { const rect = event.currentTarget.getBoundingClientRect(); setPopup(popup ? null : { x: rect.left, y: rect.bottom + 5, items }); }
+  function share(paths: string[], position: { x: number; y: number }) {
+    void run(tr('正在读取共享方式…'), async () => {
+      const services = await api.shareServices(paths);
+      if (!services.length) throw new Error(tr('当前没有可用的共享方式。'));
+      setPopup({ ...position, items: services.map(service => ({
+        label: service.title,
+        icon: service.icon ? <img src={service.icon} width={16} height={16} alt=""/> : <Share2/>,
+        action: () => { void run(tr('共享文件…'), () => api.share(paths, service.title)); },
+      })) });
+    });
+  }
   function contextMenu(event: MouseEvent, entry?: FileEntry) {
     event.stopPropagation();
     const paths = entry && !selected.has(entry.path) ? [entry.path] : [...selected];
@@ -646,7 +729,7 @@ export default function App() {
     }
     const target = paths.length === 1 ? entry || single : null;
     const items: MenuItem[] = entry ? [
-      { label: tr('打开'), icon: <FolderOpen/>, action: () => openEntry(entry) },
+      { label: tr('打开'), icon: <FolderOpen/>, shortcut: shortcutHint('open'), action: () => openEntry(entry) },
       ...(!entry.isDirectory ? [{ label: tr('打开方式…'), icon: <ExternalLink/>, disabled: paths.some(p => visible.find(item => item.path === p)?.isDirectory), action: () => run(tr('选择打开方式…'), async () => {
         if (await api.openWith(paths)) setRecent(previous => [...paths, ...previous.filter(p => !paths.includes(p))].slice(0, 30));
       }) }, { label: tr('使用文本编辑'), icon: <FileText/>, disabled: paths.some(p => visible.find(item => item.path === p)?.isDirectory), action: () => run(tr('正在使用文本编辑打开…'), async () => {
@@ -655,39 +738,46 @@ export default function App() {
       ...(!entry.isDirectory && isArchive(entry.path) ? ([['choose', tr('解压到…')], ['here', tr('解压到当前目录')], ['folder', tr('解压到“{0}/”', archiveFolderName(entry.name))]] as const).map(([mode, label]) => ({ label, icon: <Download/>, disabled: paths.length !== 1, action: () => run(tr('正在解压…'), async () => {
         const result = await api.extractArchive(entry.path, null, mode); if (result) report(result, tr('已解压'));
       }) })) : []),
-      ...(entry.isDirectory ? [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(entry.path) }] : [{ label: tr('快速查看'), icon: <Search/>, shortcut: 'Space', action: () => run(tr('正在预览…'), () => api.quickLook(entry.path)) }]),
+      ...(entry.isDirectory ? [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(entry.path) }] : [{ label: tr('快速查看'), icon: <Search/>, shortcut: shortcutHint('quick-look'), action: () => run(tr('正在预览…'), () => api.quickLook(entry.path)) }]),
       ...(entry.isDirectory ? [terminalItem(entry.path)] : []),
       { label: tr('压缩为 ZIP'), icon: <Archive/>, action: () => run(tr('正在压缩…'), async () => {
         const output = await api.compressArchive(paths);
         report({ succeeded: [output], errors: [] }, tr('已压缩'));
         setSelected(new Set([output])); setToast(tr('已创建 {0}', base(output)));
       }) },
-      { label: tr('剪切'), icon: <Scissors/>, shortcut: isMac ? '⌘X' : 'Ctrl+X', divider: true, action: () => copy(true, paths) },
-      { label: tr('复制'), icon: <Copy/>, shortcut: '⌘C', action: () => copy(false, paths) },
+      { label: tr('剪切'), icon: <Scissors/>, shortcut: shortcutHint('cut'), divider: true, action: () => copy(true, paths) },
+      { label: tr('复制'), icon: <Copy/>, shortcut: shortcutHint('copy'), action: () => copy(false, paths) },
       { label: tr('复制文件地址'), icon: <Copy/>, action: () => run(tr('复制地址…'), () => api.copyText(paths.join('\n')), tr('已复制文件地址')) },
-      { label: tr('重命名'), icon: <TextCursorInput/>, shortcut: 'Return', disabled: paths.length !== 1, action: () => rename(target) },
-      { label: tr('移到回收站'), icon: <Trash2/>, shortcut: '⌘⌫', danger: true, action: () => trash(paths) },
+      { label: tr('重命名'), icon: <TextCursorInput/>, shortcut: shortcutHint('rename'), disabled: paths.length !== 1, action: () => rename(target) },
+      { label: tr('移到回收站'), icon: <Trash2/>, shortcut: shortcutHint('trash'), danger: true, action: () => trash(paths) },
       ...(entry.isDirectory ? [{ label: places.some(place => place.path === entry.path) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, divider: true, action: () => togglePin(entry.path) }] : []),
       { label: tr('在访达中显示'), icon: <ExternalLink/>, divider: true, action: () => run(tr('正在显示…'), () => api.reveal(entry.path)) },
-      { label: tr('属性'), icon: <Info/>, shortcut: '⌘I', action: () => toggleDetails(true) },
+      { label: tr('属性'), icon: <Info/>, shortcut: shortcutHint('details-pane'), action: () => toggleDetails(true) },
     ] : [
-      { label: tr('新建文件夹'), icon: <FolderPlus/>, disabled: !writable, action: () => create(true) },
-      { label: tr('新建文本文档'), icon: <FilePlus2/>, disabled: !writable, action: () => create(false) },
-      { label: tr('粘贴'), icon: <ClipboardPaste/>, shortcut: '⌘V', divider: true, disabled: !writable || !clipboard.paths.length, action: () => paste() },
-      { label: tr('将项目移到这里'), shortcut: '⌥⌘V', disabled: !writable || !clipboard.paths.length, action: () => paste(true) },
-      { label: undoLabel ? tr('撤销{0}', undoLabel) : tr('撤销'), icon: <Undo2/>, shortcut: '⌘Z', disabled: !undoLabel, action: undo },
-      { label: tr('刷新'), icon: <RotateCw/>, shortcut: 'F5', action: refreshDirectory },
+      { label: tr('新建'), icon: <Plus/>, disabled: !writable || !!operation, children: newMenu },
+      { label: tr('粘贴'), icon: <ClipboardPaste/>, shortcut: shortcutHint('paste'), divider: true, disabled: !writable || !clipboard.paths.length, action: () => paste() },
+      { label: tr('将项目移到这里'), shortcut: shortcutHint('move-here'), disabled: !writable || !clipboard.paths.length, action: () => paste(true) },
+      { label: undoLabel ? tr('撤销{0}', undoLabel) : tr('撤销'), icon: <Undo2/>, shortcut: shortcutHint('undo'), disabled: !undoLabel, action: undo },
+      { label: tr('刷新'), icon: <RotateCw/>, shortcut: shortcutHint('refresh'), action: refreshDirectory },
       { label: hidden ? tr('不显示隐藏项目') : tr('显示隐藏的项目'), checked: hidden, divider: true, action: () => setHidden(v => !v) },
       { label: tr('打开文件夹…'), icon: <FolderOpen/>, action: chooseFolder },
       ...(!isVirtual(location) ? [terminalItem(location)] : []),
     ];
     const quickActions: MenuItem[] | undefined = entry ? [
-      { label: tr('剪切'), icon: <Scissors/>, action: () => copy(true, paths) },
-      { label: tr('复制'), icon: <Copy/>, action: () => copy(false, paths) },
-      { label: tr('重命名'), icon: <TextCursorInput/>, disabled: paths.length !== 1, action: () => rename(target) },
-      { label: tr('共享'), icon: <Share2/>, action: () => run(tr('共享文件…'), () => api.share(paths)) },
-      { label: tr('删除'), icon: <Trash2/>, action: () => trash(paths) },
+      { label: tr('剪切'), icon: <Scissors/>, shortcut: shortcutHint('cut'), action: () => copy(true, paths) },
+      { label: tr('复制'), icon: <Copy/>, shortcut: shortcutHint('copy'), action: () => copy(false, paths) },
+      { label: tr('重命名'), icon: <TextCursorInput/>, shortcut: shortcutHint('rename'), disabled: paths.length !== 1, action: () => rename(target) },
+      { label: tr('共享'), icon: <Share2/>, action: () => share(paths, { x: event.clientX, y: event.clientY }) },
+      { label: tr('删除'), icon: <Trash2/>, shortcut: shortcutHint('trash'), action: () => trash(paths) },
     ] : undefined;
+    if (vcsStatus) items.push({ label: vcsStatus.kind === 'git' ? 'Git' : 'SVN', divider: true, disabled: !!operation, children: [
+      { label: tr('查看差异…'), disabled: !!vcsStatus.error, action: () => showModal({ kind: 'vcs', directory: location, paths: entry ? paths : [location], action: 'diff' }) },
+      { label: vcsStatus.kind === 'git' ? tr('暂存所选更改…') : tr('加入版本控制…'), disabled: !!vcsStatus.error, action: () => showModal({ kind: 'vcs', directory: location, paths: entry ? paths : [location], action: 'add' }) },
+      { label: vcsStatus.kind === 'git' ? tr('提交已暂存更改…') : tr('提交更改…'), disabled: !!vcsStatus.error, action: () => showModal({ kind: 'vcs', directory: location, paths: entry ? paths : [location], action: 'commit' }) },
+      { label: vcsStatus.kind === 'git' ? tr('拉取更新（仅快进）…') : tr('更新工作副本…'), disabled: !!vcsStatus.error, action: () => showModal({ kind: 'vcs', directory: location, paths: [vcsStatus.root], action: 'update' }) },
+      { label: tr('丢弃本地修改…'), danger: true, disabled: !!vcsStatus.error, action: () => showModal({ kind: 'vcs', directory: location, paths: entry ? paths : [location], action: 'revert' }) },
+      { label: tr('刷新版本状态'), action: () => setRefresh(value => value + 1) },
+    ] });
     menuAt(event, entry ? items.filter(item => ![tr('剪切'), tr('复制'), tr('重命名'), tr('移到回收站')].includes(item.label)) : items, quickActions);
   }
   const sortMenu: MenuItem[] = [
@@ -696,11 +786,11 @@ export default function App() {
     { label: tr('递减'), checked: !ascending, action: () => setAscending(false) },
   ];
   const viewMenu: MenuItem[] = [
-    ...[{ name: tr('超大图标'), size: 128, icon: <ViewGlyph mode="extra"/> }, { name: tr('大图标'), size: 64, icon: <ViewGlyph mode="large"/> }, { name: tr('中图标'), size: 48, icon: <ViewGlyph mode="medium"/> }, { name: tr('小图标'), size: 32, icon: <ViewGlyph mode="small"/> }].map(option => ({ label: option.name, icon: option.icon, radio: true, checked: view === 'icons' && iconSize === option.size, action: () => { setIconSize(option.size); setView('icons'); } })),
-    { label: tr('列表'), icon: <ViewGlyph mode="list"/>, radio: true, checked: view === 'list', action: () => setView('list') },
-    { label: tr('详细信息'), icon: <ViewGlyph mode="details"/>, radio: true, checked: view === 'details', action: () => setView('details') },
-    { label: tr('平铺'), icon: <ViewGlyph mode="tiles"/>, radio: true, checked: view === 'tiles', action: () => setView('tiles') },
-    { label: tr('内容'), icon: <ViewGlyph mode="content"/>, radio: true, checked: view === 'content', action: () => setView('content') },
+    ...[{ name: tr('超大图标'), size: 128, icon: <ViewGlyph mode="extra"/> }, { name: tr('大图标'), size: 64, icon: <ViewGlyph mode="large"/> }, { name: tr('中图标'), size: 48, icon: <ViewGlyph mode="medium"/> }, { name: tr('小图标'), size: 32, icon: <ViewGlyph mode="small"/> }].map(option => ({ label: option.name, icon: option.icon, radio: true, checked: view === 'icons' && iconSize === option.size, action: () => { changeView({ view: 'icons', iconSize: option.size }); } })),
+    { label: tr('列表'), icon: <ViewGlyph mode="list"/>, radio: true, checked: view === 'list', action: () => changeView({ view: 'list' }) },
+    { label: tr('详细信息'), icon: <ViewGlyph mode="details"/>, radio: true, checked: view === 'details', action: () => changeView({ view: 'details' }) },
+    { label: tr('平铺'), icon: <ViewGlyph mode="tiles"/>, radio: true, checked: view === 'tiles', action: () => changeView({ view: 'tiles' }) },
+    { label: tr('内容'), icon: <ViewGlyph mode="content"/>, radio: true, checked: view === 'content', action: () => changeView({ view: 'content' }) },
     { label: tr('详细信息窗格'), icon: <PanelRight/>, checked: details, divider: true, action: () => toggleDetails() },
     { label: tr('预览窗格'), icon: <PanelRight/>, checked: previewPane, action: togglePreview },
     { label: tr('显示'), divider: true, children: [
@@ -735,71 +825,51 @@ export default function App() {
   actions.current = action => {
     if (modal) return;
     if (action === 'settings') { showModal({ kind: 'settings' }); return; }
-    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
-    if (action === 'new-tab') newTab(); if (action === 'choose-folder') chooseFolder();
-    if (action === 'new-folder') create(true); if (action === 'refresh') refreshDirectory();
-    if (action === 'hidden') setHidden(v => !v);
-    if (action === 'close-tab') closeTab(tab.id); if (action === 'copy') copy(false); if (action === 'cut') copy(true);
-    if (action === 'paste') paste(); if (action === 'move-here') paste(true); if (action === 'undo') undo(); if (action === 'select-all') setSelected(new Set(visible.map(e => e.path)));
+    if (isEditing(document.activeElement)) return;
+    const commands: Record<string, () => void> = {
+      'choose-folder': chooseFolder,
+      rename: () => rename(), open: () => { if (single) void openEntry(single); },
+      copy: () => copy(false), cut: () => copy(true), paste: () => paste(), undo,
+      'move-here': () => paste(true),
+      duplicate: () => { if (writable && selected.size) void run(tr('正在创建副本…'), async () => report(await api.copyTo([...selected], location), tr('已创建副本'))); },
+      'select-all': () => setSelected(new Set(visible.map(e => e.path))),
+      'new-folder': () => create('folder'), trash: () => trash(),
+      'quick-look': () => { if (single) void run(tr('正在预览…'), () => api.quickLook(single.path)); },
+      back: () => historyGo(-1), forward: () => historyGo(1), parent: goParent,
+      address: editAddress, search: () => { searchRef.current?.focus(); searchRef.current?.select(); },
+      'new-tab': () => newTab(), 'close-tab': () => closeTab(tab.id),
+      'next-tab': () => { const index = tabs.findIndex(t => t.id === tab.id); setActiveID(tabs[(index + 1) % tabs.length].id); resetNavigation(); },
+      'previous-tab': () => { const index = tabs.findIndex(t => t.id === tab.id); setActiveID(tabs[(index + tabs.length - 1) % tabs.length].id); resetNavigation(); },
+      icons: () => changeView({ view: 'icons', iconSize: iconSize === 32 ? 64 : iconSize }),
+      details: () => changeView({ view: 'details' }), preview: togglePreview,
+      hidden: () => setHidden(v => !v), 'details-pane': () => toggleDetails(), refresh: refreshDirectory,
+    };
+    commands[action]?.();
   };
   useEffect(() => api.onAction(action => actions.current(action)), []);
   useEffect(() => {
     const keydown = (event: globalThis.KeyboardEvent) => {
-      const input = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
-      const ctrl = event.ctrlKey; const key = event.key.toLowerCase();
       if (event.defaultPrevented || event.isComposing || modal || popup) return;
-      if (event.metaKey) {
-        if (input) return;
-        let command: (() => void) | undefined;
-        if (!event.ctrlKey && !event.altKey && event.shiftKey) {
-          command = ({
-            g: () => { setAddress(isVirtual(location) ? boot?.home || '/' : location); setEditingAddress(true); },
-            n: () => create(true), p: togglePreview, '.': () => setHidden(v => !v),
-            c: () => navigate(PC), h: () => boot && navigate(boot.home),
-            d: () => boot && navigate(join(boot.home, 'Desktop')),
-            o: () => boot && navigate(join(boot.home, 'Documents')),
-          } as Record<string, () => void>)[key];
-        } else if (!event.ctrlKey && event.altKey && !event.shiftKey) {
-          command = ({ v: () => paste(true), l: () => boot && navigate(join(boot.home, 'Downloads')), s: () => setNavigationPane(v => !v) } as Record<string, () => void>)[key];
-        } else if (!event.ctrlKey && !event.altKey && !event.shiftKey) {
-          command = ({
-            c: () => copy(false), x: () => copy(true), v: () => paste(), z: undo,
-            a: () => setSelected(new Set(visible.map(e => e.path))),
-            t: () => newTab(), w: () => closeTab(tab.id),
-            f: () => { searchRef.current?.focus(); searchRef.current?.select(); },
-            o: () => single && openEntry(single), arrowdown: () => single && openEntry(single),
-            arrowup: goParent,
-            '[': () => historyGo(-1), ']': () => historyGo(1),
-            backspace: () => trash(), delete: () => trash(), i: () => toggleDetails(),
-            y: () => single && run(tr('正在预览…'), () => api.quickLook(single.path)),
-            '1': () => { setView('icons'); if (iconSize === 32) setIconSize(64); }, '2': () => setView('details'),
-            d: () => { if (writable && selected.size) run(tr('正在创建副本…'), async () => report(await api.copyTo([...selected], location), tr('已创建副本'))); },
-          } as Record<string, () => void>)[key];
-        }
-        if (command) { event.preventDefault(); command(); }
+      const accelerator = shortcutFromEvent(event);
+      const action = accelerator && shortcutActionIDs.find(id => bindingsFor(id, operationShortcuts).includes(accelerator));
+      if (isEditing(event.target)) {
+        // Keep the existing address/search entry points without taking text-editing keys.
+        if (action === 'address' && ['Control+L', 'Alt+D'].includes(accelerator!)) { event.preventDefault(); editAddress(); }
+        if (action === 'search' && ['Control+F', 'Control+E'].includes(accelerator!)) { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); }
         return;
       }
-      if (ctrl && key === 'l' || event.altKey && key === 'd') { event.preventDefault(); setAddress(isVirtual(location) ? boot?.home || '/' : location); setEditingAddress(true); return; }
-      if (ctrl && (key === 'f' || key === 'e')) { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return; }
-      if (input) return;
-      if (ctrl && key === 'c') { event.preventDefault(); copy(false); }
-      else if (ctrl && key === 'x') { event.preventDefault(); copy(true); }
-      else if (ctrl && key === 'v') { event.preventDefault(); paste(); }
-      else if (ctrl && key === 'z') { event.preventDefault(); undo(); }
-      else if (ctrl && key === 'a') { event.preventDefault(); setSelected(new Set(visible.map(e => e.path))); }
-      else if (ctrl && key === 't') { event.preventDefault(); newTab(); }
-      else if (ctrl && key === 'w') { event.preventDefault(); closeTab(tab.id); }
-      else if (ctrl && event.shiftKey && key === 'n') { event.preventDefault(); create(true); }
-      else if (ctrl && key === 'i' || event.altKey && key === 'enter') { event.preventDefault(); toggleDetails(); }
-      else if (ctrl && key === 'tab') { event.preventDefault(); const index = tabs.findIndex(t => t.id === tab.id); setActiveID(tabs[(index + (event.shiftKey ? tabs.length - 1 : 1)) % tabs.length].id); resetNavigation(); }
-      else if (key === 'f2') { event.preventDefault(); rename(); }
-      else if (key === 'f5' || ctrl && key === 'r') { event.preventDefault(); refreshDirectory(); }
-      else if (event.altKey && key === 'arrowleft') { event.preventDefault(); historyGo(-1); }
-      else if (event.altKey && key === 'arrowright') { event.preventDefault(); historyGo(1); }
-      else if (event.altKey && key === 'arrowup' || key === 'backspace' && !ctrl && !event.altKey && !event.shiftKey) { event.preventDefault(); goParent(); }
-      else if (key === 'enter' && !event.altKey && !ctrl && single) { event.preventDefault(); rename(); }
-      else if (key === ' ' && single) { event.preventDefault(); run(tr('正在预览…'), () => api.quickLook(single.path)); }
-      else if (key === 'escape') { setSelected(new Set()); setSubmittedQuery(''); setQuery(''); }
+      if (action) { event.preventDefault(); actions.current(action); return; }
+      const navigation: Record<string, () => void> = {
+        'Command+Shift+C': () => navigate(PC), 'Command+Shift+H': () => { if (boot) navigate(boot.home); },
+        'Command+Shift+D': () => { if (boot) navigate(join(boot.home, 'Desktop')); },
+        'Command+Shift+O': () => { if (boot) navigate(join(boot.home, 'Documents')); },
+        'Command+Alt+L': () => { if (boot) navigate(join(boot.home, 'Downloads')); },
+        'Command+Alt+S': () => setNavigationPane(v => !v),
+      };
+      if (accelerator && navigation[accelerator]) { event.preventDefault(); navigation[accelerator](); return; }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'escape') { setSelected(new Set()); setSubmittedQuery(''); setQuery(''); }
       else if (['arrowdown', 'arrowup', 'home', 'end'].includes(key) && visible.length) {
         event.preventDefault();
         const index = visible.findIndex(e => e.path === [...selected].at(-1));
@@ -930,11 +1000,14 @@ export default function App() {
     const zoomIcons = (event: WheelEvent) => {
       if (!event.ctrlKey || !event.deltaY) return;
       event.preventDefault();
-      setView('icons'); setIconSize(previous => Math.min(128, Math.max(32, previous + (event.deltaY < 0 ? 8 : -8))));
+      setDirectoryViews(previous => {
+        const current = previous[location] ?? defaultDirectoryView;
+        return { ...previous, [location]: { view: 'icons', iconSize: Math.min(128, Math.max(32, current.iconSize + (event.deltaY < 0 ? 8 : -8))) } };
+      });
     };
     element?.addEventListener('wheel', zoomIcons, { passive: false });
     return () => element?.removeEventListener('wheel', zoomIcons);
-  }, []);
+  }, [location]);
 
   function editAddress() {
     if (editingAddress) return;
@@ -950,18 +1023,26 @@ export default function App() {
         {checkboxes && <input className="select-all-checkbox" type="checkbox" aria-label={tr('全选文件')} checked={visible.length > 0 && chosen.length === visible.length} ref={element => { if (element) element.indeterminate = chosen.length > 0 && chosen.length < visible.length; }} onChange={event => setSelected(new Set(event.target.checked ? visible.map(entry => entry.path) : []))}/>}
         {(['name', 'modified', 'type', 'size'] as SortKey[]).map(key => <button key={key} className={`col-${key}`} onClick={() => { if (sort === key) setAscending(v => !v); else { setSort(key); setAscending(true); } }}>{({ name: tr('名称'), modified: tr('修改日期'), type: tr('类型'), size: tr('大小') })[key]}{sort === key && <ChevronDown size={12} className={ascending ? 'rotated' : ''}/>}</button>)}
       </div>}
-      {visible.map((entry, index) => <div key={entry.path} data-path={entry.path} data-index={index} role="option" aria-selected={selected.has(entry.path)} aria-label={entry.name}
+      {visible.map((entry, index) => <div key={entry.path} data-path={entry.path} data-index={index} role="option" aria-selected={selected.has(entry.path)} aria-label={entry.name} aria-description={vcsStatus?.states[entry.path] ? vcsStateLabel(vcsStatus.states[entry.path]) : undefined}
         className={`file-row ${selected.has(entry.path) ? 'selected' : ''} ${clipboard.cut && clipboard.paths.includes(entry.path) ? 'cut' : ''} ${dragOver === entry.path ? 'drop-target' : ''} ${entry.hidden ? 'hidden-file' : ''}`}
-        onClick={event => select(entry, event)} onDoubleClick={() => openEntry(entry)} onContextMenu={event => contextMenu(event, entry)} draggable
+        onClick={event => select(entry, event)} onDoubleClick={() => openEntry(entry)} onContextMenu={event => contextMenu(event, entry)} draggable={!viewingTrash}
         onDragStart={event => {
           const paths = selected.has(entry.path) ? [...selected] : [entry.path];
-          event.dataTransfer.setData('application/x-explorer-paths', JSON.stringify(paths)); event.dataTransfer.effectAllowed = 'move'; setPopup(null);
-          if (!viewingTrash && paths.every(p => visible.some(e => e.path === p && e.isDirectory && !/\.app$/i.test(e.name)))) event.dataTransfer.setData(FOLDERS_TYPE, '1');
+          setPopup(null);
+          // Keep folder-only drags in HTML so Quick Access can identify pinning targets.
+          const folders = paths.every(p => visible.some(e => e.path === p && e.isDirectory && !/\.app$/i.test(e.name)));
+          if (!folders) {
+            event.preventDefault();
+            void api.startFileDrag(paths).catch(error => setError(errorMessage(error)));
+            return;
+          }
+          event.dataTransfer.setData('application/x-explorer-paths', JSON.stringify(paths)); event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData(FOLDERS_TYPE, '1');
         }}
         onDragOver={event => { if (entry.isDirectory && !viewingTrash && !isPlaceDrag(event)) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDragOver(entry.path); } }}
         onDragLeave={() => setDragOver(null)} onDrop={event => { if (entry.isDirectory) drop(event, entry.path); }}>
         {checkboxes && <input className="item-checkbox" type="checkbox" aria-label={tr('选择 {0}', entry.name)} checked={selected.has(entry.path)} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onChange={event => { const checked = event.target.checked; setSelected(previous => { const next = new Set(previous); if (checked) next.add(entry.path); else next.delete(entry.path); return next; }); selectionAnchor.current = entry.path; }}/>}
-        <div className="col-name"><FileGlyph entry={entry} dimension={view === 'icons' ? iconSize : view === 'tiles' ? 48 : view === 'content' ? 56 : 22}/>{editingName?.path === entry.path ? <InlineName key={editingName.path} name={editingName.name} directory={entry.isDirectory} onSave={finishRename} onCancel={() => { setEditingName(null); contentRef.current?.focus(); }}/> : <span className="entry-name" title={entry.name}>{displayName(entry)}{(view === 'tiles' || view === 'content') && <small>{type(entry)}{!entry.isDirectory && ` · ${size(entry.size)}`}</small>}{submittedQuery && <small>{parent(entry.path)}</small>}</span>}</div>
+        <div className="col-name"><FileGlyph entry={entry} state={vcsStatus?.states[entry.path]} dimension={view === 'icons' ? iconSize : view === 'tiles' ? 48 : view === 'content' ? 56 : 22}/>{editingName?.path === entry.path ? <InlineName key={editingName.path} name={editingName.name} directory={entry.isDirectory} onSave={finishRename} onCancel={() => { setEditingName(null); contentRef.current?.focus(); }}/> : <span className="entry-name" title={entry.name}>{displayName(entry)}{(view === 'tiles' || view === 'content') && <small>{type(entry)}{!entry.isDirectory && ` · ${size(entry.size)}`}</small>}{submittedQuery && <small>{parent(entry.path)}</small>}</span>}</div>
         {view === 'content' && <div className="content-metadata"><span>{tr('修改日期：')}{date(entry.modified)}</span><span title={entry.path}>{tr('位置：')}{parent(entry.path)}</span></div>}
         {view === 'details' && <><span className="col-modified">{date(entry.modified)}</span><span className="col-type">{type(entry)}</span><span className="col-size">{entry.isDirectory ? '' : size(entry.size)}</span></>}
       </div>)}
@@ -969,16 +1050,16 @@ export default function App() {
   }
 
   const toolbarTools: Record<ToolbarAction, ToolbarTool> = {
-    cut: { name: tr('剪切'), label: tr(isMac ? '剪切 (⌘X)' : '剪切 (Ctrl+X)'), icon: <Scissors className="scissors-icon"/>, disabled: viewingTrash || !selected.size || !!operation, action: () => copy(true) },
-    copy: { name: tr('复制'), label: tr('复制 (⌘C)'), icon: <Copy className="copy-icon"/>, disabled: !selected.size || !!operation, action: () => copy(false) },
-    paste: { name: tr('粘贴'), label: tr('粘贴 (⌘V)'), icon: <ClipboardPaste/>, disabled: !writable || !clipboard.paths.length || !!operation, action: () => paste() },
-    rename: { name: tr('重命名'), label: tr('重命名 (Return)'), icon: <TextCursorInput className="rename-icon"/>, disabled: viewingTrash || !single || !!operation, action: () => rename() },
-    share: { name: tr('共享'), label: tr('共享'), icon: <Share2/>, disabled: !selected.size || !!operation, action: () => { void run(tr('共享文件…'), () => api.share([...selected])); } },
-    trash: { name: tr('移到回收站'), label: tr('移到回收站 (⌘⌫)'), icon: <Trash2/>, disabled: viewingTrash || !selected.size || !!operation, action: () => trash() },
+    cut: { name: tr('剪切'), label: shortcutLabel('剪切', 'cut'), icon: <Scissors className="scissors-icon"/>, disabled: viewingTrash || !selected.size || !!operation, action: () => copy(true) },
+    copy: { name: tr('复制'), label: shortcutLabel('复制', 'copy'), icon: <Copy className="copy-icon"/>, disabled: !selected.size || !!operation, action: () => copy(false) },
+    paste: { name: tr('粘贴'), label: shortcutLabel('粘贴', 'paste'), icon: <ClipboardPaste/>, disabled: !writable || !clipboard.paths.length || !!operation, action: () => paste() },
+    rename: { name: tr('重命名'), label: shortcutLabel('重命名', 'rename'), icon: <TextCursorInput className="rename-icon"/>, disabled: viewingTrash || !single || !!operation, action: () => rename() },
+    share: { name: tr('共享'), label: tr('共享'), icon: <Share2/>, disabled: !selected.size || !!operation, action: event => { const rect = event.currentTarget.getBoundingClientRect(); share([...selected], { x: rect.left, y: rect.bottom + 5 }); } },
+    trash: { name: tr('移到回收站'), label: shortcutLabel('移到回收站', 'trash'), icon: <Trash2/>, disabled: viewingTrash || !selected.size || !!operation, action: () => trash() },
     airdrop: { name: tr('隔空投送'), label: tr('隔空投送'), icon: <Radar/>, disabled: viewingTrash || !selected.size || !!operation, action: () => { void run(tr('正在打开隔空投送…'), () => api.airDrop([...selected])); } },
     terminal: { name: tr('在终端中打开'), label: tr('在终端中打开'), icon: <Terminal/>, disabled: isVirtual(location) || viewingTrash || !!operation, action: () => { void run(tr('正在打开终端…'), () => api.openTerminal(single?.isDirectory && !/\.app$/i.test(single.name) ? single.path : location)); } },
     undo: { name: tr('撤销'), label: tr('撤销'), icon: <Undo2/>, disabled: viewingTrash || !undoLabel || !!operation, action: undo },
-    refresh: { name: tr('刷新'), label: tr('刷新 (F5)'), icon: <RotateCw/>, disabled: !!operation, action: refreshDirectory },
+    refresh: { name: tr('刷新'), label: shortcutLabel('刷新', 'refresh'), icon: <RotateCw/>, disabled: !!operation, action: refreshDirectory },
   };
 
   return <div className={`explorer-shell ${compact ? 'compact-view' : ''}`} onPointerDown={() => { if (popup) setPopup(null); }} onDragEnd={() => { setPlaceMarker(null); clearTimeout(tabHover.current?.timer); tabHover.current = null; }}>
@@ -1006,25 +1087,25 @@ export default function App() {
           <button role="tab" aria-selected={t.id === tab.id} className="tab-label" onPointerDown={event => startTabDrag(event, t.id)} onPointerMove={moveTabDrag} onPointerUp={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onPointerCancel={event => { tabDrag.current = null; event.currentTarget.style.transform = ''; }} onKeyDown={event => { if (event.key === 'Escape') { tabDrag.current = null; event.currentTarget.style.transform = ''; } }} onClick={() => { if (suppressTabClick.current) { suppressTabClick.current = false; return; } setActiveID(t.id); resetNavigation(); }} onAuxClick={event => { if (event.button === 1) closeTab(t.id); }}>
             {isVirtual(t.location) ? <PlaceIcon icon={isTrashLocation(t.location) ? 'trash' : t.location} size={16}/> : <FolderGlyph dimension={21}/>}<span>{label(t.location)}</span>
           </button>
-          <button className="tab-close" aria-label={tr('关闭 {0} 标签页', label(t.location))} onClick={() => closeTab(t.id)}><X size={13}/></button>
+          <button className="tab-close" aria-label={tr('关闭 {0} 标签页', label(t.location))} title={shortcutLabel('关闭标签页', 'close-tab')} onClick={() => closeTab(t.id)}><X size={13}/></button>
         </div>)}
       </div>
-      <ToolButton label={tr('新建标签页 (⌘T)')} className="new-tab" onClick={() => newTab()}><Plus size={17}/></ToolButton>
+      <ToolButton label={shortcutLabel('新建标签页', 'new-tab')} className="new-tab" onClick={() => newTab()}><Plus size={17}/></ToolButton>
     </header>
 
     <div className="navigation-bar">
       <div className="history-controls">
-        <ToolButton label={tr('后退 (⌘[)')} disabled={tab.index === 0} onClick={() => historyGo(-1)}><ArrowLeft/></ToolButton>
-        <ToolButton label={tr('前进 (⌘])')} disabled={tab.index >= tab.history.length - 1} onClick={() => historyGo(1)}><ArrowRight/></ToolButton>
-        <ToolButton label={tr('向上一级 (Backspace / ⌘↑)')} disabled={location === TRASH || !viewingTrash && (isVirtual(location) || location === '/')} onClick={goParent}><ArrowUp/></ToolButton>
-        <ToolButton label={tr('刷新 (F5)')} onClick={refreshDirectory}><RotateCw className={loading ? 'spinning' : ''}/></ToolButton>
+        <ToolButton label={shortcutLabel('后退', 'back')} disabled={tab.index === 0} onClick={() => historyGo(-1)}><ArrowLeft/></ToolButton>
+        <ToolButton label={shortcutLabel('前进', 'forward')} disabled={tab.index >= tab.history.length - 1} onClick={() => historyGo(1)}><ArrowRight/></ToolButton>
+        <ToolButton label={shortcutLabel('向上一级', 'parent')} disabled={location === TRASH || !viewingTrash && (isVirtual(location) || location === '/')} onClick={goParent}><ArrowUp/></ToolButton>
+        <ToolButton label={shortcutLabel('刷新', 'refresh')} onClick={refreshDirectory}><RotateCw className={loading ? 'spinning' : ''}/></ToolButton>
       </div>
       <div className={`address-bar ${editingAddress ? 'editing' : ''}`} onClick={editAddress}>
         <span className="address-icon"><PlaceIcon icon={viewingTrash ? 'trash' : isVirtual(location) ? location : 'folder'} size={17}/></span>
         {editingAddress ? <form onSubmit={event => { event.preventDefault(); goAddress(); }}><input ref={addressRef} aria-label={tr('文件夹地址')} value={address} onChange={event => setAddress(event.target.value)} onBlur={() => setEditingAddress(false)} onKeyDown={event => { if (event.key === 'Escape') setEditingAddress(false); }}/></form> : <div className="breadcrumbs">
           {isVirtual(location) ? <button onClick={editAddress}>{label(location)}</button> : breadcrumbs.map(crumb => <span key={crumb.path}><ChevronRight size={13}/><button title={crumb.path === location ? tr('单击编辑路径') : crumb.path} onClick={event => { if (crumb.path !== location) { event.stopPropagation(); navigate(crumb.path); } }}>{crumb.name}</button></span>)}
         </div>}
-        <ToolButton label={tr('编辑地址 (⇧⌘G)')} onClick={() => { setAddress(isVirtual(location) ? boot?.home || '/' : location); setEditingAddress(true); }}><ChevronDown size={14}/></ToolButton>
+        <ToolButton label={shortcutLabel('编辑地址', 'address')} onClick={() => { setAddress(isVirtual(location) ? boot?.home || '/' : location); setEditingAddress(true); }}><ChevronDown size={14}/></ToolButton>
       </div>
       <form className="search-box" onSubmit={event => { event.preventDefault(); setSubmittedQuery(query.trim()); setSelected(new Set()); }}>
         <input ref={searchRef} aria-label={tr('搜索文件')} placeholder={tr('在{0}中搜索', label(location))} value={query} onChange={event => { setQuery(event.target.value); if (!event.target.value) setSubmittedQuery(''); }}/>
@@ -1033,7 +1114,7 @@ export default function App() {
     </div>
 
     <div className="command-bar">
-      <ToolButton label={tr('新建')} disabled={!writable || !!operation} className="text-tool" onClick={event => buttonMenu(event, [{ label: tr('文件夹'), icon: <FolderPlus/>, shortcut: '⇧⌘N', action: () => create(true) }, { label: tr('文本文档'), icon: <FilePlus2/>, action: () => create(false) }])}><Plus className="new-icon"/><span>{tr('新建')}</span><ChevronDown size={12}/></ToolButton>
+      <ToolButton label={tr('新建')} disabled={!writable || !!operation} className="text-tool" onClick={event => buttonMenu(event, newMenu)}><Plus className="new-icon"/><span>{tr('新建')}</span><ChevronDown size={12}/></ToolButton>
       {toolbar.length > 0 && <><span className="toolbar-separator"/><div className="command-tools" role="group" aria-label={tr('常用操作')}>{toolbar.map(id => {
         const tool = toolbarTools[id];
         return <ToolButton key={id} label={tool.label} disabled={tool.disabled} onClick={tool.action}>{tool.icon}</ToolButton>;
@@ -1043,17 +1124,10 @@ export default function App() {
       <ToolButton label={tr('更多')} onClick={event => buttonMenu(event, [
         { label: tr('打开文件夹…'), icon: <FolderOpen/>, action: chooseFolder },
         { label: pinTarget && places.some(place => place.path === pinTarget) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, disabled: !pinTarget, action: () => pinTarget && togglePin(pinTarget) },
-        { label: tr('全选'), shortcut: '⌘A', action: () => setSelected(new Set(visible.map(e => e.path))) },
+        { label: tr('全选'), shortcut: shortcutHint('select-all'), action: () => setSelected(new Set(visible.map(e => e.path))) },
         { label: tr('取消选择'), action: () => setSelected(new Set()) },
-        { label: undoLabel ? tr('撤销{0}', undoLabel) : tr('撤销'), icon: <Undo2/>, shortcut: '⌘Z', disabled: !undoLabel, divider: true, action: undo },
-        { label: tr('外观'), icon: <SunMoon/>, divider: true, children: [
-          ...([{ mode: 'light', label: tr('浅色'), icon: <Sun/> }, { mode: 'dark', label: tr('深色'), icon: <Moon/> }, { mode: 'system', label: tr('跟随系统'), icon: <Monitor/> }] as const).map(option => ({ label: option.label, icon: option.icon, radio: true, checked: theme === option.mode, action: () => run(tr('正在切换外观…'), async () => setTheme(await api.setTheme(option.mode))) })),
-        ] },
-        { label: tr('语言'), icon: <Languages/>, children: [
-          ...([{ mode: 'zh-CN', label: '简体中文' }, { mode: 'zh-TW', label: '繁體中文' }, { mode: 'en', label: 'English' }, { mode: 'system', label: tr('跟随系统') }] as const).map(option => ({ label: option.label, radio: true, checked: language.mode === option.mode, disabled: !!operation, action: () => void changeLanguage(option.mode) })),
-        ] },
+        { label: undoLabel ? tr('撤销{0}', undoLabel) : tr('撤销'), icon: <Undo2/>, shortcut: shortcutHint('undo'), disabled: !undoLabel, divider: true, action: undo },
         { label: tr('设置…'), icon: <AppWindow/>, divider: true, action: () => showModal({ kind: 'settings' }) },
-        { label: tr('键盘快捷键'), icon: <Keyboard/>, divider: true, action: () => showModal({ kind: 'shortcuts' }) },
       ])}><MoreHorizontal/></ToolButton>
       <div className="command-spacer"/>
       <ToolButton label={tr('预览窗格')} className="text-tool details-toggle" active={previewPane} onClick={togglePreview}><PanelRight/><span>{tr('预览')}</span></ToolButton>
@@ -1078,6 +1152,7 @@ export default function App() {
       <main className={`main-pane ${details || previewPane ? 'has-details' : ''}`}>
         {viewingTrash && trashOperationError && !error && <div className="error-bar" role="alert"><Info size={17}/><span>{trashOperationError}</span><button aria-label={tr('关闭操作错误提示')} onClick={() => setTrashOperationError('')}><X size={15}/></button></div>}
         {error && <div className="error-bar" role="alert"><Info size={17}/><span>{error}</span>{error.includes(tr('完全磁盘访问权限')) && <button className="permission-settings-button" disabled={openingPrivacySettings} onClick={() => void openPrivacySettings()} title={tr('打开系统设置中的完全磁盘访问权限')}>{openingPrivacySettings ? tr('正在打开…') : tr('前往设置')}</button>}<button title={tr('关闭提示')} aria-label={tr('关闭错误提示')} onClick={() => setError('')}><X size={15}/></button></div>}
+        {vcsStatus && <div className="vcs-summary" role="status"><span>{vcsStatus.kind === 'git' ? 'Git' : 'SVN'}{vcsStatus.branch ? ` · ${vcsStatus.branch}` : ''}</span>{vcsStatus.error ? <span className="vcs-error">{vcsStatus.error}</span> : <span>{tr('本地版本状态')}</span>}<button className="secondary-button" onClick={() => setRefresh(value => value + 1)}>{tr('刷新版本状态')}</button></div>}
         {viewingTrash && <div className="search-summary"><Trash2 size={16}/><span>{tr('回收站')}</span><small>{tr('还原到原位置；无法确定原位置时选择文件夹')}</small><button className="secondary-button" disabled={!selected.size || !!operation} onClick={() => restoreTrash()}>{tr('还原')}</button><button className="secondary-button" disabled={!!operation} onClick={clearTrash}>{tr('清空回收站…')}</button></div>}
         {submittedQuery && <div className="search-summary"><Search size={16}/><span>{tr('“{0}” 的搜索结果', submittedQuery)}</span><small>{loading ? tr('正在搜索子文件夹…') : searchNote || tr('{0} 个匹配项目', visible.length)}</small><button onClick={() => { setQuery(''); setSubmittedQuery(''); }}>{tr('退出搜索')}</button></div>}
         <div ref={contentRef} tabIndex={0} className={`file-content view-${view} ${dragOver === location ? 'drop-target' : ''}`} aria-label={label(location)} aria-busy={loading}
@@ -1096,12 +1171,13 @@ export default function App() {
       </aside>}
     </div>
 
-    <footer className="status-bar"><span>{loading ? tr('正在读取…') : location === PC && !submittedQuery ? tr('{0} 个驱动器', boot?.volumes.length || 0) : tr('{0} 个项目', visible.length)}</span>{selected.size > 0 && <><span className="status-divider"/><span>{tr('已选择 {0} 个项目', selected.size)}</span>{totalSelected > 0 && <span>{size(totalSelected)}</span>}</>}<span className="status-feedback" role="status">{operation ? <><Loader2 size={12} className="spinning"/>{operation}</> : toast ? <><Check size={13}/>{toast}</> : hidden ? tr('显示隐藏的项目') : ''}</span>{view === 'icons' && <label className="icon-size-control"><span>{tr('图标大小')}</span><input type="range" aria-label={tr('图标大小')} min={32} max={128} step={8} value={iconSize} onChange={event => setIconSize(Number(event.target.value))}/><output>{iconSize}</output></label>}<button className={view === 'details' ? 'current' : ''} title={tr('详细信息视图')} aria-label={tr('详细信息视图')} aria-pressed={view === 'details'} onClick={() => setView('details')}><List size={16}/></button><button className={view === 'icons' ? 'current' : ''} title={tr('大图标视图')} aria-label={tr('大图标视图')} aria-pressed={view === 'icons'} onClick={() => setView('icons')}><LayoutGrid size={15}/></button></footer>
+    <footer className="status-bar"><span>{loading ? tr('正在读取…') : location === PC && !submittedQuery ? tr('{0} 个驱动器', boot?.volumes.length || 0) : tr('{0} 个项目', visible.length)}</span>{selected.size > 0 && <><span className="status-divider"/><span>{tr('已选择 {0} 个项目', selected.size)}</span>{totalSelected > 0 && <span>{size(totalSelected)}</span>}</>}<span className="status-feedback" role="status">{operation ? <><Loader2 size={12} className="spinning"/>{operation}</> : toast ? <><Check size={13}/>{toast}</> : hidden ? tr('显示隐藏的项目') : ''}</span>{view === 'icons' && <label className="icon-size-control"><span>{tr('图标大小')}</span><input type="range" aria-label={tr('图标大小')} min={32} max={128} step={8} value={iconSize} onChange={event => changeView({ iconSize: Number(event.target.value) })}/><output>{iconSize}</output></label>}<button className={view === 'details' ? 'current' : ''} title={tr('详细信息视图')} aria-label={tr('详细信息视图')} aria-pressed={view === 'details'} onClick={() => changeView({ view: 'details' })}><List size={16}/></button><button className={view === 'icons' ? 'current' : ''} title={tr('大图标视图')} aria-label={tr('大图标视图')} aria-pressed={view === 'icons'} onClick={() => changeView({ view: 'icons' })}><LayoutGrid size={15}/></button></footer>
 
     {popup && <ContextMenu popup={popup} onClose={() => setPopup(null)}/>}
     {modal?.kind === 'archive' && <ArchiveDialog archive={modal.archive} onExtracted={() => setRefresh(v => v + 1)} onClose={() => setModal(null)}/>}
-    {modal?.kind === 'settings' && <SettingsDialog toolbar={toolbar} onToolbarChange={setToolbar} tools={toolbarTools} onClose={() => setModal(null)}/>}
-    {modal && modal.kind !== 'archive' && modal.kind !== 'settings' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
+    {modal?.kind === 'settings' && <SettingsDialog theme={theme} language={language} onThemeChange={async mode => setTheme(await api.setTheme(mode))} onLanguageChange={changeLanguage} toolbar={toolbar} onToolbarChange={setToolbar} tools={toolbarTools} onClose={() => setModal(null)}/>}
+    {modal?.kind === 'vcs' && <VcsDialog directory={modal.directory} paths={modal.paths} action={modal.action} enabled={!!vcsEnabled} onChanged={() => setRefresh(value => value + 1)} onClose={() => setModal(null)}/>}
+    {modal && modal.kind !== 'archive' && modal.kind !== 'settings' && modal.kind !== 'vcs' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
   </div>;
 }
 
@@ -1174,41 +1250,159 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
   </dialog>;
 }
 
-function SettingsDialog({ onClose, toolbar, onToolbarChange, tools }: { onClose: () => void; toolbar: ToolbarAction[]; onToolbarChange: (value: ToolbarAction[]) => void; tools: Record<ToolbarAction, ToolbarTool> }) {
+function SettingsHelp({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  const popupRef = useRef<HTMLDivElement>(null);
+  function showHelp(anchor: HTMLSpanElement) {
+    const popup = popupRef.current;
+    if (!popup) return;
+    popup.showPopover();
+    const target = anchor.querySelector('button')!.getBoundingClientRect(); const bubble = popup.getBoundingClientRect();
+    popup.style.left = `${Math.max(12, Math.min(target.left, innerWidth - bubble.width - 12))}px`;
+    popup.style.top = `${Math.max(12, target.bottom + bubble.height + 8 <= innerHeight - 12 ? target.bottom + 8 : target.top - bubble.height - 8)}px`;
+  }
+  return <span className="settings-help" onMouseEnter={event => showHelp(event.currentTarget)} onMouseLeave={event => { if (!event.currentTarget.contains(document.activeElement)) popupRef.current?.hidePopover(); }} onFocus={event => showHelp(event.currentTarget)} onBlur={event => { if (!event.currentTarget.matches(':hover')) popupRef.current?.hidePopover(); }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); popupRef.current?.hidePopover(); } }}>
+    <button type="button" className="settings-help-button" aria-label={label} aria-describedby={id} onClick={event => showHelp(event.currentTarget.parentElement!)}><CircleHelp size={16} aria-hidden="true"/></button>
+    <div ref={popupRef} id={id} className="settings-help-bubble settings-note" role="tooltip" popover="auto">{children}</div>
+  </span>;
+}
+
+function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, language, onThemeChange, onLanguageChange }: {
+  onClose: () => void; toolbar: ToolbarAction[]; onToolbarChange: (value: ToolbarAction[]) => void; tools: Record<ToolbarAction, ToolbarTool>;
+  theme: ThemeMode; language: LanguageState; onThemeChange: (mode: ThemeMode) => Promise<void>; onLanguageChange: (mode: LanguageMode) => Promise<void>;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
+  const hideHelp = () => ref.current?.querySelector<HTMLDivElement>('.settings-help-bubble:popover-open')?.hidePopover();
+  const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
+  function moveDialog(left: number, top: number) {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    Object.assign(dialog.style, {
+      margin: '0', right: 'auto', bottom: 'auto',
+      left: `${Math.max(12, Math.min(left, innerWidth - bounds.width - 12))}px`,
+      top: `${Math.max(12, Math.min(top, innerHeight - bounds.height - 12))}px`,
+    });
+  }
+  function startDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || !event.isPrimary || (event.target as Element).closest('button')) return;
+    event.preventDefault();
+    hideHelp();
+    ref.current?.getAnimations().forEach(animation => animation.finish());
+    const bounds = ref.current!.getBoundingClientRect();
+    drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  function endDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+  useEffect(() => {
+    const resize = () => {
+      drag.current = null; hideHelp();
+      const dialog = ref.current;
+      if (dialog?.style.left) moveDialog(parseFloat(dialog.style.left), parseFloat(dialog.style.top));
+    };
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+  const id = useId();
+  const [section, setSection] = useState('general');
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [fileViewer, setFileViewer] = useState<FileViewerSettings | null>(null);
+  const [fileViewerError, setFileViewerError] = useState('');
   const [shortcut, setShortcut] = useState('');
+  const [operationDraft, setOperationDraft] = useState<OperationShortcuts>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const tabs = [{ id: 'general', label: tr('常规') }, { id: 'toolbar', label: tr('自定义工具栏') }, { id: 'shortcuts', label: tr('键盘快捷键') }];
+  useEffect(() => {
+    let live = true;
+    const refresh = () => void api.fileViewerSettings().then(value => { if (live) { setFileViewer(value); setFileViewerError(''); } }).catch(error => { if (live) setFileViewerError(errorMessage(error)); });
+    refresh();
+    const stop = api.onSettingsChanged(refresh);
+    return () => { live = false; stop(); };
+  }, []);
   useEffect(() => {
     ref.current?.showModal();
+    ref.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus();
     let live = true;
-    api.settings().then(value => { if (live) { setSettings(value); setShortcut(value.wakeShortcut); setError(value.wakeShortcutError); } }).catch(error => { if (live) setError(errorMessage(error)); });
-    return () => { live = false; void api.captureShortcut(false).catch(() => {}); };
+    let previous: AppSettings | null = null;
+    const receive = (value: AppSettings) => {
+      if (!live) return;
+      const before = previous; previous = value;
+      setSettings(value);
+      setShortcut(current => !before || current === before.wakeShortcut ? value.wakeShortcut : current);
+      setOperationDraft(current => !before || JSON.stringify(current) === JSON.stringify(before.operationShortcuts) ? value.operationShortcuts : current);
+      setError(value.wakeShortcutError);
+    };
+    void api.settings().then(receive).catch(error => { if (live) setError(errorMessage(error)); });
+    const stop = api.onSettingsChanged(receive);
+    return () => { live = false; stop(); };
   }, []);
-  async function save(action: () => Promise<AppSettings>) {
+  async function save(action: () => Promise<AppSettings | void>) {
     setBusy(true); setError('');
-    try { const value = await action(); setSettings(value); setShortcut(value.wakeShortcut); }
+    try { const value = await action(); if (value) setSettings(value); }
     catch (error) { setError(errorMessage(error)); }
     finally { setBusy(false); }
   }
+  let wakeConflict = ''; let operationConflict = '';
+  try { validateWakeBinding(shortcut, settings?.operationShortcuts ?? {}); } catch (error) { wakeConflict = errorMessage(error); }
+  try { validateOperationShortcuts(operationDraft, settings?.wakeShortcut || ''); } catch (error) { operationConflict = errorMessage(error); }
+  const operationsChanged = JSON.stringify(operationDraft) !== JSON.stringify(settings?.operationShortcuts ?? {});
   const display = shortcut.replace('Command', '⌘').replace('Control', '⌃').replace('Alt', '⌥').replace('Shift', '⇧');
-  return <dialog ref={ref} className="modal settings-dialog" aria-labelledby="settings-title" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
-    <div className="modal-heading"><h2 id="settings-title">{tr('设置')}</h2><button aria-label={tr('关闭设置')} disabled={busy} onClick={onClose}><X size={18}/></button></div>
-    <section><h3>{tr('唤醒快捷键')}</h3><p>{tr('设置后可从任何应用唤醒 Mac Explorer。')}</p>
-      <div className="shortcut-setting"><input aria-label={tr('唤醒快捷键')} placeholder={tr('点击后按下快捷键')} readOnly value={display} disabled={!settings || busy} onFocus={() => void api.captureShortcut(true).catch(() => {})} onBlur={() => void api.captureShortcut(false).catch(() => {})} onKeyDown={event => {
-        event.stopPropagation(); event.preventDefault();
-        if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { event.currentTarget.blur(); return; }
-        if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return;
-        const code = event.code;
-        const key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit[0-9]$/.test(code) ? code.slice(5) : ({ ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Equal: 'Plus', NumpadAdd: 'Plus', Minus: '-', NumpadSubtract: '-', Comma: ',', Period: '.', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'", Backquote: '`', Backslash: String.fromCharCode(92), Slash: '/'  } as Record<string, string>)[code] || code;
-        setShortcut([...event.metaKey ? ['Command'] : [], ...event.ctrlKey ? ['Control'] : [], ...event.altKey ? ['Alt'] : [], ...event.shiftKey ? ['Shift'] : [], key].join('+'));
-        setError('');
-      }}/><button className="secondary-button" disabled={!shortcut || busy} onClick={() => setShortcut('')}>{tr('清除')}</button></div>
-      <p className="settings-note">{tr('请使用修饰键组合或 F1–F24 功能键。')}</p>
-      <button className="primary-button" disabled={!settings || busy || shortcut === settings.wakeShortcut && !settings.wakeShortcutError} onClick={() => void save(() => api.setWakeShortcut(shortcut))}>{tr('保存快捷键')}</button>
-    </section>
-    <section><details className="toolbar-settings"><summary>{tr('自定义工具栏')}</summary>
+  return <dialog ref={ref} className="modal settings-dialog" aria-labelledby={`${id}-title`} onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
+    <div className="modal-heading settings-drag-handle" role="group" tabIndex={0} aria-label={tr('拖动或使用方向键移动设置窗口')} title={tr('拖动或使用方向键移动设置窗口')} onPointerDown={startDrag} onPointerMove={event => {
+      const current = drag.current;
+      if (current?.pointerId === event.pointerId) moveDialog(current.left + event.clientX - current.x, current.top + event.clientY - current.y);
+    }} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={() => { drag.current = null; }} onKeyDown={event => {
+      if (event.target !== event.currentTarget) return;
+      const delta = ({ ArrowLeft: [-10, 0], ArrowRight: [10, 0], ArrowUp: [0, -10], ArrowDown: [0, 10] } as Record<string, number[]>)[event.key];
+      if (!delta) return;
+      event.preventDefault(); hideHelp();
+      ref.current?.getAnimations().forEach(animation => animation.finish());
+      const bounds = ref.current!.getBoundingClientRect(); moveDialog(bounds.left + delta[0], bounds.top + delta[1]);
+    }}><div className="settings-title"><AppWindow size={18}/><h2 id={`${id}-title`}>{tr('设置')}</h2></div><button aria-label={tr('关闭设置')} disabled={busy} onClick={onClose}><X size={18}/></button></div>
+    <div className="settings-tabs" role="tablist" aria-label={tr('设置分类')}>
+      {tabs.map((tab, index) => <button key={tab.id} id={`${id}-tab-${tab.id}`} role="tab" aria-selected={section === tab.id} aria-controls={`${id}-panel-${tab.id}`} tabIndex={section === tab.id ? 0 : -1} disabled={busy} onClick={() => setSection(tab.id)} onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+        setSection(tabs[next].id);
+        event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus();
+      }}>{tab.label}</button>)}
+    </div>
+    <div className="settings-panel" id={`${id}-panel-general`} role="tabpanel" aria-labelledby={`${id}-tab-general`} hidden={section !== 'general'} tabIndex={0} onScroll={() => hideHelp()}>
+      <fieldset className="settings-group"><legend>{tr('外观')}</legend><div className="theme-options">
+        {([{ mode: 'light', label: tr('浅色'), icon: <Sun size={17}/> }, { mode: 'dark', label: tr('深色'), icon: <Moon size={17}/> }, { mode: 'system', label: tr('跟随系统'), icon: <Monitor size={17}/> }] as const).map(option => <label key={option.mode}><input type="radio" name={`${id}-theme`} checked={theme === option.mode} disabled={busy} onChange={() => void save(() => onThemeChange(option.mode))}/>{option.icon}<span>{option.label}</span></label>)}
+      </div></fieldset>
+      <fieldset className="settings-group"><legend>{tr('语言')}</legend><label className="settings-language"><span>{tr('界面语言')}</span><select aria-label={tr('界面语言')} value={language.mode} disabled={busy} onChange={event => void save(() => onLanguageChange(event.target.value as LanguageMode))}>
+        <option value="system">{tr('跟随系统')}</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en">English</option>
+      </select></label></fieldset>
+      <fieldset className="settings-group"><legend>{tr('系统文件查看器（实验）')}</legend>
+        <div className="settings-toggle-row"><label className="settings-toggle"><input type="checkbox" role="switch" aria-describedby={`${id}-file-viewer-note`} checked={fileViewer?.enabled ?? false} disabled={busy || !fileViewer?.available || fileViewer.enabled && !fileViewer.canRestore} onChange={event => {
+          const enabled = event.target.checked; const previous = fileViewer;
+          setFileViewer(current => current ? { ...current, enabled } : current);
+          void save(async () => { try { setFileViewer(await api.setFileViewer(enabled)); } catch (error) { setFileViewer(previous); throw error; } });
+        }}/><span>{tr('使用 Mac Explorer 显示文件')}</span></label>
+          <SettingsHelp id={`${id}-file-viewer-note`} label={tr('文件查看器说明')}>
+            <p>{tr('让支持系统文件查看器的软件将“在访达中显示”等请求交给 Mac Explorer。关闭后恢复启用前的设置。')}</p>
+            <p>{tr('部分软件仍会调用 Finder，菜单名称也可能保持不变。普通文件夹的打开方式可能需要重新登录或重启后生效。')}</p>
+            <p>{tr('不会替换桌面及系统“打开／保存”窗口。')}</p>
+          </SettingsHelp>
+        </div>
+        {fileViewer && !fileViewer.available && <p className="settings-note">{tr('请在打包后的 Mac Explorer 中设置文件查看器。')}</p>}
+        {(fileViewerError || fileViewer?.error) && <p className="modal-error" role="alert">{fileViewerError || fileViewer?.error}</p>}
+      </fieldset>
+      <fieldset className="settings-group"><legend>{tr('版本控制')}</legend><div className="settings-toggle-row"><label className="settings-toggle"><input type="checkbox" aria-describedby={`${id}-vcs-note`} checked={settings?.versionControl ?? true} disabled={!settings || busy} onChange={event => {
+        const enabled = event.target.checked; const previous = settings;
+        setSettings(current => current ? { ...current, versionControl: enabled } : current);
+        void save(async () => { try { return await api.setVersionControl(enabled); } catch (error) { setSettings(previous); throw error; } });
+      }}/><span>{tr('启用 Git / SVN 状态角标和右键菜单')}</span></label>
+        <SettingsHelp id={`${id}-vcs-note`} label={tr('版本控制说明')}><p>{tr('仅在仓库内启用。关闭后停止状态检测与刷新；需要已安装 Git 或 SVN 命令行工具。')}</p></SettingsHelp>
+      </div></fieldset>
+    </div>
+    <div className="settings-panel" id={`${id}-panel-toolbar`} role="tabpanel" aria-labelledby={`${id}-tab-toolbar`} hidden={section !== 'toolbar'} tabIndex={0}>
       <p className="settings-note">{tr('勾选显示按钮，使用箭头调整顺序。更改自动保存。')}</p>
       <div className="toolbar-options" role="group" aria-label={tr('工具栏按钮')}>
         {[...toolbar, ...toolbarActions.filter(id => !toolbar.includes(id))].map(id => {
@@ -1222,16 +1416,63 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools }: { onClose:
         })}
       </div>
       <button className="secondary-button toolbar-reset" disabled={busy} onClick={() => onToolbarChange([...defaultToolbar])}>{tr('恢复默认工具栏')}</button>
-    </details></section>
-    <section><h3>{tr('启动')}</h3><label className="settings-login"><input type="checkbox" checked={settings?.login || false} disabled={!settings?.loginAvailable || busy} onChange={event => void save(() => api.setLoginEnabled(event.target.checked))}/>{tr('登录时自动启动')}</label>{settings && !settings.loginAvailable && <p className="settings-note">{tr('登录项需要把应用装到“应用程序”文件夹')}</p>}</section>
+    </div>
+    <div className="settings-panel" id={`${id}-panel-shortcuts`} role="tabpanel" aria-labelledby={`${id}-tab-shortcuts`} hidden={section !== 'shortcuts'} tabIndex={0}>
+
+      <section className="settings-shortcuts"><h3>{tr('文件操作快捷键')}</h3>
+        <p className="settings-note">{tr('点击组合键框后按键录入；自定义会替换该操作的原有组合。')}</p>
+        <div className="operation-shortcuts">
+          {shortcutActionIDs.map(action => {
+            const label = tr(shortcutActions[action].label);
+            const values = bindingsFor(action, operationDraft);
+            return <div className="operation-shortcut" key={action}>
+              <label htmlFor={`${id}-shortcut-${action}`}>{label}</label>
+              <input id={`${id}-shortcut-${action}`} aria-label={tr('{0}的快捷键', label)} title={values.map(formatShortcut).join(' / ')} placeholder={tr('未设置')} readOnly disabled={!settings || busy} value={values.map(formatShortcut).join(' / ')} onKeyDown={event => {
+                if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) return;
+                event.preventDefault(); event.stopPropagation();
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === 'Escape') { event.currentTarget.blur(); return; }
+                const value = shortcutFromEvent(event);
+                if (value) { setOperationDraft(previous => ({ ...previous, [action]: [value] })); setError(''); }
+              }}/>
+              <div className="shortcut-row-actions"><button aria-label={tr('清除“{0}”的快捷键', label)} title={tr('清除')} disabled={!settings || busy || !values.length} onClick={() => { setOperationDraft(previous => ({ ...previous, [action]: [] })); setError(''); }}><X size={15}/></button>
+              <button aria-label={tr('恢复“{0}”的默认快捷键', label)} title={tr('恢复默认')} disabled={!settings || busy || !Object.hasOwn(operationDraft, action)} onClick={() => { setOperationDraft(previous => { const next = { ...previous }; delete next[action]; return next; }); setError(''); }}><RotateCw size={14}/></button></div>
+            </div>;
+          })}
+        </div>
+        <p className="settings-note">{tr('检查操作之间、唤醒快捷键及常见系统保留组合的冲突。输入框保留文本编辑快捷键。')}</p>
+        <div className="operation-shortcut-feedback">
+          {operationConflict && <p className="settings-shortcut-error" role="alert">{operationConflict}</p>}
+          <div className="shortcut-save-actions"><button className="secondary-button" disabled={!settings || busy || !Object.keys(operationDraft).length} onClick={() => { setOperationDraft({}); setError(''); }}>{tr('恢复默认快捷键')}</button>
+          <button className="primary-button" disabled={!settings || busy || !operationsChanged || !!operationConflict} onClick={() => void save(async () => { const value = await api.setOperationShortcuts(operationDraft); setOperationDraft(value.operationShortcuts); return value; })}>{tr('保存操作快捷键')}</button></div>
+        </div>
+      </section>
+    <fieldset className="settings-group"><legend>{tr('唤醒快捷键')}</legend><p>{tr('设置后可从任何应用唤醒 Mac Explorer。')}</p>
+      <div className="shortcut-setting"><input aria-label={tr('唤醒快捷键')} placeholder={tr('点击后按下快捷键')} readOnly value={display} disabled={!settings || busy} onKeyDown={event => {
+        if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) return;
+        event.stopPropagation(); event.preventDefault();
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { event.currentTarget.blur(); return; }
+        if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return;
+        const next = shortcutFromEvent(event);
+        if (next) setShortcut(next);
+        setError('');
+      }}/><button className="secondary-button" disabled={!shortcut || busy} onClick={() => setShortcut('')}>{tr('清除')}</button></div>
+      <p className="settings-note">{tr('请使用修饰键组合或 F1–F24 功能键。')}</p>
+      {wakeConflict && <p className="settings-shortcut-error" role="alert">{wakeConflict}</p>}
+      <button className="primary-button" disabled={!settings || busy || !!wakeConflict || shortcut === settings.wakeShortcut && !settings.wakeShortcutError} onClick={() => void save(() => api.setWakeShortcut(shortcut))}>{tr('保存快捷键')}</button>
+    </fieldset>
+    </div>
     {error && <p className="modal-error" role="alert">{error}</p>}
-    <div className="modal-actions"><button className="secondary-button" disabled={busy} onClick={onClose}>{tr('关闭')}</button></div>
+    <div className="modal-actions"><button className="primary-button" disabled={busy} onClick={onClose}>{tr('关闭')}</button></div>
   </dialog>;
 }
+
 
 function Loading() { return <div className="loading-state" aria-label={tr('正在读取文件')}><div/><div/><div/><div/><div/></div>; }
 function ContextMenu({ popup, onClose, parentButton, label }: { popup: Popup; onClose: () => void; parentButton?: HTMLButtonElement; label?: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const hasMarks = popup.items.some(item => item.checked !== undefined);
   const [position, setPosition] = useState({ left: popup.x, top: popup.y });
   const [submenu, setSubmenu] = useState<{ item: MenuItem; button: HTMLButtonElement } | null>(null);
   useLayoutEffect(() => {
@@ -1262,11 +1503,11 @@ function ContextMenu({ popup, onClose, parentButton, label }: { popup: Popup; on
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length;
       buttons[next]?.focus();
     }
-  }}>{popup.quickActions && <><div className="menu-quick-actions">{popup.quickActions.map(item => <button key={item.label} role="menuitem" disabled={item.disabled} onClick={() => { onClose(); item.action?.(); }}><span className="menu-icon">{item.icon}</span><span>{item.label}</span></button>)}</div><div className="menu-divider"/></>}{popup.items.map((item, i) => <div key={i}>{item.divider && <div className="menu-divider"/>}<button role={item.radio ? 'menuitemradio' : item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'} aria-checked={item.checked} aria-haspopup={item.children ? 'menu' : undefined} aria-expanded={item.children ? submenu?.item === item : undefined} disabled={item.disabled} className={item.danger ? 'danger-item' : ''}
+  }}>{popup.quickActions && <><div className="menu-quick-actions">{popup.quickActions.map(item => <button key={item.label} role="menuitem" title={item.shortcut ? `${item.label} (${item.shortcut})` : item.label} disabled={item.disabled} onClick={() => { onClose(); item.action?.(); }}><span className="menu-icon">{item.icon}</span><span>{item.label}</span></button>)}</div><div className="menu-divider"/></>}{popup.items.map((item, i) => <div key={i}>{item.divider && <div className="menu-divider"/>}<button role={item.radio ? 'menuitemradio' : item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'} aria-checked={item.checked} aria-haspopup={item.children ? 'menu' : undefined} aria-expanded={item.children ? submenu?.item === item : undefined} disabled={item.disabled} className={item.danger ? 'danger-item' : ''}
     onMouseEnter={event => { if (item.children) openSubmenu(item, event.currentTarget); else setSubmenu(null); }}
     onKeyDown={event => { if (item.children && event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openSubmenu(item, event.currentTarget, true); } }}
     onClick={event => { if (item.children) openSubmenu(item, event.currentTarget, true); else { onClose(); item.action?.(); } }}>
-    <span className="menu-mark">{item.checked && (item.radio ? <span className="menu-radio-dot"/> : <Check size={12}/>)}</span><span className="menu-icon">{item.icon}</span><span>{item.label}</span>{item.children ? <ChevronRight className="submenu-arrow" size={14}/> : <kbd>{item.shortcut}</kbd>}</button></div>)}</div>
+    {hasMarks && <span className="menu-mark">{item.checked && (item.radio ? <span className="menu-radio-dot"/> : <Check size={12}/>)}</span>}<span className="menu-icon">{item.icon}</span><span>{item.label}</span>{item.children ? <ChevronRight className="submenu-arrow" size={14}/> : <kbd>{item.shortcut}</kbd>}</button></div>)}</div>
     {submenu?.item.children && createPortal(<ContextMenu popup={{ x: 0, y: 0, items: submenu.item.children.map(item => ({ ...item, action: () => { onClose(); item.action?.(); } })) }} parentButton={submenu.button} label={submenu.item.label} onClose={() => setSubmenu(null)}/>, document.body)}
   </>;
 }
@@ -1307,7 +1548,7 @@ function NavigationTree({ place, location, hidden, navigate, newTab, drop, conte
     {expanded && <div role="group" aria-label={tr('{0} 的子文件夹', place.name)}>{error ? <p className="tree-note" title={error}>{tr('无法访问')}</p> : !loading && !children.length ? <p className="tree-note">{tr('没有子文件夹')}</p> : children.map(child => <NavigationTree key={child.path} place={{ path: child.path, name: child.name, icon: 'folder' }} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} context={context} level={Math.min(level + 1, 6)}/>)}</div>}
   </div>;
 }
-function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' | 'settings' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
+function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' | 'settings' | 'vcs' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
   const [skipTrashConfirmation, setSkipTrashConfirmation] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null); const inputRef = useRef<HTMLInputElement>(null); const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -1318,13 +1559,13 @@ function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }:
     if (input) { input.focus(); const dot = value.lastIndexOf('.'); input.setSelectionRange(0, modal.kind === 'rename' && dot > 0 ? dot : value.length); }
     else if (modal.kind === 'trash') confirmRef.current?.focus();
   }, []);
-  const title = modal.kind === 'trash' ? tr('移到回收站') : modal.kind === 'rename' ? tr('重命名') : modal.kind === 'folder' ? tr('新建文件夹') : modal.kind === 'file' ? tr('新建文本文档') : tr('键盘快捷键');
-  return <dialog ref={dialogRef} className={`modal ${modal.kind === 'shortcuts' ? 'shortcut-modal' : ''}`} aria-labelledby="modal-title" onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}>
+  const title = modal.kind === 'trash' ? tr('移到回收站') : modal.kind === 'rename' ? tr('重命名') : modal.kind === 'folder' ? tr('新建文件夹') : tr('新建文本文档');
+  return <dialog ref={dialogRef} className="modal" aria-labelledby="modal-title" onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}>
     <form onSubmit={event => { event.preventDefault(); onSubmit(modal.kind === 'trash' && skipTrashConfirmation); }}><div className="modal-heading"><h2 id="modal-title">{title}</h2><button type="button" aria-label={tr('关闭对话框')} onClick={onClose} disabled={busy}><X size={18}/></button></div>
-      {modal.kind === 'shortcuts' ? <><p className="shortcut-note">{tr('文件操作遵循 macOS 访达的常用快捷键。')}</p><div className="shortcut-list">{[[tr('重命名'), 'Return'], [tr('打开项目'), '⌘O / ⌘↓'], [tr('复制 / 粘贴 / 撤销'), '⌘C / ⌘V / ⌘Z'], [tr('移动已复制的文件'), '⌥⌘V'], [tr('创建副本'), '⌘D'], [tr('全选 / 新建文件夹'), '⌘A / ⇧⌘N'], [tr('移到回收站'), '⌘⌫'], [tr('快速查看'), 'Space / ⌘Y'], [tr('后退 / 前进 / 上一级'), tr('⌘[ / ⌘] / Backspace 或 ⌘↑')], [tr('前往文件夹 / 搜索'), '⇧⌘G / ⌘F'], [tr('新建 / 关闭标签页'), '⌘T / ⌘W'], [tr('切换标签页'), '⌃Tab / ⌃⇧Tab'], [tr('图标 / 详细信息视图'), '⌘1 / ⌘2'], [tr('预览窗格 / 隐藏项目'), '⇧⌘P / ⇧⌘.'], [tr('详细信息窗格'), '⌘I']].map(([name, keys]) => <div key={name}><span>{name}</span><kbd>{keys}</kbd></div>)}</div><p className="shortcut-note">{tr('移动文件：先 ⌘C，再到目标文件夹按 ⌥⌘V。保留 Ctrl+C / X / V、F2、F5 等兼容快捷键；输入框内沿用文本编辑快捷键。')}</p></> : modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
+      {modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
       {modal.kind === 'trash' && <label className="trash-confirmation-preference"><input type="checkbox" checked={skipTrashConfirmation} disabled={busy} onChange={event => setSkipTrashConfirmation(event.target.checked)}/>{tr('不再显示此提示')}</label>}
       {error && <p className="modal-error" role="alert">{error}</p>}
-      <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{modal.kind === 'shortcuts' ? tr('知道了') : tr('取消')}</button>{modal.kind !== 'shortcuts' && <button type="submit" ref={confirmRef} className="primary-button" disabled={busy || modal.kind !== 'trash' && !value.trim()}>{busy ? tr('正在处理…') : modal.kind === 'trash' ? tr('移到回收站') : tr('确定')}</button>}</div>
+      <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{tr('取消')}</button><button type="submit" ref={confirmRef} className="primary-button" disabled={busy || modal.kind !== 'trash' && !value.trim()}>{busy ? tr('正在处理…') : modal.kind === 'trash' ? tr('移到回收站') : tr('确定')}</button></div>
     </form>
   </dialog>;
 }

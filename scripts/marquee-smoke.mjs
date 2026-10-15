@@ -6,13 +6,13 @@ import path from 'node:path';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-marquee-'));
 await fs.mkdir(path.join(root, 'Documents'));
 for (let i = 0; i < 100; i++) await fs.writeFile(path.join(root, 'Documents', `文件-${String(i).padStart(3, '0')}.txt`), 'fixture');
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(10000);
   const area = page.locator('.file-content');
   const selected = () => page.locator('.file-row[aria-selected=true]').evaluateAll(rows => rows.map(row => row.dataset.path).sort());
   async function layout(view) {
-    await page.evaluate(view => { localStorage.setItem('view', JSON.stringify(view)); localStorage.setItem('iconSize', '64'); }, view);
+    await page.evaluate(({ directory, view }) => localStorage.setItem('directoryViews', JSON.stringify({ [directory]: { view, iconSize: 64 } })), { directory: path.join(root, 'Documents'), view });
     await page.reload(); await page.locator('.file-row').first().waitFor();
   }
   async function geometry() {
@@ -50,10 +50,17 @@ try {
   await page.mouse.up(); assert.ok((await selected()).length > 2, 'edge scroll extends selection');
   await area.evaluate(el => el.scrollTop = 0);
   await page.locator('.file-row').first().click();
-  await page.evaluate(() => document.addEventListener('dragstart', e => { window.testDragPaths = e.dataTransfer.getData('application/x-explorer-paths'); e.preventDefault(); }, { once: true }));
+  await app.evaluate(({ BrowserWindow }) => {
+    globalThis.marqueeDraggedFiles = [];
+    BrowserWindow.getAllWindows()[0].webContents.startDrag = item => { globalThis.marqueeDraggedFiles.push(item.files); };
+  });
   const row = await page.locator('.file-row').first().boundingBox();
   await page.mouse.move(row.x+row.width/2,row.y+30); await page.mouse.down(); await page.mouse.move(row.x+row.width/2+60,row.y+90,{steps:10}); await page.mouse.up();
-  assert.equal(JSON.parse(await page.evaluate(() => window.testDragPaths)).length,1, 'file drag remains available');
+  const dragged = await app.evaluate(async () => {
+    for (let attempt = 0; attempt < 100 && !globalThis.marqueeDraggedFiles.length; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+    return globalThis.marqueeDraggedFiles;
+  });
+  assert.deepEqual(dragged, [[path.join(root, 'Documents/文件-000.txt')]], 'native file drag remains available');
   assert.equal(await page.locator('.selection-marquee').count(),0);
   await fs.mkdir('artifacts',{recursive:true});
   await page.mouse.move(g.left+2,g.rows[0].y+2); await page.mouse.down(); await page.mouse.move(g.left+330,g.rows[0].y+180,{steps:8});

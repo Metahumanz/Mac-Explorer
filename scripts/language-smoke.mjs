@@ -13,13 +13,27 @@ try {
   let page = await app.firstWindow(); page.setDefaultTimeout(10000);
   const row = () => page.getByRole('option', { name: '中文文件 English.txt', exact: true });
   await row().waitFor();
-  async function language(more, language, choice) {
+  async function openSettings() {
+    const locale = await page.evaluate(() => document.documentElement.lang);
+    const more = locale === 'en' ? 'More' : '更多';
+    const settings = locale === 'en' ? 'Settings…' : locale === 'zh-TW' ? '設定…' : '设置…';
     await page.getByRole('button', { name: more, exact: true }).click();
-    await page.getByRole('menuitem', { name: language, exact: true }).hover();
-    await page.getByRole('menuitemradio', { name: choice, exact: true }).click();
+    await page.getByRole('menuitem', { name: settings, exact: true }).click();
+    await page.getByRole('combobox').waitFor();
   }
+  async function language(choice) {
+    await openSettings();
+    await page.getByRole('combobox').selectOption({ label: choice });
+    await page.waitForFunction(() => !document.querySelector('.settings-language select').disabled);
+    await page.getByRole('dialog').locator('.modal-heading > button').click();
+  }
+  await page.waitForFunction(() => document.documentElement.lang === 'zh-TW');
+  assert.deepEqual(await page.evaluate(async () => (await window.explorer.bootstrap()).language), { mode: 'system', locale: 'zh-TW' });
+  await openSettings();
+  assert.equal(await page.getByRole('combobox').inputValue(), 'system');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   await row().click();
-  await language('更多', '语言', 'English');
+  await language('English');
   await page.getByRole('button', { name: 'More', exact: true }).waitFor();
   await page.waitForFunction(() => document.documentElement.lang === 'en');
   await row().waitFor();
@@ -30,26 +44,24 @@ try {
   await page.getByRole('button', { name: 'Move to Recycle Bin (⌘⌫)', exact: true }).click();
   await page.getByRole('dialog').getByText('Move “中文文件 English.txt” to the Recycle Bin?', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Language', exact: true }).hover();
-  assert.equal(await page.getByRole('menuitemradio', { name: 'English', exact: true }).getAttribute('aria-checked'), 'true');
+  await openSettings();
+  assert.equal(await page.getByRole('combobox').inputValue(), 'en');
   await page.screenshot({ path: 'artifacts/language-english-fixture.png' });
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   await app.close();
   app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env }); page = await app.firstWindow();
   await page.getByRole('button', { name: 'More', exact: true }).waitFor();
-  await language('More', 'Language', '繁體中文');
+  await language('繁體中文');
   await page.getByRole('button', { name: '更多', exact: true }).waitFor();
   await page.waitForFunction(() => document.documentElement.lang === 'zh-TW');
   await page.locator('.sidebar').getByRole('button', { name: '資源回收筒', exact: true }).waitFor();
   assert.ok((await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.map(item => item.label))).includes('檔案'));
-  await language('更多', '語言', '简体中文');
+  await language('简体中文');
   await page.waitForFunction(() => document.documentElement.lang === 'zh-CN');
-  await language('更多', '语言', '跟随系统');
+  await language('跟随系统');
   await page.waitForFunction(() => document.documentElement.lang === 'zh-TW');
-  await page.getByRole('button', { name: '更多', exact: true }).click();
-  await page.getByRole('menuitem', { name: '語言', exact: true }).hover();
-  assert.equal(await page.getByRole('menuitemradio', { name: '跟隨系統', exact: true }).getAttribute('aria-checked'), 'true');
+  await openSettings();
+  assert.equal(await page.getByRole('combobox').inputValue(), 'system');
   await page.evaluate(() => window.explorer.setTheme('dark'));
   await page.screenshot({ path: 'artifacts/language-traditional-fixture.png' });
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
@@ -63,5 +75,5 @@ try {
   const invalid = await page.evaluate(async () => { try { await window.explorer.setLanguage('invalid'); return ''; } catch (error) { return String(error); } });
   assert.match(invalid, /Invalid language setting/);
   assert.equal(await fs.readFile(path.join(root, 'Documents', '中文文件 English.txt'), 'utf8'), 'unchanged');
-  console.log('PASS: all four menu choices, persistence across restart, native menus, follow-system refresh, dialogs, permission CTA, selection and filename preservation.');
+  console.log('PASS: first launch follows the system, all four Settings language choices, manual preference survives restart, native menus, follow-system refresh, dialogs, permission CTA, selection and filename preservation.');
 } finally { if (app) await app.close(); await fs.rm(root, { recursive: true, force: true }); }

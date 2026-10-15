@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-dock-'));
 await fs.mkdir(path.join(root, 'Documents'));
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 const click = label => app.evaluate(({ app }, label) => {
   const item = app.dock.getMenu().items.find(item => item.label === label);
   if (!item) throw new Error(`Missing Dock item: ${label}`);

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import nodeAPIHeaders from 'node-api-headers';
 
 fs.mkdirSync('dist-electron/native', { recursive: true });
+fs.cpSync('electron/templates', 'dist-electron/templates', { recursive: true });
 const gestureSource = 'electron/native/ScrollGesture.mm';
 const gestureBinary = 'dist-electron/native/scroll-gesture.node';
 if (!fs.existsSync(gestureBinary) || Math.max(fs.statSync(gestureSource).mtimeMs, fs.statSync('scripts/build-electron.mjs').mtimeMs) > fs.statSync(gestureBinary).mtimeMs) {
@@ -13,7 +14,7 @@ if (!fs.existsSync(gestureBinary) || Math.max(fs.statSync(gestureSource).mtimeMs
 const defaultsSource = 'electron/native/Defaults.mm';
 const defaultsBinary = 'dist-electron/native/defaults.node';
 if (!fs.existsSync(defaultsBinary) || Math.max(fs.statSync(defaultsSource).mtimeMs, fs.statSync('scripts/build-electron.mjs').mtimeMs) > fs.statSync(defaultsBinary).mtimeMs) {
-  execFileSync('xcrun', ['clang++', '-target', 'arm64-apple-macos13.0', '-std=c++17', '-fobjc-arc', '-O2', '-bundle', '-undefined', 'dynamic_lookup', '-framework', 'AppKit', '-framework', 'ServiceManagement', '-DNAPI_VERSION=8', '-I', nodeAPIHeaders.include_dir, defaultsSource, '-o', defaultsBinary], { stdio: 'inherit' });
+  execFileSync('xcrun', ['clang++', '-target', 'arm64-apple-macos13.0', '-std=c++17', '-fobjc-arc', '-O2', '-bundle', '-undefined', 'dynamic_lookup', '-framework', 'AppKit', '-DNAPI_VERSION=8', '-I', nodeAPIHeaders.include_dir, defaultsSource, '-o', defaultsBinary], { stdio: 'inherit' });
   execFileSync('codesign', ['--force', '--sign', '-', defaultsBinary], { stdio: 'inherit' });
 }
 const source = 'electron/native/FileIcon.swift';
@@ -35,6 +36,12 @@ if (!fs.existsSync(volumesBinary) || fs.statSync(volumesSource).mtimeMs > fs.sta
   execFileSync('codesign', ['--force', '--sign', '-', volumesBinary], { stdio: 'inherit' });
 }
 const terminalSource = 'electron/native/DefaultTerminal.swift';
+const viewerSource = 'electron/native/FileViewer.swift';
+const viewerBinary = 'dist-electron/native/file-viewer';
+if (!fs.existsSync(viewerBinary) || Math.max(fs.statSync(viewerSource).mtimeMs, fs.statSync('scripts/build-electron.mjs').mtimeMs) > fs.statSync(viewerBinary).mtimeMs) {
+  execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', viewerSource, '-o', viewerBinary], { stdio: 'inherit' });
+  execFileSync('codesign', ['--force', '--sign', '-', viewerBinary], { stdio: 'inherit' });
+}
 const terminalBinary = 'dist-electron/native/default-terminal';
 if (!fs.existsSync(terminalBinary) || fs.statSync(terminalSource).mtimeMs > fs.statSync(terminalBinary).mtimeMs) {
   execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', terminalSource, '-o', terminalBinary], { stdio: 'inherit' });

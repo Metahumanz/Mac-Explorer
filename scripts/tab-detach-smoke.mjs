@@ -6,7 +6,7 @@ import path from 'node:path';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-tabs-'));
 await fs.mkdir(path.join(root, 'Documents/child'), { recursive: true });
 await fs.writeFile(path.join(root, 'Documents/child/retained.txt'), 'keep');
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow();
   await page.getByRole('option', { name: 'child', exact: true }).waitFor();

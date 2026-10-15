@@ -1,9 +1,13 @@
 import type { LanguageMode, LanguageState } from './i18n';
+import type { OperationShortcuts } from './shortcuts';
+import type { VcsAction, VcsDiff, VcsPlan, VcsResult, VcsStatus } from './vcs';
 export interface FileEntry {
   path: string; name: string; isDirectory: boolean; isSymlink: boolean;
   size: number; modified: number; created: number; extension: string; hidden: boolean;
 }
 export interface Place { path: string; name: string; icon: string }
+export interface ShareService { title: string; icon: string }
+export interface FileViewerSettings { enabled: boolean; canRestore: boolean; available: boolean; error: string }
 export interface Volume extends Place { total: number; free: number; canEject: boolean }
 export type ThemeMode = 'light' | 'dark' | 'system';
 export interface TabState { location: string; history: string[]; index: number }
@@ -16,7 +20,7 @@ export interface OperationResult { succeeded: string[]; errors: { path: string; 
 export type ClipboardInfo = { paths: string[]; cut: boolean };
 export type Preview = { kind: 'image' | 'text' | 'none'; content: string; truncated?: boolean };
 export type ExtractMode = 'choose' | 'here' | 'folder';
-export interface AppSettings { wakeShortcut: string; wakeShortcutError: string; login: boolean; loginAvailable: boolean }
+export interface AppSettings { wakeShortcut: string; wakeShortcutError: string; operationShortcuts: OperationShortcuts; versionControl: boolean }
 export interface ArchivePreview { path: string; name: string; entries: { path: string; directory: boolean; size: number }[] }
 export interface ExplorerAPI {
   bootstrap(): Promise<Bootstrap>;
@@ -34,9 +38,17 @@ export interface ExplorerAPI {
   onOpenPaths(callback: () => void): () => void;
   setTheme(mode: ThemeMode): Promise<ThemeMode>;
   settings(): Promise<AppSettings>;
+  fileViewerSettings(): Promise<FileViewerSettings>;
+  setFileViewer(enabled: boolean): Promise<FileViewerSettings>;
+  setVersionControl(enabled: boolean): Promise<AppSettings>;
+  vcsStatus(directory: string, force?: boolean): Promise<VcsStatus | null>;
+  vcsDiff(directory: string, paths: string[]): Promise<VcsDiff>;
+  vcsPrepare(directory: string, action: VcsAction, paths: string[]): Promise<VcsPlan>;
+  vcsExecute(id: string, message: string): Promise<VcsResult>;
   captureShortcut(active: boolean): Promise<void>;
   setWakeShortcut(value: string): Promise<AppSettings>;
-  setLoginEnabled(value: boolean): Promise<AppSettings>;
+  setOperationShortcuts(value: OperationShortcuts): Promise<AppSettings>;
+  onSettingsChanged(callback: (settings: AppSettings) => void): () => void;
   list(path: string, refreshIcons?: boolean): Promise<Listing>;
   search(path: string, query: string, hidden: boolean): Promise<SearchResult>;
   cancelSearch(): Promise<void>;
@@ -48,7 +60,8 @@ export interface ExplorerAPI {
   quickLook(path: string): Promise<void>;
   reveal(path: string): Promise<void>;
   openTerminal(path: string): Promise<void>;
-  share(paths: string[]): Promise<void>;
+  shareServices(paths: string[]): Promise<ShareService[]>;
+  share(paths: string[], service: string): Promise<void>;
   airDrop(paths: string[]): Promise<void>;
   info(path: string): Promise<FileEntry>;
   preview(path: string): Promise<Preview>;
@@ -67,6 +80,7 @@ export interface ExplorerAPI {
   copyText(text: string): Promise<void>;
   chooseFolder(): Promise<string | null>;
   filePath(file: File): string;
+  startFileDrag(paths: string[]): Promise<void>;
   watch(path: string | null): Promise<void>;
   onDirectoryChange(callback: () => void): () => void;
   onAction(callback: (action: string) => void): () => void;

@@ -20,9 +20,10 @@ execFileSync('codesign', ['--force', '--sign', '-', fixture]);
 let app, page;
 const errors = [];
 async function launch() {
-  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
   page = await app.firstWindow(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message));
   await page.getByRole('option', { name: 'file-000.txt', exact: true }).waitFor();
+  await page.getByRole('button', { name: '详细信息视图', exact: true }).click();
   await app.evaluate(({}, fixture) => {
     const require = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
     globalThis.airDropFixture = require(fixture);
@@ -32,7 +33,7 @@ async function settings() {
   await page.getByRole('button', { name: '更多', exact: true }).click();
   await page.getByRole('menuitem', { name: '设置…', exact: true }).click();
   await page.getByRole('dialog', { name: '设置', exact: true }).waitFor();
-  await page.getByText('自定义工具栏', { exact: true }).click();
+  await page.getByRole('tab', { name: '自定义工具栏', exact: true }).click();
 }
 const options = () => page.getByRole('group', { name: '工具栏按钮', exact: true });
 const names = target => target.locator('.command-tools button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')));
@@ -134,7 +135,7 @@ try {
   await page.evaluate(() => window.explorer.setLanguage('en'));
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Settings…', exact: true }).click();
-  await page.getByText('Customize toolbar', { exact: true }).click();
+  await page.getByRole('tab', { name: 'Customize toolbar', exact: true }).click();
   await page.getByRole('group', { name: 'Toolbar buttons', exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, 'toolbar-english-dark-fixture.png') });
   await page.getByRole('button', { name: 'Close settings', exact: true }).click();

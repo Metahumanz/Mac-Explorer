@@ -1,16 +1,6 @@
 #import <AppKit/AppKit.h>
-#import <ServiceManagement/ServiceManagement.h>
 #include <node_api.h>
 #include <string>
-
-// Login-item plumbing runs inside the app process:
-// SMAppService registers the app itself, so a helper binary could only register the helper.
-
-static napi_value BoolValue(napi_env env, BOOL value) {
-  napi_value result;
-  napi_get_boolean(env, value, &result);
-  return result;
-}
 
 static napi_value Text(napi_env env, NSString *value) {
   napi_value result;
@@ -23,44 +13,10 @@ static void Fail(napi_env env, NSString *message) {
   napi_throw_error(env, nullptr, message ? message.UTF8String : "Unknown error");
 }
 
-static napi_value AppURL(napi_env env, napi_callback_info info) {
-  return Text(env, NSBundle.mainBundle.bundleURL.path);
-}
-
-static napi_value BundleID(napi_env env, napi_callback_info info) {
-  return Text(env, NSBundle.mainBundle.bundleIdentifier);
-}
-
-static napi_value LoginEnabled(napi_env env, napi_callback_info info) {
-  if (@available(macOS 13.0, *)) return BoolValue(env, SMAppService.mainAppService.status == SMAppServiceStatusEnabled);
-  return BoolValue(env, NO);
-}
-
-static napi_value SetLogin(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value argument;
-  napi_get_cb_info(env, info, &argc, &argument, nullptr, nullptr);
-  BOOL enable = NO;
-  if (argc != 1 || napi_get_value_bool(env, argument, &enable) != napi_ok) {
-    napi_throw_type_error(env, nullptr, "Expected a boolean");
-    return nullptr;
-  }
-  if (@available(macOS 13.0, *)) {
-    NSError *error = nil;
-    BOOL ok = enable ? [SMAppService.mainAppService registerAndReturnError:&error] : [SMAppService.mainAppService unregisterAndReturnError:&error];
-    if (!ok) { Fail(env, error.localizedDescription ?: @"登录项设置失败。"); return nullptr; }
-    return BoolValue(env, YES);
-  }
-  Fail(env, @"This macOS version cannot register a login item.");
-  return nullptr;
-}
-
 static NSSharingService *airDropService;
-static napi_value AirDrop(napi_env env, napi_callback_info info) {
-  size_t argc = 1; napi_value paths;
-  napi_get_cb_info(env, info, &argc, &paths, nullptr, nullptr);
+static NSArray<NSURL *> *FileURLs(napi_env env, napi_value paths) {
   bool array = false; uint32_t count = 0;
-  if (argc != 1 || napi_is_array(env, paths, &array) != napi_ok || !array ||
+  if (napi_is_array(env, paths, &array) != napi_ok || !array ||
       napi_get_array_length(env, paths, &count) != napi_ok || count == 0 || count > 10000) {
     napi_throw_type_error(env, nullptr, "Expected file paths"); return nullptr;
   }
@@ -79,6 +35,14 @@ static napi_value AirDrop(napi_env env, napi_callback_info info) {
     }
     [items addObject:[NSURL fileURLWithPath:path]];
   }
+  return items;
+}
+static napi_value AirDrop(napi_env env, napi_callback_info info) {
+  size_t argc = 1; napi_value paths;
+  napi_get_cb_info(env, info, &argc, &paths, nullptr, nullptr);
+  if (argc != 1) { napi_throw_type_error(env, nullptr, "Expected file paths"); return nullptr; }
+  NSArray<NSURL *> *items = FileURLs(env, paths);
+  if (!items) return nullptr;
   @try {
     NSSharingService *service = [NSSharingService sharingServiceNamed:NSSharingServiceNameSendViaAirDrop];
     if (!service || ![service canPerformWithItems:items]) { Fail(env, @"当前无法使用隔空投送。请检查无线局域网和蓝牙。"); return nullptr; }
@@ -89,18 +53,69 @@ static napi_value AirDrop(napi_env env, napi_callback_info info) {
   napi_value result; napi_get_undefined(env, &result); return result;
 }
 
+static napi_value ShareServices(napi_env env, napi_callback_info info) {
+  size_t argc = 1; napi_value paths;
+  napi_get_cb_info(env, info, &argc, &paths, nullptr, nullptr);
+  if (argc != 1) { napi_throw_type_error(env, nullptr, "Expected file paths"); return nullptr; }
+  NSArray<NSURL *> *items = FileURLs(env, paths);
+  if (!items) return nullptr;
+  @try {
+    // shortcut: AppKit deprecates enumeration; migrate when it offers a custom-menu replacement.
+    NSArray<NSSharingService *> *services = [NSSharingService sharingServicesForItems:items];
+    napi_value result; napi_create_array_with_length(env, services.count, &result);
+    uint32_t index = 0;
+    for (NSSharingService *service in services) {
+      // Template images lose their appearance-aware tint when serialized; use the app glyph instead.
+      NSBitmapImageRep *image = service.image.isTemplate ? nil : [NSBitmapImageRep imageRepWithData:service.image.TIFFRepresentation];
+      NSData *png = [image representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+      NSString *icon = png ? [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]] : @"";
+      napi_value item; napi_create_object(env, &item);
+      napi_set_named_property(env, item, "title", Text(env, service.title));
+      napi_set_named_property(env, item, "icon", Text(env, icon));
+      napi_set_element(env, result, index++, item);
+    }
+    return result;
+  } @catch (NSException *exception) { Fail(env, exception.reason); return nullptr; }
+}
+
+static NSSharingService *activeShareService;
+static napi_value Share(napi_env env, napi_callback_info info) {
+  size_t argc = 2; napi_value args[2];
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+  if (argc != 2) { napi_throw_type_error(env, nullptr, "Expected file paths and a sharing service"); return nullptr; }
+  NSArray<NSURL *> *items = FileURLs(env, args[0]);
+  if (!items) return nullptr;
+  size_t length = 0;
+  if (napi_get_value_string_utf8(env, args[1], nullptr, 0, &length) != napi_ok || length == 0 || length > 1024) {
+    napi_throw_type_error(env, nullptr, "Expected a sharing service"); return nullptr;
+  }
+  std::string buffer(length + 1, '\0');
+  napi_get_value_string_utf8(env, args[1], buffer.data(), buffer.size(), &length);
+  if (buffer.find('\0') < length) { napi_throw_type_error(env, nullptr, "Expected a sharing service"); return nullptr; }
+  NSString *title = [[NSString alloc] initWithBytes:buffer.data() length:length encoding:NSUTF8StringEncoding];
+  @try {
+    NSSharingService *chosen = nil;
+    for (NSSharingService *service in [NSSharingService sharingServicesForItems:items]) {
+      if (![service.title isEqualToString:title]) continue;
+      // Refuse ambiguous or stale choices rather than sending to a different service.
+      if (chosen) { Fail(env, @"共享方式已更改，请重新打开共享菜单。"); return nullptr; }
+      chosen = service;
+    }
+    if (!chosen || ![chosen canPerformWithItems:items]) { Fail(env, @"共享方式已更改，请重新打开共享菜单。"); return nullptr; }
+    activeShareService = chosen;
+    [chosen performWithItems:items];
+  } @catch (NSException *exception) { Fail(env, exception.reason); return nullptr; }
+  napi_value result; napi_get_undefined(env, &result); return result;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
-  napi_value appURL, bundleID, loginEnabled, setLogin, airDrop;
-  napi_create_function(env, "appURL", NAPI_AUTO_LENGTH, AppURL, nullptr, &appURL);
-  napi_create_function(env, "bundleID", NAPI_AUTO_LENGTH, BundleID, nullptr, &bundleID);
-  napi_create_function(env, "loginEnabled", NAPI_AUTO_LENGTH, LoginEnabled, nullptr, &loginEnabled);
-  napi_create_function(env, "setLogin", NAPI_AUTO_LENGTH, SetLogin, nullptr, &setLogin);
+  napi_value airDrop, shareServices, share;
   napi_create_function(env, "airDrop", NAPI_AUTO_LENGTH, AirDrop, nullptr, &airDrop);
+  napi_create_function(env, "shareServices", NAPI_AUTO_LENGTH, ShareServices, nullptr, &shareServices);
+  napi_create_function(env, "share", NAPI_AUTO_LENGTH, Share, nullptr, &share);
+  napi_set_named_property(env, exports, "shareServices", shareServices);
+  napi_set_named_property(env, exports, "share", share);
   napi_set_named_property(env, exports, "airDrop", airDrop);
-  napi_set_named_property(env, exports, "appURL", appURL);
-  napi_set_named_property(env, exports, "bundleID", bundleID);
-  napi_set_named_property(env, exports, "loginEnabled", loginEnabled);
-  napi_set_named_property(env, exports, "setLogin", setLogin);
   return exports;
 }
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)

@@ -21,7 +21,7 @@ const waitFor = async (expected) => {
   throw new Error(`窗口位置没有保存：${JSON.stringify(expected)}`);
 };
 const launch = async () => {
-  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root } });
+  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root } });
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await page.getByRole('option', { name: '使用说明.txt', exact: true }).waitFor();
 };

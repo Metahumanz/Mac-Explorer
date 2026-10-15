@@ -10,7 +10,7 @@ const docs = path.join(root, 'Documents');
 await fs.mkdir(path.join(docs, '目标'));
 await fs.writeFile(path.join(docs, '原文件.txt'), 'cut me');
 const flags = (process.env.EXPLORER_SMOKE_ARGS || '').split(' ').filter(Boolean);
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: flags } : { args: [process.cwd(), ...flags] }), env: { ...process.env, EXPLORER_TEST_ROOT: root } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: flags } : { args: [process.cwd(), ...flags] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   const row = name => page.getByRole('option', { name, exact: true });

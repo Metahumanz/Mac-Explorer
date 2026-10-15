@@ -9,7 +9,7 @@ await fs.mkdir(path.join(root, '.Trash'));
 await fs.mkdir(path.join(root, 'Restored'));
 const source = path.join(root, 'Documents', '还原测试.txt');
 await fs.writeFile(source, 'restore contents');
-const app = await electron.launch({ args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   await page.locator('.file-content[aria-busy=false]').waitFor();

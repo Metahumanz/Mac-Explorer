@@ -17,7 +17,7 @@ const hidden = path.join(folder, '.隐藏.txt');
 const bundle = path.join(folder, '示例.app');
 await fs.writeFile(file, 'External open fixture');
 await fs.writeFile(hidden, 'Hidden fixture'); await fs.mkdir(bundle);
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 let page = await app.firstWindow();
 page.setDefaultTimeout(15_000);
 const errors = [];

@@ -7,11 +7,11 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-office-icons-'));
 const docs = path.join(root, 'Documents'); await fs.mkdir(docs);
 for (const ext of ['docx', 'xlsx', 'pptx']) await fs.copyFile(`tests/fixtures/office/sample.${ext}`, path.join(docs, `sample.${ext}`));
 await fs.writeFile(path.join(docs, 'broken.docx'), 'invalid office document');
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
  const page = await app.firstWindow();
  await page.locator('.file-content[aria-busy=false]').waitFor();
- await page.evaluate(() => { localStorage.setItem('view', '"icons"'); localStorage.setItem('iconSize', '128'); });
+ await page.evaluate(directory => localStorage.setItem('directoryViews', JSON.stringify({ [directory]: { view: 'icons', iconSize: 128 } })), docs);
  await page.reload();
  for (const ext of ['docx', 'xlsx', 'pptx']) {
   const row = page.getByRole('option', { name: `sample.${ext}`, exact: true });

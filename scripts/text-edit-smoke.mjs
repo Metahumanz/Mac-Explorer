@@ -12,7 +12,7 @@ await fs.mkdir(path.join(docs, '文件夹'));
 for (const name of names) await fs.writeFile(path.join(docs, name), 'Temporary text editor fixture');
 const app = await electron.launch({
   ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }),
-  env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' },
+  env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' },
 });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);

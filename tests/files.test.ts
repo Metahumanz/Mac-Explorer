@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { absolute, validName, listDirectory, createEntry, renameEntry, searchDirectory, transferEntries, moveNoReplace } from '../electron/files';
 import { FileHistory } from '../electron/history';
 
@@ -39,6 +40,26 @@ test('create and rename never overwrite existing content', () => fixture(async r
   const renamed = await renameEntry(created, '已改名.txt');
   assert.equal(await fs.readFile(renamed, 'utf8'), 'original');
   await assert.rejects(fs.access(created));
+}));
+test('creates valid blank Office documents without replacing files or symlinks', () => fixture(async root => {
+  for (const [extension, part, rootTag] of [
+    ['docx', 'word/document.xml', 'w:document'],
+    ['xlsx', 'xl/worksheets/sheet1.xml', 'worksheet'],
+    ['pptx', 'ppt/slides/slide1.xml', 'p:sld'],
+  ]) {
+    const name = `空白.${extension.toUpperCase()}`;
+    const created = await createEntry(root, name, false);
+    execFileSync('/usr/bin/unzip', ['-t', created]);
+    const xml = execFileSync('/usr/bin/unzip', ['-p', created, part], { encoding: 'utf8' });
+    assert.ok(xml.includes(`<${rootTag}`));
+    const content = await fs.readFile(created);
+    await assert.rejects(createEntry(root, name, false), { code: 'EEXIST' });
+    assert.deepEqual(await fs.readFile(created), content);
+    const link = `link.${extension}`;
+    await fs.symlink(created, path.join(root, link));
+    await assert.rejects(createEntry(root, link, false), { code: 'EEXIST' });
+    assert.deepEqual(await fs.readFile(created), content);
+  }
 }));
 test('copy keeps the source and preserves nested content', () => fixture(async root => {
   const source = await createEntry(root, 'source', true);

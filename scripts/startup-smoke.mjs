@@ -6,7 +6,7 @@ import path from 'node:path';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-startup-'));
 for (const folder of ['Documents', 'Desktop', '固定目录']) await fs.mkdir(path.join(root, folder));
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   await page.locator('.file-content[aria-busy=false]').waitFor();

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-terminal-review-'));
 await fs.mkdir(path.join(root, 'Documents'));
 const target = path.join(root, 'folder with spaces and $quote'); await fs.mkdir(target);
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? {executablePath:process.env.EXPLORER_APP_PATH,args:[]} : {args:[process.cwd()]}), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? {executablePath:process.env.EXPLORER_APP_PATH,args:[]} : {args:[process.cwd()]}), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
  const page=await app.firstWindow(); await page.getByRole('tab').waitFor();
  await app.evaluate(() => {

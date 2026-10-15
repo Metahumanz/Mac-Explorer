@@ -8,14 +8,19 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-icons-'));
 const docs = path.join(root, 'Documents');
 await fs.mkdir(docs);
 await fs.mkdir(path.join(docs, '项目资料'));
-for (const name of ['项目说明.docx', '设计说明.pdf', '配置.json', '使用说明.txt']) await fs.writeFile(path.join(docs, name), 'Temporary icon test fixture');
+for (const name of ['项目说明.docx', '设计说明.pdf', '配置.json', '使用说明.txt', '设置.INI']) await fs.writeFile(path.join(docs, name), 'Temporary icon test fixture');
 await fs.mkdir('artifacts', { recursive: true });
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root } });
 const page = await app.firstWindow();
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const result = { executable: process.env.EXPLORER_APP_PATH || 'source build', pixelChecks: [], passed: false };
 try {
   await page.getByRole('option', { name: '项目说明.docx', exact: true }).waitFor();
+  const ini = page.getByRole('option', { name: '设置.INI', exact: true }).locator('img.file-glyph');
+  await ini.evaluate(el => el.decode());
+  assert.equal(await ini.evaluate(el => el.naturalWidth), 256);
+  assert.match(await ini.getAttribute('src'), /\/ini-[^/]+\.png$/);
+  assert.equal(await page.getByRole('option', { name: '配置.json', exact: true }).locator('img.file-glyph').getAttribute('src').then(src => /\/ini-[^/]+\.png$/.test(src || '')), false);
   // Clicking the final breadcrumb once edits the existing location; it must not
   // push the same location into history or reset the input on subsequent clicks.
   await page.locator('.breadcrumbs button').last().click();

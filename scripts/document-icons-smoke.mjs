@@ -21,7 +21,7 @@ function pdfFixture(rotation = 0) {
 await fs.writeFile(path.join(docs, '说明.PDF'), pdfFixture());
 await fs.writeFile(path.join(docs, '横向.pdf'), pdfFixture(90));
 await fs.writeFile(path.join(docs, '损坏.pdf'), '%PDF-1.4\nInvalid PDF');
-const app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root } });
+const app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root } });
 const page = await app.firstWindow();
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));

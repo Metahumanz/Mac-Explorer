@@ -19,7 +19,7 @@ await fs.writeFile(path.join(docs, '工作项目', 'nested-search.txt'), 'nested
 const errors = [];
 let app;
 try {
-  app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [repository] }), env: { ...process.env, EXPLORER_TEST_ROOT: root }, timeout: 30000 });
+  app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [repository] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root }, timeout: 30000 });
   // Keep clipboard payloads in the fixture process only; never log or persist them.
   await app.evaluate(async ({ clipboard, ClipboardItem }) => {
     globalThis.smokeClipboard = await Promise.all((await clipboard.read()).map(async item => new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));

@@ -7,10 +7,13 @@ static NSArray *captured = @[];
 static NSUInteger calls = 0;
 static NSString *serviceName;
 @interface ExplorerAirDropFixture : NSObject
+@property(nonatomic, copy) NSString *title;
 @end
 @implementation ExplorerAirDropFixture
+- (NSImage *)image { return [NSImage imageNamed:NSImageNameShareTemplate]; }
 - (BOOL)canPerformWithItems:(NSArray *)items { return available; }
 - (void)performWithItems:(NSArray<NSURL *> *)items {
+  if (self.title) serviceName = self.title;
   NSMutableArray *paths = [NSMutableArray array];
   for (NSURL *url in items) [paths addObject:@{ @"path": url.path, @"fileURL": @(url.isFileURL) }];
   captured = paths; calls++;
@@ -19,6 +22,16 @@ static NSString *serviceName;
 static id Service(id self, SEL command, NSString *name) {
   serviceName = name;
   return (id)[ExplorerAirDropFixture new];
+}
+static NSArray *SharingServices(id self, SEL command, NSArray *items) {
+  if (!available) return @[];
+  NSMutableArray *services = [NSMutableArray array];
+  for (NSString *title in @[@"隔空投送", @"信息", @"备忘录", @"无边记"]) {
+    ExplorerAirDropFixture *service = [ExplorerAirDropFixture new];
+    service.title = title;
+    [services addObject:service];
+  }
+  return services;
 }
 static napi_value Snapshot(napi_env env, napi_callback_info info) {
   NSData *data = [NSJSONSerialization dataWithJSONObject:@{ @"service": serviceName ?: @"", @"items": captured, @"calls": @(calls) } options:0 error:nil];
@@ -34,6 +47,7 @@ static napi_value Available(napi_env env, napi_callback_info info) {
 }
 static napi_value Init(napi_env env, napi_value exports) {
   method_setImplementation(class_getClassMethod([NSSharingService class], @selector(sharingServiceNamed:)), (IMP)Service);
+  method_setImplementation(class_getClassMethod([NSSharingService class], @selector(sharingServicesForItems:)), (IMP)SharingServices);
   napi_value snapshot, setAvailable;
   napi_create_function(env, "snapshot", NAPI_AUTO_LENGTH, Snapshot, nullptr, &snapshot);
   napi_create_function(env, "setAvailable", NAPI_AUTO_LENGTH, Available, nullptr, &setAvailable);

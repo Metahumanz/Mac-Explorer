@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { dropNativeFiles } from './native-file-drop.mjs';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-quick-access-'));
 for (const folder of ['Documents/A', 'Documents/B', 'Desktop', 'Downloads']) await fs.mkdir(path.join(root, folder), { recursive: true });
 await fs.writeFile(path.join(root, 'Documents', 'note.txt'), 'preserved content');
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   await page.locator('.file-content[aria-busy="false"]').waitFor();
@@ -37,7 +38,7 @@ try {
   assert.ok((await fs.stat(path.join(root, 'Documents', 'A', 'B'))).isDirectory());
   assert.deepEqual(await order(), [first, 'A', ...reordered.slice(1)]);
   // Files are never pinned; an edge drop falls through to the folder move.
-  await dragTo(page.getByRole('option', { name: 'note.txt', exact: true }), 'A', 0.05);
+  await dropNativeFiles(page, [path.join(root, 'Documents/note.txt')], place('A'), 0.05);
   await page.getByRole('option', { name: 'note.txt', exact: true }).waitFor({ state: 'detached' });
   assert.equal(await fs.readFile(path.join(root, 'Documents', 'A', 'note.txt'), 'utf8'), 'preserved content');
   assert.deepEqual(await order(), [first, 'A', ...reordered.slice(1)]);

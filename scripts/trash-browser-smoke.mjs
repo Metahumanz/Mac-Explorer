@@ -10,7 +10,7 @@ await fs.writeFile(path.join(root, '.Trash', '旧文件夹', '保留.txt'), 'pre
 await fs.writeFile(path.join(root, '.Trash', '本机.txt'), 'home');
 const external = path.join(root, 'Volumes', '外接磁盘', '.Trashes', String(process.getuid()));
 await fs.mkdir(external, { recursive: true }); await fs.writeFile(path.join(external, '外接.txt'), 'external');
-const app = await electron.launch({ args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   const shortcut = page.locator('.sidebar').getByRole('button', { name: '回收站', exact: true });

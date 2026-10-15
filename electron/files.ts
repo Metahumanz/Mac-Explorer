@@ -1,5 +1,6 @@
 import { t as tr } from '../shared/i18n';
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -87,7 +88,12 @@ async function ensureAbsent(destination: string) {
 export async function createEntry(parent: string, name: string, directory: boolean): Promise<string> {
   const destination = path.join(absolute(parent), validName(name));
   if (directory) await fs.mkdir(destination);
-  else await fs.writeFile(destination, '', { flag: 'wx' });
+  else {
+    const extension = path.extname(name).toLowerCase();
+    if (['.docx', '.xlsx', '.pptx'].includes(extension)) {
+      await fs.copyFile(path.join(__dirname, 'templates', `blank${extension}`), destination, constants.COPYFILE_EXCL);
+    } else await fs.writeFile(destination, '', { flag: 'wx' });
+  }
   return destination;
 }
 export async function moveNoReplace(source: string, destination: string) {

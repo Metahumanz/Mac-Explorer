@@ -6,7 +6,7 @@ import path from 'node:path';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-mouse-nav-'));
 for (const folder of ['Documents/A/B', 'Desktop', 'Downloads']) await fs.mkdir(path.join(root, folder), { recursive: true });
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   const content = page.locator('.file-content');

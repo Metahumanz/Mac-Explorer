@@ -1,6 +1,6 @@
 {
   "name": "mac-explorer",
-  "version": "0.1.40",
+  "version": "0.1.50",
   "private": true,
   "description": "A Windows 11-style file explorer for macOS",
   "main": "dist-electron/main.cjs",
@@ -37,12 +37,19 @@
     "test:eject": "npm run build && node scripts/eject-smoke.mjs",
     "test:trash-browser": "npm run build && node scripts/trash-browser-smoke.mjs && node scripts/trash-operations-smoke.mjs",
     "test:dock": "npm run build && node scripts/dock-menu-smoke.mjs",
+    "test:file-drag": "npm run build && node scripts/file-drag-smoke.mjs",
     "test:drop-move": "npm run build && node scripts/drop-move-smoke.mjs",
     "test:mouse-navigation": "npm run build && node scripts/mouse-navigation-smoke.mjs",
     "test:quick-access": "npm run build && node scripts/quick-access-order-smoke.mjs",
     "test:settings": "npm run build && node scripts/settings-smoke.mjs",
+    "test:settings-window": "npm run build && node scripts/settings-window-smoke.mjs",
+    "test:vcs": "npm run build && node scripts/vcs-smoke.mjs",
     "test:terminal": "npm run build && node scripts/default-terminal-smoke.mjs",
-    "test:toolbar": "npm run build && node scripts/toolbar-smoke.mjs"
+    "test:toolbar": "npm run build && node scripts/toolbar-smoke.mjs",
+    "test:new": "npm run build && node scripts/new-entry-smoke.mjs",
+    "test:share": "npm run build && node scripts/share-menu-smoke.mjs",
+    "test:operation-shortcuts": "npm run build && node scripts/operation-shortcuts-smoke.mjs",
+    "test:file-viewer": "npm run build && node scripts/file-viewer-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

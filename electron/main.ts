@@ -1,6 +1,8 @@
+import { bindingsFor, normalizeShortcut, validWakeShortcut, validateWakeBinding, validateOperationShortcuts, type OperationShortcuts } from '../shared/shortcuts';
 import { languageState, loadLanguage, saveLanguage } from './language';
+import { fileViewerSettings } from './file-viewer';
 import { t as tr } from '../shared/i18n';
-import { app, BrowserWindow, globalShortcut, ipcMain, shell, clipboard, ClipboardItem, dialog, Menu, nativeTheme, ShareMenu, screen, type Rectangle } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, shell, clipboard, ClipboardItem, dialog, Menu, nativeTheme, screen, type Rectangle } from 'electron';
 import fs from 'node:fs/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { watch, mkdirSync, writeFileSync, renameSync, type FSWatcher } from 'node:fs';
@@ -14,8 +16,10 @@ import { compressArchive, extractArchive, prepareArchiveFile, previewArchive } f
 import { isArchive } from '../shared/archives';
 import { FileHistory } from './history';
 import { FileIcons } from './icons';
+import { VersionControl } from './vcs';
+import type { VcsAction } from '../shared/vcs';
 import { listTrash, TrashOrigins, snapshotTrash, emptyTrash } from './trash';
-import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ShareService, ThemeMode, Volume } from '../shared/types';
 
 let currentLanguage = 'zh-CN';
 // Preserve the requesting window across awaits, even when focus changes.
@@ -192,64 +196,89 @@ async function moveToSystemTrash(input: string) {
   catch { throw new Error(tr('文件已移入回收站，但无法保存原位置。请在回收站使用“还原到…”恢复。')); }
 }
 ipc('take-open-paths', () => openPaths.splice(0));
-let loginItem: { appURL(): string; bundleID(): string; loginEnabled(): boolean; setLogin(value: boolean): boolean; airDrop(paths: string[]): void } | undefined;
+let nativeSharing: { airDrop(paths: string[]): void; shareServices(paths: string[]): ShareService[]; share(paths: string[], service: string): void } | undefined;
 let wakeShortcut = '';
+let operationShortcuts: OperationShortcuts = {};
 let wakeShortcutError = '';
 let savingShortcut = false;
+let versionControlEnabled = true;
+const versionControl = new VersionControl(path.join(app.getPath('userData'), 'vcs-backups'));
+const versionControlFile = () => path.join(app.getPath('userData'), 'version-control.json');
 const shortcutFile = () => path.join(app.getPath('userData'), 'shortcuts.json');
-function validWakeShortcut(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 96) return false;
-  if (!value) return true;
-  const parts = value.split('+'); const key = parts.pop()!;
-  const modifiers = ['Command', 'Control', 'Alt', 'Shift'];
-  const keys = ['Space', 'Tab', 'Enter', 'Escape', 'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'Up', 'Down', 'Left', 'Right', 'Plus', '-', ',', '.', '[', ']', ';', "'", '`', String.fromCharCode(92), '/'];
-  if (new Set(parts).size !== parts.length || !parts.every(part => modifiers.includes(part))) return false;
-  if (!/^(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4]))$/.test(key) && !keys.includes(key)) return false;
-  return parts.some(part => part !== 'Shift') || /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(key);
-}
 function appSettings(): AppSettings {
-  const location = loginItem?.appURL() || '';
-  return {
-    wakeShortcut, wakeShortcutError,
-    login: loginItem?.loginEnabled() || false,
-    loginAvailable: loginItem?.bundleID() === 'local.macexplorer.desktop' && [path.join(os.homedir(), 'Applications'), '/Applications'].some(directory => path.dirname(location) === directory && location.endsWith('.app')),
-  };
+  return { wakeShortcut, wakeShortcutError, operationShortcuts, versionControl: versionControlEnabled };
+}
+async function writeShortcutSettings(nextWake: string, nextOperations: OperationShortcuts) {
+  const file = shortcutFile();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file + '.tmp', JSON.stringify({ wakeShortcut: nextWake, operationShortcuts: nextOperations }), 'utf8');
+  await fs.rename(file + '.tmp', file);
+}
+function notifySettings() {
+  buildMenu();
+  for (const owner of windows.keys()) owner.webContents.send('settings-changed', appSettings());
 }
 ipc('settings', appSettings);
+ipc('file-viewer-settings', () => fileViewerSettings());
+ipc('set-file-viewer', async (enabled: unknown) => {
+  if (typeof enabled !== 'boolean') throw new Error(tr('无效的文件查看器设置。'));
+  const state = await fileViewerSettings(enabled);
+  notifySettings();
+  return state;
+});
+ipc('set-version-control', async (enabled: unknown) => {
+  if (typeof enabled !== 'boolean') throw new Error(tr('无效的版本控制设置。'));
+  if (savingShortcut) throw new Error(tr('设置正在保存，请稍后重试。'));
+  savingShortcut = true;
+  try {
+    const file = versionControlFile();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file + '.tmp', JSON.stringify({ enabled }), 'utf8');
+    await fs.rename(file + '.tmp', file);
+    versionControlEnabled = enabled; versionControl.setEnabled(enabled);
+    notifySettings();
+    return appSettings();
+  } finally { savingShortcut = false; }
+});
+ipc('vcs-status', (directory: string, force: unknown = false) => versionControl.status(directory, force === true));
+ipc('vcs-diff', (directory: string, paths: string[]) => versionControl.diff(directory, paths));
+ipc('vcs-prepare', (directory: string, action: VcsAction, paths: string[]) => versionControl.prepare(directory, action, paths));
+ipc('vcs-execute', (id: string, message: string) => versionControl.execute(id, message));
 ipc('capture-shortcut', (active: unknown) => {
   if (typeof active !== 'boolean') throw new Error(tr('无效的快捷键设置。'));
   currentWindow()!.webContents.setIgnoreMenuShortcuts(active);
 });
 ipc('set-wake-shortcut', async (value: unknown) => {
-  if (!validWakeShortcut(value)) throw new Error(tr('请使用修饰键组合或 F1–F24 功能键。'));
+  const next = validateWakeBinding(value, operationShortcuts);
   if (savingShortcut) throw new Error(tr('设置正在保存，请稍后重试。'));
   savingShortcut = true;
-  const alreadyRegistered = !!value && globalShortcut.isRegistered(value) && value === wakeShortcut;
+  const alreadyRegistered = !!next && globalShortcut.isRegistered(next) && next === wakeShortcut;
   let registered = false;
   try {
-    if (value && !alreadyRegistered) {
-      registered = globalShortcut.register(value, summon);
+    if (next && !alreadyRegistered) {
+      registered = globalShortcut.register(next, summon);
       if (!registered) throw new Error(tr('快捷键已被占用，请使用其他组合。'));
     }
-    const file = shortcutFile();
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file + '.tmp', JSON.stringify({ wakeShortcut: value }), 'utf8');
-    await fs.rename(file + '.tmp', file);
-    if (wakeShortcut && wakeShortcut !== value) globalShortcut.unregister(wakeShortcut);
-    wakeShortcut = value; wakeShortcutError = '';
+    await writeShortcutSettings(next, operationShortcuts);
+    if (wakeShortcut && wakeShortcut !== next) globalShortcut.unregister(wakeShortcut);
+    wakeShortcut = next; wakeShortcutError = '';
+    notifySettings();
     return appSettings();
   } catch (error) {
-    if (registered) globalShortcut.unregister(value);
+    if (registered) globalShortcut.unregister(next);
     throw error;
   } finally { savingShortcut = false; }
 });
-ipc('set-login-enabled', (value: unknown) => {
-  if (typeof value !== 'boolean') throw new Error(tr('无效的登录项设置。'));
-  if (!appSettings().loginAvailable || !loginItem) throw new Error(tr('登录项需要把应用装到“应用程序”文件夹'));
-  loginItem.setLogin(value);
-  const state = appSettings();
-  if (state.login !== value) throw new Error(tr('登录项尚未启用，请在系统设置的登录项中批准。'));
-  return state;
+ipc('set-operation-shortcuts', async (value: unknown) => {
+  const next = validateOperationShortcuts(value, wakeShortcut);
+  if (savingShortcut) throw new Error(tr('设置正在保存，请稍后重试。'));
+  savingShortcut = true;
+  try {
+    await writeShortcutSettings(wakeShortcut, next);
+    operationShortcuts = next;
+    notifySettings();
+    return appSettings();
+  } finally { savingShortcut = false; }
 });
 function isThemeMode(value: unknown): value is ThemeMode { return value === 'light' || value === 'dark' || value === 'system'; }
 ipc('set-theme', async (mode: unknown) => {
@@ -360,22 +389,48 @@ ipc('open-terminal', async (input: string) => {
   catch (error) { throw new Error(tr((error as { stderr?: string }).stderr?.trim() || '') || readableError(error)); }
   await promisify(execFile)('/usr/bin/open', ['-a', application, directory]);
 });
-ipc('share', (inputs: unknown) => new ShareMenu({ filePaths: pathsArg(inputs) }).popup({ window: currentWindow()! }));
+async function sharePaths(inputs: unknown) {
+  const paths = pathsArg(inputs);
+  if (!paths.length) throw new Error(tr('请选择要共享的文件。'));
+  for (const file of paths) await fs.access(file, 4);
+  if (!nativeSharing) throw new Error(tr('当前没有可用的共享方式。'));
+  return paths;
+}
+ipc('share-services', async (inputs: unknown) => {
+  const paths = await sharePaths(inputs);
+  return nativeSharing!.shareServices(paths);
+});
+ipc('share', async (inputs: unknown, service: unknown) => {
+  if (typeof service !== 'string' || !service.trim() || service.includes('\0') || Buffer.byteLength(service) > 1024) throw new Error(tr('无效的共享方式。'));
+  const paths = await sharePaths(inputs);
+  const owner = currentWindow()!;
+  if (owner.isMinimized()) owner.restore();
+  owner.show(); owner.focus();
+  nativeSharing!.share(paths, service);
+});
 ipc('airdrop', async (inputs: unknown) => {
   const paths = pathsArg(inputs);
   if (!paths.length) throw new Error(tr('请选择要隔空投送的文件。'));
   for (const file of paths) await fs.access(file, 4);
-  if (!loginItem) throw new Error(tr('隔空投送服务不可用。'));
+  if (!nativeSharing) throw new Error(tr('隔空投送服务不可用。'));
   const owner = currentWindow()!;
   if (owner.isMinimized()) owner.restore();
   owner.show(); owner.focus();
-  try { loginItem.airDrop(paths); }
+  try { nativeSharing.airDrop(paths); }
   catch (error) { throw new Error(tr((error as Error).message)); }
 });
 ipc('quick-look', (input: string) => {
   const filePath = absolute(input);
   if (process.platform === 'darwin') currentWindow()?.previewFile(filePath);
   else shell.openPath(filePath);
+});
+ipc('start-file-drag', async (inputs: unknown) => {
+  const paths = [...new Set(pathsArg(inputs))];
+  if (!paths.length) throw new Error(tr('无效的文件选择。'));
+  const owner = currentWindow()!;
+  for (const file of paths) await fs.access(file, 4);
+  const icon = await app.getFileIcon(paths[0], { size: 'normal' });
+  if (!owner.isDestroyed()) owner.webContents.startDrag({ file: paths[0], files: paths, icon });
 });
 ipc('icon', (input: string, pixels = 64) => fileIcons.get(absolute(input), typeof pixels === 'number' && Number.isFinite(pixels) ? Math.min(512, Math.max(32, pixels)) : 64));
 ipc('preview', async (input: string): Promise<Preview> => {
@@ -610,9 +665,9 @@ function buildMenu() {
       if (state.rendererReady) owner.webContents.send('action', 'settings');
       else state.pendingSettings = true;
     } }, { type: 'separator' }, { role: 'hide', label: tr('隐藏') }, { role: 'quit', label: tr('退出') }] },
-    { label: tr('文件'), submenu: [{ label: tr('新建标签页'), accelerator: 'Command+T', click: action('new-tab') }, { label: tr('打开文件夹…'), click: action('choose-folder') }, { label: tr('新建文件夹'), accelerator: 'Command+Shift+N', click: action('new-folder') }, { type: 'separator' }, { label: tr('关闭标签页'), accelerator: 'Command+W', click: action('close-tab') }, { role: 'close', label: tr('关闭窗口'), accelerator: 'Command+Shift+W' }] },
-    { label: tr('编辑'), submenu: [{ label: tr('撤销'), accelerator: 'Command+Z', click: action('undo') }, { type: 'separator' }, { label: tr('剪切'), accelerator: 'Command+X', click: action('cut') }, { label: tr('复制'), accelerator: 'Command+C', click: action('copy') }, { label: tr('粘贴'), accelerator: 'Command+V', click: action('paste') }, { label: tr('将项目移到这里'), accelerator: 'Command+Alt+V', click: action('move-here') }, { label: tr('全选'), accelerator: 'Command+A', click: action('select-all') }] },
-    { label: tr('显示'), submenu: [{ label: tr('刷新'), click: action('refresh') }, { label: tr('显示隐藏的项目'), click: action('hidden') }, { role: 'togglefullscreen', label: tr('进入全屏') }] },
+    { label: tr('文件'), submenu: [{ label: tr('新建标签页'), accelerator: bindingsFor('new-tab', operationShortcuts)[0], click: action('new-tab') }, { label: tr('打开文件夹…'), click: action('choose-folder') }, { label: tr('新建文件夹'), accelerator: bindingsFor('new-folder', operationShortcuts)[0], click: action('new-folder') }, { type: 'separator' }, { label: tr('关闭标签页'), accelerator: bindingsFor('close-tab', operationShortcuts)[0], click: action('close-tab') }, { role: 'close', label: tr('关闭窗口'), accelerator: 'Command+Shift+W' }] },
+    { label: tr('编辑'), submenu: [{ label: tr('撤销'), accelerator: bindingsFor('undo', operationShortcuts)[0], click: action('undo') }, { type: 'separator' }, { label: tr('剪切'), accelerator: bindingsFor('cut', operationShortcuts)[0], click: action('cut') }, { label: tr('复制'), accelerator: bindingsFor('copy', operationShortcuts)[0], click: action('copy') }, { label: tr('粘贴'), accelerator: bindingsFor('paste', operationShortcuts)[0], click: action('paste') }, { label: tr('将项目移到这里'), accelerator: bindingsFor('move-here', operationShortcuts)[0], click: action('move-here') }, { label: tr('全选'), accelerator: bindingsFor('select-all', operationShortcuts)[0], click: action('select-all') }] },
+    { label: tr('显示'), submenu: [{ label: tr('刷新'), accelerator: bindingsFor('refresh', operationShortcuts)[0], click: action('refresh') }, { label: tr('显示隐藏的项目'), accelerator: bindingsFor('hidden', operationShortcuts)[0], click: action('hidden') }, { role: 'togglefullscreen', label: tr('进入全屏') }] },
     { label: tr('窗口'), submenu: [{ role: 'minimize', label: tr('最小化') }, { role: 'zoom', label: tr('缩放') }, { role: 'front', label: tr('前置全部窗口') }] },
   ]));
 }
@@ -624,7 +679,23 @@ app.whenReady().then(async () => {
     if (isThemeMode(saved.theme)) nativeTheme.themeSource = saved.theme;
   } catch { /* Keep the existing light appearance when no valid preference exists. */ }
   savedWindowBounds = await loadWindowBounds();
+  try {
+    const saved = JSON.parse(await fs.readFile(versionControlFile(), 'utf8'));
+    versionControlEnabled = saved.enabled !== false;
+  } catch { /* Version control is enabled by default, including existing installs. */ }
+  versionControl.setEnabled(versionControlEnabled);
   nativeTheme.on('updated', () => { for (const window of windows.keys()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#191919' : '#ffffff'); });
+  try {
+    const saved = JSON.parse(await fs.readFile(shortcutFile(), 'utf8'));
+    try { operationShortcuts = validateOperationShortcuts(saved.operationShortcuts ?? {}); } catch { /* Invalid mappings fall back to defaults. */ }
+    if (validWakeShortcut(saved.wakeShortcut) && saved.wakeShortcut) {
+      wakeShortcut = normalizeShortcut(saved.wakeShortcut)!;
+      try {
+        validateWakeBinding(wakeShortcut, operationShortcuts);
+        if (!globalShortcut.register(wakeShortcut, summon)) wakeShortcutError = tr('快捷键已被占用，请使用其他组合。');
+      } catch (error) { wakeShortcutError = readableError(error); }
+    }
+  } catch { /* Use default operation shortcuts and leave global wake disabled. */ }
   currentLanguage = (await loadLanguage()).locale;
   buildMenu();
   readyForOpen = true;
@@ -637,17 +708,11 @@ app.whenReady().then(async () => {
       if (window && !window.isDestroyed()) window.webContents.send('scroll-gesture-start', timestamp);
     });
     try {
-      loginItem = require(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/defaults.node')) as typeof loginItem;
-    } catch { /* Disable the login option when the native addon is unavailable. */ }
+      nativeSharing = require(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/defaults.node')) as typeof nativeSharing;
+    } catch { /* Sharing stays unavailable when the native addon cannot be loaded. */ }
   }
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
-  try {
-    const saved = JSON.parse(await fs.readFile(shortcutFile(), 'utf8'));
-    if (validWakeShortcut(saved.wakeShortcut) && saved.wakeShortcut) {
-      wakeShortcut = saved.wakeShortcut;
-      if (!globalShortcut.register(wakeShortcut, summon)) wakeShortcutError = tr('快捷键已被占用，请使用其他组合。');
-    }
-  } catch { /* Global wake stays disabled until the user configures it. */ }
+
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || testRoot) app.quit(); });
-app.on('will-quit', () => { globalShortcut.unregisterAll(); fileIcons.close(); });
+app.on('will-quit', () => { globalShortcut.unregisterAll(); fileIcons.close(); versionControl.setEnabled(false); });

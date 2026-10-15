@@ -7,7 +7,7 @@ import path from 'node:path';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-trash-confirmation-'));
 await fs.mkdir(path.join(root, 'Documents'));
 await fs.writeFile(path.join(root, 'Documents', 'example.txt'), 'Preserve this fixture');
-const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   // Test the confirmation contract without sending any file to the real Trash.
   await app.evaluate(({ ipcMain }) => {

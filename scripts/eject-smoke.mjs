@@ -18,7 +18,7 @@ try {
   assert.throws(() => execFileSync(helper, ['eject', '/'], { stdio: 'pipe' }), /Command failed/);
   assert.throws(() => execFileSync(helper, ['eject', root], { stdio: 'pipe' }), /Command failed/);
   await fs.writeFile(path.join(mount, 'fixture.txt'), 'eject fixture');
-  app = await electron.launch({ args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_EJECT_VOLUME: mount, EXPLORER_TEST_HIDDEN: '1' } });
+  app = await electron.launch({ args: [process.cwd()], env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_EJECT_VOLUME: mount, EXPLORER_TEST_HIDDEN: '1' } });
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   const nav = page.locator('.sidebar').getByRole('button', { name, exact: true });
   await nav.waitFor();

@@ -30,7 +30,7 @@ p=docs+'/crc.zip';data=open(p,'rb').read().replace(b'UNIQUEPAYLOAD',b'BROKENPAYL
 const original = await fs.readFile(zip);
 let app;
 try {
-  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
+  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
   const page = await app.firstWindow();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.getByRole('option', { name: path.basename(zip), exact: true }).waitFor();

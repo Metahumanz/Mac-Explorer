@@ -15,21 +15,24 @@ const preference = path.join(root, '.app-data', 'appearance.json');
 let app, page;
 const errors = [];
 const launch = async () => {
-  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root } });
+  app = await electron.launch({ colorScheme: null, ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_ROOT: root } });
   app.process().on('exit', (code, signal) => console.log(`Fixture process exit: code=${code}, signal=${signal}`));
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
   await page.getByRole('option', { name: '使用说明.txt', exact: true }).waitFor();
+  await page.getByRole('button', { name: '详细信息视图', exact: true }).click();
 };
 const openAppearance = async () => {
   await page.getByRole('button', { name: '更多', exact: true }).click();
-  await page.getByRole('menuitem', { name: '外观', exact: true }).hover();
-  await page.getByRole('menu', { name: '外观', exact: true }).waitFor();
+  await page.getByRole('menuitem', { name: '设置…', exact: true }).click();
+  await page.getByRole('dialog', { name: '设置', exact: true }).waitFor();
 };
 const choose = async (label, mode) => {
-  await openAppearance(); await page.getByRole('menuitemradio', { name: label, exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector('.status-feedback')?.textContent.includes('正在切换'));
+  await openAppearance(); await page.getByRole('radio', { name: label, exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.theme-options input').disabled);
+  assert.equal(await page.getByRole('radio', { name: label, exact: true }).isChecked(), true);
   assert.equal(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource), mode);
   assert.equal(JSON.parse(await fs.readFile(preference, 'utf8')).theme, mode);
+  await page.getByRole('button', { name: '关闭设置', exact: true }).click();
 };
 const dark = async value => page.waitForFunction(value => getComputedStyle(document.body).backgroundColor === (value ? 'rgb(25, 25, 25)' : 'rgb(255, 255, 255)'), value);
 const bg = selector => page.locator(selector).evaluate(el => getComputedStyle(el).backgroundColor);
@@ -43,8 +46,8 @@ const contrast = async (foreground, background) => page.evaluate(({ foreground, 
 try {
   await launch(); await dark(false);
   await openAppearance();
-  assert.deepEqual(await page.locator('.context-submenu button').allTextContents(), ['浅色', '深色', '跟随系统']);
-  assert.equal(await page.getByRole('menuitemradio', { name: '浅色', exact: true }).getAttribute('aria-checked'), 'true');
+  assert.deepEqual(await page.locator('.theme-options label').allTextContents(), ['浅色', '深色', '跟随系统']);
+  assert.equal(await page.getByRole('radio', { name: '浅色', exact: true }).isChecked(), true);
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   const previousSettings = await page.evaluate(() => ({ ...localStorage }));
   await choose('深色', 'dark'); await dark(true);
@@ -60,9 +63,9 @@ try {
   await page.locator('.preview-pane pre').waitFor();
   assert.ok(await contrast('.preview-pane pre', '.preview-pane') >= 4.5);
   await openAppearance();
-  assert.equal(await bg('.context-submenu'), 'rgb(36, 36, 36)');
-  assert.equal(await page.getByRole('menuitemradio', { name: '深色', exact: true }).getAttribute('aria-checked'), 'true');
-  assert.ok(await contrast('.context-submenu button', '.context-submenu') >= 4.5);
+  assert.equal(await bg('.settings-dialog'), 'rgb(43, 43, 43)');
+  assert.equal(await page.getByRole('radio', { name: '深色', exact: true }).isChecked(), true);
+  assert.ok(await contrast('.settings-tabs button', '.settings-dialog') >= 4.5);
   await page.screenshot({ path: 'artifacts/theme-dark-menu.png' });
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   await page.getByRole('option', { name: '使用说明.txt', exact: true }).click();
@@ -74,11 +77,11 @@ try {
   await page.screenshot({ path: 'artifacts/theme-dark-dialog.png' });
   await page.getByRole('button', { name: '取消', exact: true }).click();
   assert.deepEqual(await fs.readdir(docs), ['使用说明.txt', '工作项目', '设计资料.pdf']);
-  console.log('PASS: More > Appearance offers three modes; native dark appearance, all major surfaces and text contrast');
+  console.log('PASS: Settings > General offers three appearance modes; native dark appearance, all major surfaces and text contrast');
 
   await app.close(); await launch(); await dark(true);
   assert.equal(await app.evaluate(({ nativeTheme, BrowserWindow }) => ({ source: nativeTheme.themeSource, background: BrowserWindow.getAllWindows()[0].getBackgroundColor() })).then(v => v.source === 'dark' && v.background.toLowerCase() === '#191919'), true);
-  await openAppearance(); assert.equal(await page.getByRole('menuitemradio', { name: '深色', exact: true }).getAttribute('aria-checked'), 'true');
+  await openAppearance(); assert.equal(await page.getByRole('radio', { name: '深色', exact: true }).isChecked(), true);
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   console.log('PASS: full process restart restores dark mode and native window background');
 
@@ -105,7 +108,7 @@ try {
   await choose('深色', 'dark'); await dark(true);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 600));
   await openAppearance();
-  assert.equal(await page.locator('.context-menu').evaluateAll(menus => menus.every(menu => { const r = menu.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })), true);
+  assert.equal(await page.locator('.settings-dialog').evaluateAll(menus => menus.every(menu => { const r = menu.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })), true);
   await page.screenshot({ path: 'artifacts/theme-dark-compact.png' });
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '关闭预览', exact: true }).click();
