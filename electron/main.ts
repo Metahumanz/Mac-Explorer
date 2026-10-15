@@ -192,7 +192,7 @@ async function moveToSystemTrash(input: string) {
   catch { throw new Error(tr('文件已移入回收站，但无法保存原位置。请在回收站使用“还原到…”恢复。')); }
 }
 ipc('take-open-paths', () => openPaths.splice(0));
-let loginItem: { appURL(): string; bundleID(): string; loginEnabled(): boolean; setLogin(value: boolean): boolean } | undefined;
+let loginItem: { appURL(): string; bundleID(): string; loginEnabled(): boolean; setLogin(value: boolean): boolean; airDrop(paths: string[]): void } | undefined;
 let wakeShortcut = '';
 let wakeShortcutError = '';
 let savingShortcut = false;
@@ -361,6 +361,17 @@ ipc('open-terminal', async (input: string) => {
   await promisify(execFile)('/usr/bin/open', ['-a', application, directory]);
 });
 ipc('share', (inputs: unknown) => new ShareMenu({ filePaths: pathsArg(inputs) }).popup({ window: currentWindow()! }));
+ipc('airdrop', async (inputs: unknown) => {
+  const paths = pathsArg(inputs);
+  if (!paths.length) throw new Error(tr('请选择要隔空投送的文件。'));
+  for (const file of paths) await fs.access(file, 4);
+  if (!loginItem) throw new Error(tr('隔空投送服务不可用。'));
+  const owner = currentWindow()!;
+  if (owner.isMinimized()) owner.restore();
+  owner.show(); owner.focus();
+  try { loginItem.airDrop(paths); }
+  catch (error) { throw new Error(tr((error as Error).message)); }
+});
 ipc('quick-look', (input: string) => {
   const filePath = absolute(input);
   if (process.platform === 'darwin') currentWindow()?.previewFile(filePath);

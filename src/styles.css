@@ -289,7 +289,6 @@ h2 { font-weight: 500; }
 .file-items.with-checkboxes .file-row .col-name { padding-left: 30px; }
 .icon-grid.with-checkboxes:not(.small-icons) .file-row .col-name { padding: 0; }
 .icon-grid:not(.small-icons) .item-checkbox { top: 8px; left: 7px; transform: none; }
-.table-heading { position: relative; }
 .select-all-checkbox { position: absolute; left: 7px; z-index: 1; }
 .with-checkboxes .table-heading .col-name { padding-left: 30px; }
 .compact-view .file-table .file-row { min-height: 28px; }
@@ -410,3 +409,17 @@ button, .tab, .file-row, .archive-row {
 .shortcut-setting input { flex: 1; min-width: 0; padding: 9px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); }
 .settings-note { font-size: 12px; }
 .settings-login { display: flex; align-items: center; gap: 8px; }
+
+.command-tools { display: flex; align-items: center; gap: 10px; min-width: 0; overflow-x: auto; }
+.command-tools::-webkit-scrollbar { height: 4px; }
+.command-tools::-webkit-scrollbar-thumb { border-width: 1px; }
+.toolbar-separator { flex-shrink: 0; }
+.toolbar-settings summary { font-weight: 600; font-size: 14px; cursor: default; }
+.toolbar-settings summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.toolbar-options { max-height: 216px; overflow-y: auto; }
+.toolbar-option { display: flex; align-items: center; gap: 4px; min-height: 36px; border-bottom: 1px solid var(--border); }
+.toolbar-option label { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.toolbar-option label > svg { width: 17px; height: 17px; stroke-width: 1.6; }
+.toolbar-option button { width: 28px; height: 28px; border-radius: 4px; }
+.toolbar-option input[type="checkbox"] { width: 14px; height: 14px; padding: 0; accent-color: var(--accent); }
+.toolbar-reset { margin-top: 12px; }

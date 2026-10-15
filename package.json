@@ -41,7 +41,8 @@
     "test:mouse-navigation": "npm run build && node scripts/mouse-navigation-smoke.mjs",
     "test:quick-access": "npm run build && node scripts/quick-access-order-smoke.mjs",
     "test:settings": "npm run build && node scripts/settings-smoke.mjs",
-    "test:terminal": "npm run build && node scripts/default-terminal-smoke.mjs"
+    "test:terminal": "npm run build && node scripts/default-terminal-smoke.mjs",
+    "test:toolbar": "npm run build && node scripts/toolbar-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

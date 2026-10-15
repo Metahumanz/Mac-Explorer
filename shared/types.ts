@@ -49,6 +49,7 @@ export interface ExplorerAPI {
   reveal(path: string): Promise<void>;
   openTerminal(path: string): Promise<void>;
   share(paths: string[]): Promise<void>;
+  airDrop(paths: string[]): Promise<void>;
   info(path: string): Promise<FileEntry>;
   preview(path: string): Promise<Preview>;
   icon(path: string, pixels?: number): Promise<string>;

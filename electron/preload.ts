@@ -32,6 +32,7 @@ const api: ExplorerAPI = {
   reveal: path => ipcRenderer.invoke('reveal', path),
   openTerminal: path => ipcRenderer.invoke('open-terminal', path),
   share: paths => ipcRenderer.invoke('share', paths),
+  airDrop: paths => ipcRenderer.invoke('airdrop', paths),
   info: path => ipcRenderer.invoke('info', path),
   preview: path => ipcRenderer.invoke('preview', path),
   icon: (path, pixels) => ipcRenderer.invoke('icon', path, pixels),

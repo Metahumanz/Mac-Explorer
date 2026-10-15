@@ -59,16 +59,20 @@ try {
     await choose(mode);
     const row = page.getByRole('option', { name: '文件夹', exact: true });
     const checkbox = row.getByRole('checkbox');
+    const opacity = () => checkbox.evaluate(async el => {
+      await Promise.all(el.getAnimations().map(animation => animation.finished));
+      return getComputedStyle(el).opacity;
+    });
     await viewButton.focus(); await page.mouse.move(5, 5);
-    assert.equal(await checkbox.evaluate(el => getComputedStyle(el).opacity), '0');
+    assert.equal(await opacity(), '0');
     await row.hover();
-    assert.equal(await checkbox.evaluate(el => getComputedStyle(el).opacity), '1');
+    assert.equal(await opacity(), '1');
     await checkbox.check(); await viewButton.focus(); await page.mouse.move(5, 5);
-    assert.equal(await checkbox.evaluate(el => getComputedStyle(el).opacity), '1');
+    assert.equal(await opacity(), '1');
     await row.hover(); await checkbox.uncheck(); await viewButton.focus(); await page.mouse.move(5, 5);
-    assert.equal(await checkbox.evaluate(el => getComputedStyle(el).opacity), '0');
+    assert.equal(await opacity(), '0');
     await page.keyboard.press('Tab'); await checkbox.focus();
-    assert.equal(await checkbox.evaluate(el => getComputedStyle(el).opacity), '1');
+    assert.equal(await opacity(), '1');
   }
   console.log('PASS: checkbox hover, selected persistence, leave/uncheck hiding and keyboard focus in icon/detail views');
   await page.getByRole('checkbox', { name: '选择 预览.txt', exact: true }).check();

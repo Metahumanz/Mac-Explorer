@@ -1,7 +1,7 @@
 import { t as tr, getLocale, setLocale, type LanguageState, type LanguageMode } from '../shared/i18n';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
-  Archive, ArrowLeft, ArrowRight, ArrowUp, ArrowDownWideNarrow, Check, ChevronDown, ChevronRight,
+  Archive, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ArrowDownWideNarrow, Radar, Check, ChevronDown, ChevronRight,
   ClipboardPaste, Copy, Download, ExternalLink, FilePlus2, FileText, Film, FolderOpen,
   FolderPlus, HardDrive, Image, Info, Keyboard, LayoutGrid, List, Loader2,
   PanelLeft, Eye, FileType, SquareCheck, ChevronsDownUp,
@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { archiveFolderName, isArchive } from '../shared/archives';
+import { toolbarActions, defaultToolbar, normalizeToolbar, type ToolbarAction } from '../shared/toolbar';
 import type { AppSettings, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 
 const api = window.explorer;
@@ -24,6 +25,7 @@ function isTrashLocation(value: string) { return value === TRASH || value.starts
 type Tab = { id: string; location: string; history: string[]; index: number };
 type SortKey = 'name' | 'modified' | 'type' | 'size';
 type View = 'details' | 'icons' | 'list' | 'tiles' | 'content';
+type ToolbarTool = { name: string; label: string; icon: ReactNode; disabled: boolean; action: () => void };
 type MenuItem = { children?: MenuItem[]; radio?: boolean; label: string; icon?: ReactNode; action?: () => void; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean; divider?: boolean };
 type Popup = { x: number; y: number; items: MenuItem[]; quickActions?: MenuItem[] };
 type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'shortcuts' } | { kind: 'settings' };
@@ -93,6 +95,13 @@ function ToolButton({ label, children, onClick, disabled = false, active = false
 }
 
 export default function App() {
+  const [toolbar, setToolbar] = useState(() => normalizeToolbar(stored('toolbar', null)));
+  useEffect(() => { localStorage.setItem('toolbar', JSON.stringify(toolbar)); }, [toolbar]);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => { if (event.key === 'toolbar' || event.key === null) setToolbar(normalizeToolbar(stored('toolbar', null))); };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, []);
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [language, setLanguage] = useState<LanguageState>({ mode: 'zh-CN', locale: 'zh-CN' });
   function applyLanguage(state: LanguageState) {
@@ -959,6 +968,19 @@ export default function App() {
     </div>;
   }
 
+  const toolbarTools: Record<ToolbarAction, ToolbarTool> = {
+    cut: { name: tr('剪切'), label: tr(isMac ? '剪切 (⌘X)' : '剪切 (Ctrl+X)'), icon: <Scissors className="scissors-icon"/>, disabled: viewingTrash || !selected.size || !!operation, action: () => copy(true) },
+    copy: { name: tr('复制'), label: tr('复制 (⌘C)'), icon: <Copy className="copy-icon"/>, disabled: !selected.size || !!operation, action: () => copy(false) },
+    paste: { name: tr('粘贴'), label: tr('粘贴 (⌘V)'), icon: <ClipboardPaste/>, disabled: !writable || !clipboard.paths.length || !!operation, action: () => paste() },
+    rename: { name: tr('重命名'), label: tr('重命名 (Return)'), icon: <TextCursorInput className="rename-icon"/>, disabled: viewingTrash || !single || !!operation, action: () => rename() },
+    share: { name: tr('共享'), label: tr('共享'), icon: <Share2/>, disabled: !selected.size || !!operation, action: () => { void run(tr('共享文件…'), () => api.share([...selected])); } },
+    trash: { name: tr('移到回收站'), label: tr('移到回收站 (⌘⌫)'), icon: <Trash2/>, disabled: viewingTrash || !selected.size || !!operation, action: () => trash() },
+    airdrop: { name: tr('隔空投送'), label: tr('隔空投送'), icon: <Radar/>, disabled: viewingTrash || !selected.size || !!operation, action: () => { void run(tr('正在打开隔空投送…'), () => api.airDrop([...selected])); } },
+    terminal: { name: tr('在终端中打开'), label: tr('在终端中打开'), icon: <Terminal/>, disabled: isVirtual(location) || viewingTrash || !!operation, action: () => { void run(tr('正在打开终端…'), () => api.openTerminal(single?.isDirectory && !/\.app$/i.test(single.name) ? single.path : location)); } },
+    undo: { name: tr('撤销'), label: tr('撤销'), icon: <Undo2/>, disabled: viewingTrash || !undoLabel || !!operation, action: undo },
+    refresh: { name: tr('刷新'), label: tr('刷新 (F5)'), icon: <RotateCw/>, disabled: !!operation, action: refreshDirectory },
+  };
+
   return <div className={`explorer-shell ${compact ? 'compact-view' : ''}`} onPointerDown={() => { if (popup) setPopup(null); }} onDragEnd={() => { setPlaceMarker(null); clearTimeout(tabHover.current?.timer); tabHover.current = null; }}>
     <header className="tab-strip">
       <div className="traffic-light-space"/>
@@ -1012,14 +1034,10 @@ export default function App() {
 
     <div className="command-bar">
       <ToolButton label={tr('新建')} disabled={!writable || !!operation} className="text-tool" onClick={event => buttonMenu(event, [{ label: tr('文件夹'), icon: <FolderPlus/>, shortcut: '⇧⌘N', action: () => create(true) }, { label: tr('文本文档'), icon: <FilePlus2/>, action: () => create(false) }])}><Plus className="new-icon"/><span>{tr('新建')}</span><ChevronDown size={12}/></ToolButton>
-      <span className="toolbar-separator"/>
-      <ToolButton label={tr(isMac ? '剪切 (⌘X)' : '剪切 (Ctrl+X)')} disabled={viewingTrash || !selected.size || !!operation} onClick={() => copy(true)}><Scissors className="scissors-icon"/></ToolButton>
-      <ToolButton label={tr('复制 (⌘C)')} disabled={!selected.size || !!operation} onClick={() => copy(false)}><Copy className="copy-icon"/></ToolButton>
-      <ToolButton label={tr('粘贴 (⌘V)')} disabled={!writable || !clipboard.paths.length || !!operation} onClick={() => paste()}><ClipboardPaste/></ToolButton>
-      <ToolButton label={tr('重命名 (Return)')} disabled={viewingTrash || !single || !!operation} onClick={() => rename()}><TextCursorInput className="rename-icon"/></ToolButton>
-      <ToolButton label={tr('共享')} disabled={!selected.size} onClick={() => run(tr('共享文件…'), () => api.share([...selected]))}><Share2/></ToolButton>
-      <ToolButton label={tr('移到回收站 (⌘⌫)')} disabled={viewingTrash || !selected.size || !!operation} onClick={() => trash()}><Trash2/></ToolButton>
-      <span className="toolbar-separator"/>
+      {toolbar.length > 0 && <><span className="toolbar-separator"/><div className="command-tools" role="group" aria-label={tr('常用操作')}>{toolbar.map(id => {
+        const tool = toolbarTools[id];
+        return <ToolButton key={id} label={tool.label} disabled={tool.disabled} onClick={tool.action}>{tool.icon}</ToolButton>;
+      })}</div><span className="toolbar-separator"/></>}
       <ToolButton label={tr('排序')} className="text-tool" onClick={event => buttonMenu(event, sortMenu)}><ArrowDownWideNarrow/><span>{tr('排序')}</span><ChevronDown size={12}/></ToolButton>
       <ToolButton label={tr('查看')} className="text-tool" onClick={event => buttonMenu(event, viewMenu)}><List/><span>{tr('查看')}</span><ChevronDown size={12}/></ToolButton>
       <ToolButton label={tr('更多')} onClick={event => buttonMenu(event, [
@@ -1082,7 +1100,7 @@ export default function App() {
 
     {popup && <ContextMenu popup={popup} onClose={() => setPopup(null)}/>}
     {modal?.kind === 'archive' && <ArchiveDialog archive={modal.archive} onExtracted={() => setRefresh(v => v + 1)} onClose={() => setModal(null)}/>}
-    {modal?.kind === 'settings' && <SettingsDialog onClose={() => setModal(null)}/>}
+    {modal?.kind === 'settings' && <SettingsDialog toolbar={toolbar} onToolbarChange={setToolbar} tools={toolbarTools} onClose={() => setModal(null)}/>}
     {modal && modal.kind !== 'archive' && modal.kind !== 'settings' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
   </div>;
 }
@@ -1156,7 +1174,7 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
   </dialog>;
 }
 
-function SettingsDialog({ onClose }: { onClose: () => void }) {
+function SettingsDialog({ onClose, toolbar, onToolbarChange, tools }: { onClose: () => void; toolbar: ToolbarAction[]; onToolbarChange: (value: ToolbarAction[]) => void; tools: Record<ToolbarAction, ToolbarTool> }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [shortcut, setShortcut] = useState('');
@@ -1190,6 +1208,21 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       <p className="settings-note">{tr('请使用修饰键组合或 F1–F24 功能键。')}</p>
       <button className="primary-button" disabled={!settings || busy || shortcut === settings.wakeShortcut && !settings.wakeShortcutError} onClick={() => void save(() => api.setWakeShortcut(shortcut))}>{tr('保存快捷键')}</button>
     </section>
+    <section><details className="toolbar-settings"><summary>{tr('自定义工具栏')}</summary>
+      <p className="settings-note">{tr('勾选显示按钮，使用箭头调整顺序。更改自动保存。')}</p>
+      <div className="toolbar-options" role="group" aria-label={tr('工具栏按钮')}>
+        {[...toolbar, ...toolbarActions.filter(id => !toolbar.includes(id))].map(id => {
+          const index = toolbar.indexOf(id); const tool = tools[id];
+          const move = (offset: number) => { const next = [...toolbar]; [next[index], next[index + offset]] = [next[index + offset], next[index]]; onToolbarChange(next); };
+          return <div className="toolbar-option" key={id}>
+            <label><input type="checkbox" checked={index >= 0} disabled={busy} onChange={event => onToolbarChange(event.target.checked ? [...toolbar, id] : toolbar.filter(value => value !== id))}/>{tool.icon}<span>{tool.name}</span></label>
+            <button aria-label={tr('上移{0}', tool.name)} title={tr('上移{0}', tool.name)} disabled={busy || index <= 0} onClick={() => move(-1)}><ArrowUp size={15}/></button>
+            <button aria-label={tr('下移{0}', tool.name)} title={tr('下移{0}', tool.name)} disabled={busy || index < 0 || index === toolbar.length - 1} onClick={() => move(1)}><ArrowDown size={15}/></button>
+          </div>;
+        })}
+      </div>
+      <button className="secondary-button toolbar-reset" disabled={busy} onClick={() => onToolbarChange([...defaultToolbar])}>{tr('恢复默认工具栏')}</button>
+    </details></section>
     <section><h3>{tr('启动')}</h3><label className="settings-login"><input type="checkbox" checked={settings?.login || false} disabled={!settings?.loginAvailable || busy} onChange={event => void save(() => api.setLoginEnabled(event.target.checked))}/>{tr('登录时自动启动')}</label>{settings && !settings.loginAvailable && <p className="settings-note">{tr('登录项需要把应用装到“应用程序”文件夹')}</p>}</section>
     {error && <p className="modal-error" role="alert">{error}</p>}
     <div className="modal-actions"><button className="secondary-button" disabled={busy} onClick={onClose}>{tr('关闭')}</button></div>
