@@ -31,7 +31,7 @@ try {
  assert.equal((await state()).wakeShortcut,'');assert.equal(await registered('Command+E'),false);
  assert.equal(await page.evaluate(()=>typeof window.explorer.setDefaultApp),'undefined');
  await openSettings();
- assert.deepEqual(Object.keys(await state()).sort(),['operationShortcuts','versionControl','wakeShortcut','wakeShortcutError']);
+ assert.deepEqual(Object.keys(await state()).sort(),['folderViewDefaults','operationShortcuts','versionControl','wakeShortcut','wakeShortcutError']);
  assert.equal(await page.evaluate(()=>typeof window.explorer.setLoginEnabled),'undefined');
  assert.equal(await page.getByRole('checkbox',{name:'登录时自动启动',exact:true}).count(),0);
  assert.deepEqual(await app.evaluate(()=>{

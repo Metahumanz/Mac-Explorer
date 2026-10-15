@@ -77,8 +77,8 @@ try {
   await go(docs, '预览.txt'); await page.locator('.file-items.file-table').waitFor();
   console.log('PASS: large default ignores legacy globals; saved medium/custom sizes retained; directory/size isolation, history, tabs, keyboard, slider, wheel and reload persistence');
   await viewButton.click();
-  assert.deepEqual(await page.locator('.context-menu > div > button').evaluateAll(items => items.map(item => item.textContent.trim())), ['超大图标', '大图标', '中图标', '小图标', '列表', '详细信息', '平铺', '内容', '详细信息窗格', '预览窗格', '显示']);
-  await page.keyboard.press('End'); await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await page.locator('.context-menu > div > button').evaluateAll(items => items.map(item => item.textContent.trim())), ['超大图标', '大图标', '中图标', '小图标', '列表', '详细信息', '平铺', '内容', '详细信息窗格', '预览窗格', '显示', '应用到所有文件夹']);
+  await page.keyboard.press('End'); await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowRight');
   await page.getByRole('menu', { name: '显示', exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.textContent.trim() === '导航窗格');
   assert.deepEqual(await page.locator('.context-submenu button').evaluateAll(items => items.map(item => item.textContent.trim())), ['导航窗格', '紧凑视图', '项目复选框', '文件扩展名', '隐藏的项目']);

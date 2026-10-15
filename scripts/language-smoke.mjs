@@ -19,18 +19,20 @@ try {
     const settings = locale === 'en' ? 'Settings…' : locale === 'zh-TW' ? '設定…' : '设置…';
     await page.getByRole('button', { name: more, exact: true }).click();
     await page.getByRole('menuitem', { name: settings, exact: true }).click();
-    await page.getByRole('combobox').waitFor();
+    await languageSelect().waitFor();
   }
+  // The only combobox listing English is the interface language, whatever the current locale.
+  function languageSelect() { return page.getByRole('combobox').filter({ has: page.getByRole('option', { name: 'English', exact: true }) }); }
   async function language(choice) {
     await openSettings();
-    await page.getByRole('combobox').selectOption({ label: choice });
+    await languageSelect().selectOption({ label: choice });
     await page.waitForFunction(() => !document.querySelector('.settings-language select').disabled);
     await page.getByRole('dialog').locator('.modal-heading > button').click();
   }
   await page.waitForFunction(() => document.documentElement.lang === 'zh-TW');
   assert.deepEqual(await page.evaluate(async () => (await window.explorer.bootstrap()).language), { mode: 'system', locale: 'zh-TW' });
   await openSettings();
-  assert.equal(await page.getByRole('combobox').inputValue(), 'system');
+  assert.equal(await languageSelect().inputValue(), 'system');
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   await row().click();
   await language('English');
@@ -45,7 +47,7 @@ try {
   await page.getByRole('dialog').getByText('Move “中文文件 English.txt” to the Recycle Bin?', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await openSettings();
-  assert.equal(await page.getByRole('combobox').inputValue(), 'en');
+  assert.equal(await languageSelect().inputValue(), 'en');
   await page.screenshot({ path: 'artifacts/language-english-fixture.png' });
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   await app.close();
@@ -61,7 +63,7 @@ try {
   await language('跟随系统');
   await page.waitForFunction(() => document.documentElement.lang === 'zh-TW');
   await openSettings();
-  assert.equal(await page.getByRole('combobox').inputValue(), 'system');
+  assert.equal(await languageSelect().inputValue(), 'system');
   await page.evaluate(() => window.explorer.setTheme('dark'));
   await page.screenshot({ path: 'artifacts/language-traditional-fixture.png' });
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');

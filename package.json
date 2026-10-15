@@ -53,7 +53,8 @@
     "test:operation-shortcuts": "npm run build && node scripts/operation-shortcuts-smoke.mjs",
     "test:file-viewer": "npm run build && node scripts/file-viewer-smoke.mjs",
     "test:updates": "npm run build && node scripts/about-update-smoke.mjs",
-    "test:updater-asar": "npm run build && node scripts/updater-asar-smoke.mjs"
+    "test:updater-asar": "npm run build && node scripts/updater-asar-smoke.mjs",
+    "test:folder-view": "npm run build && node scripts/folder-view-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

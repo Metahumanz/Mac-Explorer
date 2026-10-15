@@ -609,5 +609,15 @@
   "连接“{0}”": "Connect to “{0}”",
   "未发现共享设备": "No shared devices found",
   "可输入服务器地址连接。请确认设备位于同一局域网，并已开启文件共享。": "You can connect using a server address. Check that the device is on the same local network and has file sharing enabled.",
-  "正在连接服务器…": "Connecting to the server…"
+  "正在连接服务器…": "Connecting to the server…",
+  "应用到所有文件夹": "Apply to all folders",
+  "文件夹视图": "Folder views",
+  "默认布局": "Default layout",
+  "默认排序": "Default sort",
+  "排序方向": "Sort direction",
+  "图标（{0} 像素）": "Icons ({0} px)",
+  "在文件夹中更改布局或排序只影响该文件夹，其余文件夹使用这里的默认值。": "Changing the layout or sort inside a folder affects only that folder; other folders use these defaults.",
+  "重置所有文件夹": "Reset all folders",
+  "所有文件夹已跟随默认值。": "All folders now use the defaults.",
+  "无效的视图设置。": "Invalid view settings."
 }

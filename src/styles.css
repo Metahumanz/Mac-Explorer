@@ -459,6 +459,10 @@ button, .tab, .file-row, .archive-row {
 .settings-language { display: flex; align-items: center; gap: 20px; }
 .settings-language select { flex: 1; min-width: 0; max-width: 250px; height: 32px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; font: inherit; color: var(--text); background: var(--surface); }
 .settings-language select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.settings-fields { display: grid; grid-template-columns: max-content minmax(0, 250px); align-items: center; gap: 12px 20px; margin-bottom: 12px; }
+.settings-fields .settings-language { display: contents; }
+.settings-fields .settings-language select { width: 100%; max-width: none; }
+.settings-reset-row { display: flex; align-items: center; gap: 12px; }
 .settings-shortcuts { margin-bottom: 22px; }
 .operation-shortcuts { margin: 14px 0; border-top: 1px solid var(--border); }
 .operation-shortcut { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(140px, 1.4fr) 56px; align-items: center; gap: 8px; min-height: 44px; border-bottom: 1px solid var(--border); }
