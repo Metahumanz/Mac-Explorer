@@ -202,7 +202,7 @@ function validWakeShortcut(value: unknown): value is string {
   if (!value) return true;
   const parts = value.split('+'); const key = parts.pop()!;
   const modifiers = ['Command', 'Control', 'Alt', 'Shift'];
-  const keys = ['Space', 'Tab', 'Enter', 'Escape', 'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'Up', 'Down', 'Left', 'Right', 'Plus', 'Minus', 'Comma', 'Period', '[', ']', ';', "'", '`', String.fromCharCode(92), '/'];
+  const keys = ['Space', 'Tab', 'Enter', 'Escape', 'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'Up', 'Down', 'Left', 'Right', 'Plus', '-', ',', '.', '[', ']', ';', "'", '`', String.fromCharCode(92), '/'];
   if (new Set(parts).size !== parts.length || !parts.every(part => modifiers.includes(part))) return false;
   if (!/^(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4]))$/.test(key) && !keys.includes(key)) return false;
   return parts.some(part => part !== 'Shift') || /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(key);

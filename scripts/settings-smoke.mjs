@@ -38,6 +38,15 @@ try {
  await page.waitForFunction(()=>window.explorer.settings().then(s=>s.wakeShortcut==='Command+Alt+K'));
  assert.equal(await registered(chosen),true);
  assert.equal(JSON.parse(await fs.readFile(path.join(root,'.app-data/shortcuts.json'),'utf8')).wakeShortcut,chosen);
+ for(const key of [',','.','-']) {
+  await page.getByRole('textbox',{name:'唤醒快捷键',exact:true}).press('Meta+Alt+'+key);
+  await page.getByRole('button',{name:'保存快捷键',exact:true}).click();
+  await page.waitForFunction(key=>window.explorer.settings().then(s=>s.wakeShortcut==='Command+Alt+'+key),key);
+  assert.equal(await registered('Command+Alt+'+key),true);
+ }
+ await page.getByRole('textbox',{name:'唤醒快捷键',exact:true}).press('Meta+Alt+k');
+ await page.getByRole('button',{name:'保存快捷键',exact:true}).click();
+ await page.waitForFunction(()=>window.explorer.settings().then(s=>s.wakeShortcut==='Command+Alt+K'));
  await page.getByRole('textbox',{name:'唤醒快捷键',exact:true}).press('Meta+Alt+u');
  await app.evaluate(()=>{globalThis.shortcutConflict='Command+Alt+U';});
  await page.getByRole('button',{name:'保存快捷键',exact:true}).click();

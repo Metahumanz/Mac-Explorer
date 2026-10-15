@@ -1183,7 +1183,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
         if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { event.currentTarget.blur(); return; }
         if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return;
         const code = event.code;
-        const key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit[0-9]$/.test(code) ? code.slice(5) : ({ ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Equal: 'Plus', NumpadAdd: 'Plus', Minus: 'Minus', NumpadSubtract: 'Minus', Comma: 'Comma', Period: 'Period', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'", Backquote: '`', Backslash: String.fromCharCode(92), Slash: '/'  } as Record<string, string>)[code] || code;
+        const key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit[0-9]$/.test(code) ? code.slice(5) : ({ ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Equal: 'Plus', NumpadAdd: 'Plus', Minus: '-', NumpadSubtract: '-', Comma: ',', Period: '.', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'", Backquote: '`', Backslash: String.fromCharCode(92), Slash: '/'  } as Record<string, string>)[code] || code;
         setShortcut([...event.metaKey ? ['Command'] : [], ...event.ctrlKey ? ['Control'] : [], ...event.altKey ? ['Alt'] : [], ...event.shiftKey ? ['Shift'] : [], key].join('+'));
         setError('');
       }}/><button className="secondary-button" disabled={!shortcut || busy} onClick={() => setShortcut('')}>{tr('清除')}</button></div>
