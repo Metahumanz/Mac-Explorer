@@ -35,6 +35,15 @@ try {
   await press('back'); await unchanged('B');
   await page.keyboard.press('Escape');
   await press('back'); await at('A');
+  // An inline editor opened after pressing a side button must still block its release.
+  const box = await content.boundingBox();
+  const held = { button: 'back', x: box.x + 20, y: box.y + 20, clickCount: 1 };
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...held });
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.flatMap(item => item.submenu?.items || []).find(item => item.accelerator === 'Command+Shift+N').click());
+  await page.getByLabel('名称', { exact: true }).waitFor();
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...held });
+  await unchanged('A');
+  await page.getByLabel('名称', { exact: true }).press('Escape');
   console.log('PASS: mouse back/forward buttons, history bounds, address and menu guards. Physical mouse buttons require manual verification.');
 } finally {
   await app.close(); await fs.rm(root, { recursive: true, force: true });

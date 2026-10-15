@@ -3,7 +3,7 @@ import { t as tr } from '../shared/i18n';
 import { app, BrowserWindow, globalShortcut, ipcMain, shell, clipboard, ClipboardItem, dialog, Menu, nativeTheme, ShareMenu, screen, type Rectangle } from 'electron';
 import fs from 'node:fs/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { watch, type FSWatcher } from 'node:fs';
+import { watch, mkdirSync, writeFileSync, renameSync, type FSWatcher } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -15,12 +15,12 @@ import { isArchive } from '../shared/archives';
 import { FileHistory } from './history';
 import { FileIcons } from './icons';
 import { listTrash, TrashOrigins, snapshotTrash, emptyTrash } from './trash';
-import type { TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 
 let currentLanguage = 'zh-CN';
 // Preserve the requesting window across awaits, even when focus changes.
 const requestWindow = new AsyncLocalStorage<BrowserWindow>();
-const windows = new Map<BrowserWindow, { initialTab?: TabState; watcher?: FSWatcher; watchTimer?: NodeJS.Timeout; searchController?: AbortController; ready?: () => void; rendererReady?: boolean; pendingTabs?: number }>();
+const windows = new Map<BrowserWindow, { initialTab?: TabState; watcher?: FSWatcher; watchTimer?: NodeJS.Timeout; searchController?: AbortController; ready?: () => void; rendererReady?: boolean; pendingSettings?: boolean; pendingTabs?: number }>();
 let lastActiveWindow: BrowserWindow | undefined;
 const currentWindow = () => requestWindow.getStore() || BrowserWindow.getFocusedWindow() || lastActiveWindow || windows.keys().next().value;
 const fileIcons = new FileIcons(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/file-icon'));
@@ -192,64 +192,64 @@ async function moveToSystemTrash(input: string) {
   catch { throw new Error(tr('文件已移入回收站，但无法保存原位置。请在回收站使用“还原到…”恢复。')); }
 }
 ipc('take-open-paths', () => openPaths.splice(0));
-// ---- 默认应用 / 接管访达 ----
-// macOS 不允许设置「文件夹」的默认打开方式（LSSetDefaultRoleHandlerForContentType 已失效，
-// NSWorkspace 按 UTI 设置一律失败），所以能真正接管的只有这几项：登录时启动、桌面图标、
-// 以及具体的文件类型。前两项让日常使用就是它，第三项是真的改系统默认。
-const HANDLERS = {
-  archive: { type: 'public.zip-archive', extension: 'zip', system: '/System/Applications/Utilities/Archive Utility.app' },
-  pdf: { type: 'com.adobe.pdf', extension: 'pdf', system: '/System/Applications/Preview.app' },
-  image: { type: 'public.png', extension: 'png', system: '/System/Applications/Preview.app' },
-  text: { type: 'public.plain-text', extension: 'txt', system: '/System/Applications/TextEdit.app' },
-} as const;
-type HandlerKind = keyof typeof HANDLERS;
-type DefaultAppKey = 'login' | 'desktop' | HandlerKind;
-interface DefaultAppState { login: boolean; desktop: boolean; handlers: Record<HandlerKind, string | null>; installed: boolean; self: string }
-let defaults: { appURL(): string; bundleID(): string; loginEnabled(): boolean; setLogin(value: boolean): boolean; defaultHandler(type: string): string | null; setDefaultForFile(application: string, file: string): boolean } | undefined;
-const isHandlerKind = (value: unknown): value is HandlerKind => typeof value === 'string' && value in HANDLERS;
-const isDefaultAppKey = (value: unknown): value is DefaultAppKey => value === 'login' || value === 'desktop' || isHandlerKind(value);
-async function finderPreference(name: string) {
-  // Missing keys mean Finder still draws the desktop.
-  try { return (await promisify(execFile)('/usr/bin/defaults', ['read', 'com.apple.finder', name])).stdout.trim() !== '0'; }
-  catch { return true; }
+let loginItem: { appURL(): string; bundleID(): string; loginEnabled(): boolean; setLogin(value: boolean): boolean } | undefined;
+let wakeShortcut = '';
+let wakeShortcutError = '';
+let savingShortcut = false;
+const shortcutFile = () => path.join(app.getPath('userData'), 'shortcuts.json');
+function validWakeShortcut(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 96) return false;
+  if (!value) return true;
+  const parts = value.split('+'); const key = parts.pop()!;
+  const modifiers = ['Command', 'Control', 'Alt', 'Shift'];
+  const keys = ['Space', 'Tab', 'Enter', 'Escape', 'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'Up', 'Down', 'Left', 'Right', 'Plus', 'Minus', 'Comma', 'Period', '[', ']', ';', "'", '`', String.fromCharCode(92), '/'];
+  if (new Set(parts).size !== parts.length || !parts.every(part => modifiers.includes(part))) return false;
+  if (!/^(?:[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4]))$/.test(key) && !keys.includes(key)) return false;
+  return parts.some(part => part !== 'Shift') || /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(key);
 }
-async function defaultAppState(): Promise<DefaultAppState> {
-  const handlers = {} as Record<HandlerKind, string | null>;
-  for (const [kind, handler] of Object.entries(HANDLERS) as [HandlerKind, typeof HANDLERS[HandlerKind]][]) {
-    handlers[kind] = defaults?.defaultHandler(handler.type) ?? null;
-  }
-  const location = defaults?.appURL() ?? '';
+function appSettings(): AppSettings {
+  const location = loginItem?.appURL() || '';
   return {
-    login: defaults?.loginEnabled() ?? false,
-    desktop: !(await finderPreference('CreateDesktop')),
-    handlers,
-    // Login items only register for an app installed in Applications.
-    installed: /^\/Applications\/.+\.app$/.test(location),
-    self: defaults?.bundleID() ?? '',
+    wakeShortcut, wakeShortcutError,
+    login: loginItem?.loginEnabled() || false,
+    loginAvailable: loginItem?.bundleID() === 'local.macexplorer.desktop' && [path.join(os.homedir(), 'Applications'), '/Applications'].some(directory => path.dirname(location) === directory && location.endsWith('.app')),
   };
 }
-ipc('default-app-status', () => defaultAppState());
-ipc('default-app-set', async (key: unknown, value: unknown) => {
-  if (!isDefaultAppKey(key) || typeof value !== 'boolean') throw new Error(tr('无效的默认应用设置。'));
-  if (key === 'login') {
-    if (!defaults) throw new Error(tr('无法设置登录项。'));
-    defaults.setLogin(value);
-  } else if (key === 'desktop') {
-    await promisify(execFile)('/usr/bin/defaults', ['write', 'com.apple.finder', 'CreateDesktop', '-bool', value ? 'false' : 'true']);
-    // Finder only redraws the desktop after it restarts.
-    await promisify(execFile)('/usr/bin/killall', ['Finder']).catch(() => undefined);
-  } else {
-    const handler = HANDLERS[key];
-    const file = path.join(os.tmpdir(), `explorer-default-${process.pid}.${handler.extension}`);
-    await fs.writeFile(file, 'Mac Explorer');
-    try {
-      // LaunchServices records the election for the file's type, so a sample file is enough.
-      defaults?.setDefaultForFile(value ? '' : handler.system, file);
-    } finally {
-      await fs.rm(file, { force: true });
+ipc('settings', appSettings);
+ipc('capture-shortcut', (active: unknown) => {
+  if (typeof active !== 'boolean') throw new Error(tr('无效的快捷键设置。'));
+  currentWindow()!.webContents.setIgnoreMenuShortcuts(active);
+});
+ipc('set-wake-shortcut', async (value: unknown) => {
+  if (!validWakeShortcut(value)) throw new Error(tr('请使用修饰键组合或 F1–F24 功能键。'));
+  if (savingShortcut) throw new Error(tr('设置正在保存，请稍后重试。'));
+  savingShortcut = true;
+  const alreadyRegistered = !!value && globalShortcut.isRegistered(value) && value === wakeShortcut;
+  let registered = false;
+  try {
+    if (value && !alreadyRegistered) {
+      registered = globalShortcut.register(value, summon);
+      if (!registered) throw new Error(tr('快捷键已被占用，请使用其他组合。'));
     }
-  }
-  return defaultAppState();
+    const file = shortcutFile();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file + '.tmp', JSON.stringify({ wakeShortcut: value }), 'utf8');
+    await fs.rename(file + '.tmp', file);
+    if (wakeShortcut && wakeShortcut !== value) globalShortcut.unregister(wakeShortcut);
+    wakeShortcut = value; wakeShortcutError = '';
+    return appSettings();
+  } catch (error) {
+    if (registered) globalShortcut.unregister(value);
+    throw error;
+  } finally { savingShortcut = false; }
+});
+ipc('set-login-enabled', (value: unknown) => {
+  if (typeof value !== 'boolean') throw new Error(tr('无效的登录项设置。'));
+  if (!appSettings().loginAvailable || !loginItem) throw new Error(tr('登录项需要把应用装到“应用程序”文件夹'));
+  loginItem.setLogin(value);
+  const state = appSettings();
+  if (state.login !== value) throw new Error(tr('登录项尚未启用，请在系统设置的登录项中批准。'));
+  return state;
 });
 function isThemeMode(value: unknown): value is ThemeMode { return value === 'light' || value === 'dark' || value === 'system'; }
 ipc('set-theme', async (mode: unknown) => {
@@ -454,6 +454,7 @@ ipc('window-ready', () => {
   state.rendererReady = true;
   for (let remaining = state.pendingTabs || 0; remaining > 0; remaining--) owner.webContents.send('action', 'new-tab');
   state.pendingTabs = 0;
+  if (state.pendingSettings) { state.pendingSettings = false; owner.webContents.send('action', 'settings'); }
   state.ready?.();
 });
 ipc('detach-tab', async (input: TabState, point: { x: number; y: number }, single: boolean) => {
@@ -484,7 +485,7 @@ function usableBounds(saved: Record<string, unknown>): Rectangle | undefined {
   if (!values.every(value => typeof value === 'number' && Number.isFinite(value))) return undefined;
   const [x, y, width, height] = values as number[];
   const bounds = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
-  if (bounds.width < 320 || bounds.height < 240) return undefined;
+  if (bounds.width < 800 || bounds.height < 530) return undefined;
   // Discard geometry that no longer touches a display: an unplugged monitor would otherwise
   // reopen every window off screen, with no visible way back.
   return screen.getAllDisplays().some(display => visibleEnough(display.workArea, bounds)) ? bounds : undefined;
@@ -495,16 +496,16 @@ async function loadWindowBounds() {
     return usableBounds(saved || {});
   } catch { /* Open at the default size until a window records its geometry. */ }
 }
-async function saveWindowBounds(window: BrowserWindow) {
+function saveWindowBounds(window: BrowserWindow) {
   // Minimized and full screen windows report geometry that must not become the next default.
   if (window.isDestroyed() || window.isMinimized() || window.isFullScreen()) return;
-  const bounds = window.getBounds();
+  const bounds = window.isMaximized() ? window.getNormalBounds() : window.getBounds();
   savedWindowBounds = bounds;
   try {
     const file = windowStateFile();
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file + '.tmp', JSON.stringify(bounds), 'utf8');
-    await fs.rename(file + '.tmp', file);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file + '.tmp', JSON.stringify(bounds), 'utf8');
+    renameSync(file + '.tmp', file);
   } catch { /* Keep the last written geometry when the preference cannot be saved. */ }
 }
 function rememberBounds(window: BrowserWindow) {
@@ -543,7 +544,7 @@ function createWindow(initialTab?: TabState, position?: { x: number; y: number }
   else window.loadFile(path.join(__dirname, '../dist/index.html'));
   window.on('close', event => { if (extracting) event.preventDefault(); });
   // Flush on close so quitting right after a drag still keeps the final geometry.
-  window.on('close', () => { void saveWindowBounds(window); });
+  window.on('close', () => { clearTimeout(rememberTimer); saveWindowBounds(window); });
   // Resizing and dragging both report live and settled events; programmatic moves can omit the
   // settled ones, so listen to every variant and let the throttle collapse the duplicates.
   window.on('resize', () => rememberBounds(window));
@@ -554,9 +555,6 @@ function createWindow(initialTab?: TabState, position?: { x: number; y: number }
   window.on('closed', () => { const state = windows.get(window); state?.watcher?.close(); state?.searchController?.abort(); clearTimeout(state?.watchTimer); windows.delete(window); if (lastActiveWindow === window) lastActiveWindow = undefined; });
   return window;
 }
-// Command+E raises the app from anywhere: it opens a window when none exists, restores a
-// minimized one, and otherwise brings the most recent window to the front.
-const SUMMON_ACCELERATOR = 'Command+E';
 function summon() {
   const window = currentWindow();
   if (!window || window.isDestroyed()) createWindow();
@@ -593,7 +591,14 @@ function buildMenu() {
     } },
   ]));
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'Mac Explorer', submenu: [{ role: 'about', label: tr('关于 Mac Explorer') }, { type: 'separator' }, { role: 'hide', label: tr('隐藏') }, { role: 'quit', label: tr('退出') }] },
+    { label: 'Mac Explorer', submenu: [{ role: 'about', label: tr('关于 Mac Explorer') }, { label: tr('设置…'), accelerator: 'Command+,', click: () => {
+      const owner = currentWindow() || createWindow();
+      if (owner.isMinimized()) owner.restore();
+      owner.show(); owner.focus();
+      const state = windows.get(owner)!;
+      if (state.rendererReady) owner.webContents.send('action', 'settings');
+      else state.pendingSettings = true;
+    } }, { type: 'separator' }, { role: 'hide', label: tr('隐藏') }, { role: 'quit', label: tr('退出') }] },
     { label: tr('文件'), submenu: [{ label: tr('新建标签页'), accelerator: 'Command+T', click: action('new-tab') }, { label: tr('打开文件夹…'), click: action('choose-folder') }, { label: tr('新建文件夹'), accelerator: 'Command+Shift+N', click: action('new-folder') }, { type: 'separator' }, { label: tr('关闭标签页'), accelerator: 'Command+W', click: action('close-tab') }, { role: 'close', label: tr('关闭窗口'), accelerator: 'Command+Shift+W' }] },
     { label: tr('编辑'), submenu: [{ label: tr('撤销'), accelerator: 'Command+Z', click: action('undo') }, { type: 'separator' }, { label: tr('剪切'), accelerator: 'Command+X', click: action('cut') }, { label: tr('复制'), accelerator: 'Command+C', click: action('copy') }, { label: tr('粘贴'), accelerator: 'Command+V', click: action('paste') }, { label: tr('将项目移到这里'), accelerator: 'Command+Alt+V', click: action('move-here') }, { label: tr('全选'), accelerator: 'Command+A', click: action('select-all') }] },
     { label: tr('显示'), submenu: [{ label: tr('刷新'), click: action('refresh') }, { label: tr('显示隐藏的项目'), click: action('hidden') }, { role: 'togglefullscreen', label: tr('进入全屏') }] },
@@ -621,12 +626,17 @@ app.whenReady().then(async () => {
       if (window && !window.isDestroyed()) window.webContents.send('scroll-gesture-start', timestamp);
     });
     try {
-      defaults = require(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/defaults.node')) as typeof defaults;
-    } catch { /* The default-app menu simply reports nothing when the addon is missing. */ }
+      loginItem = require(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/defaults.node')) as typeof loginItem;
+    } catch { /* Disable the login option when the native addon is unavailable. */ }
   }
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
-  // Another application may already own the shortcut; then the raise simply stays unavailable.
-  globalShortcut.register(SUMMON_ACCELERATOR, summon);
+  try {
+    const saved = JSON.parse(await fs.readFile(shortcutFile(), 'utf8'));
+    if (validWakeShortcut(saved.wakeShortcut) && saved.wakeShortcut) {
+      wakeShortcut = saved.wakeShortcut;
+      if (!globalShortcut.register(wakeShortcut, summon)) wakeShortcutError = tr('快捷键已被占用，请使用其他组合。');
+    }
+  } catch { /* Global wake stays disabled until the user configures it. */ }
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || testRoot) app.quit(); });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); fileIcons.close(); });

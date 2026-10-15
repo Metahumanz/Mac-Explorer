@@ -56,6 +56,15 @@ try {
   // Restored windows land where the last one was; macOS may nudge them by a pixel or two.
   for (const key of ['x', 'y']) assert.ok(Math.abs(reopened[key] - saved[key]) <= 8, `窗口${key}应当沿用上次的位置：${JSON.stringify(reopened)} vs ${JSON.stringify(saved)}`);
   assert.deepEqual(errors, []);
+  await quit();
+  for (const invalid of [{x:999999,y:999999,width:900,height:600}, {x:0,y:0,width:20,height:20}, null]) {
+    await fs.writeFile(preference, JSON.stringify(invalid));
+    await launch();
+    const restored = await current();
+    assert.ok(restored.width >= 800 && restored.height >= 530);
+    assert.ok(restored.x < 999999 && restored.y < 999999);
+    await quit();
+  }
   console.log('Window state smoke passed:', JSON.stringify(saved), '->', JSON.stringify(reopened));
 } finally {
   try { await app?.close(); } catch { /* Already closed. */ }

@@ -50,6 +50,26 @@ try {
   assert.deepEqual(await order(), reordered);
   await more('固定到快速访问');
   assert.deepEqual(await order(), [...reordered, 'A']);
+  const beforeInvalid = await order();
+  for (const payload of ['null', '{}', '[null]', '["relative"]']) {
+    const data = await page.evaluateHandle(payload => { const data = new DataTransfer(); data.setData('application/x-explorer-folders', '1'); data.setData('application/x-explorer-paths', payload); return data; }, payload);
+    const target = place(first); const box = await target.boundingBox();
+    await target.dispatchEvent('drop', { dataTransfer: data, clientY: box.y + 1 });
+    await data.dispose();
+  }
+  assert.deepEqual(await order(), beforeInvalid);
+  // A forged folder marker may not pin an actual file or application bundle.
+  await fs.writeFile(path.join(root, 'Documents/forged.txt'), 'preserved');
+  await fs.mkdir(path.join(root, 'Documents/Fake.APP'));
+  for (const name of ['forged.txt', 'Fake.APP']) {
+    const data = await page.evaluateHandle(input => { const data = new DataTransfer(); data.setData('application/x-explorer-folders', '1'); data.setData('application/x-explorer-paths', JSON.stringify([input])); return data; }, path.join(root, 'Documents', name));
+    const target = place(first); const box = await target.boundingBox();
+    await target.dispatchEvent('drop', { dataTransfer: data, clientY: box.y + 1 });
+    await data.dispose();
+  }
+  await page.waitForTimeout(100);
+  assert.deepEqual(await order(), beforeInvalid);
+  assert.equal(await fs.readFile(path.join(root, 'Documents/forged.txt'), 'utf8'), 'preserved');
   console.log('PASS: Quick Access reorder before/after, folder pinning at row edges, centre drop moves, files not pinned, order persists, More menu pin toggle.');
 } finally {
   await app.close(); await fs.rm(root, { recursive: true, force: true });

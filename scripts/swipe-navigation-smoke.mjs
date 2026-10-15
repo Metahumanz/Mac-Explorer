@@ -13,6 +13,8 @@ for (const folder of ['Documents/A/B', 'Desktop', 'Downloads']) await fs.mkdir(p
 const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { executablePath: process.env.EXPLORER_APP_PATH, args: [] } : { args: [process.cwd()] }), env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_HIDDEN: '1' } });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
+  // Native gesture notifications are routed to the key window.
+  await app.evaluate(({ app, BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.show(); window.focus(); app.focus({ steal: true }); });
   await page.evaluate(() => { window.gestureStarts = 0; window.explorer.onScrollGestureStart(() => window.gestureStarts++); });
   const content = page.locator('.file-content');
   const at = async name => page.locator(`.file-content[aria-label="${name}"][aria-busy="false"]`).waitFor();
@@ -72,8 +74,7 @@ try {
   await pause(); await wheel(-150); await unchanged('B');
   await page.getByRole('textbox', { name: '文件夹地址', exact: true }).press('Escape');
   await content.focus();
-  await page.getByRole('button', { name: '新建', exact: true }).click();
-  await page.getByRole('menuitem', { name: /文件夹/ }).click();
+  await page.keyboard.press('Meta+Shift+n');
   await page.getByLabel('名称', { exact: true }).waitFor();
   await pause(); await wheel(-150); await unchanged('B');
   await page.getByLabel('名称', { exact: true }).press('Escape');

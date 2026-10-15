@@ -13,7 +13,7 @@ if (!fs.existsSync(gestureBinary) || Math.max(fs.statSync(gestureSource).mtimeMs
 const defaultsSource = 'electron/native/Defaults.mm';
 const defaultsBinary = 'dist-electron/native/defaults.node';
 if (!fs.existsSync(defaultsBinary) || Math.max(fs.statSync(defaultsSource).mtimeMs, fs.statSync('scripts/build-electron.mjs').mtimeMs) > fs.statSync(defaultsBinary).mtimeMs) {
-  execFileSync('xcrun', ['clang++', '-target', 'arm64-apple-macos13.0', '-std=c++17', '-fobjc-arc', '-O2', '-bundle', '-undefined', 'dynamic_lookup', '-framework', 'AppKit', '-framework', 'CoreServices', '-framework', 'ServiceManagement', '-DNAPI_VERSION=8', '-I', nodeAPIHeaders.include_dir, defaultsSource, '-o', defaultsBinary], { stdio: 'inherit' });
+  execFileSync('xcrun', ['clang++', '-target', 'arm64-apple-macos13.0', '-std=c++17', '-fobjc-arc', '-O2', '-bundle', '-undefined', 'dynamic_lookup', '-framework', 'AppKit', '-framework', 'ServiceManagement', '-DNAPI_VERSION=8', '-I', nodeAPIHeaders.include_dir, defaultsSource, '-o', defaultsBinary], { stdio: 'inherit' });
   execFileSync('codesign', ['--force', '--sign', '-', defaultsBinary], { stdio: 'inherit' });
 }
 const source = 'electron/native/FileIcon.swift';

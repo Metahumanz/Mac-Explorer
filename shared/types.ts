@@ -16,15 +16,7 @@ export interface OperationResult { succeeded: string[]; errors: { path: string; 
 export type ClipboardInfo = { paths: string[]; cut: boolean };
 export type Preview = { kind: 'image' | 'text' | 'none'; content: string; truncated?: boolean };
 export type ExtractMode = 'choose' | 'here' | 'folder';
-// File types whose default handler can be switched: macOS refuses folder elections.
-export type HandlerKind = 'archive' | 'pdf' | 'image' | 'text';
-export type DefaultAppKey = 'login' | 'desktop' | HandlerKind;
-export interface DefaultAppState {
-  login: boolean; desktop: boolean;
-  handlers: Record<HandlerKind, string | null>;
-  installed: boolean;
-  self: string;
-}
+export interface AppSettings { wakeShortcut: string; wakeShortcutError: string; login: boolean; loginAvailable: boolean }
 export interface ArchivePreview { path: string; name: string; entries: { path: string; directory: boolean; size: number }[] }
 export interface ExplorerAPI {
   bootstrap(): Promise<Bootstrap>;
@@ -41,8 +33,10 @@ export interface ExplorerAPI {
   takeOpenPaths(): Promise<string[]>;
   onOpenPaths(callback: () => void): () => void;
   setTheme(mode: ThemeMode): Promise<ThemeMode>;
-  defaultAppStatus(): Promise<DefaultAppState>;
-  setDefaultApp(key: DefaultAppKey, value: boolean): Promise<DefaultAppState>;
+  settings(): Promise<AppSettings>;
+  captureShortcut(active: boolean): Promise<void>;
+  setWakeShortcut(value: string): Promise<AppSettings>;
+  setLoginEnabled(value: boolean): Promise<AppSettings>;
   list(path: string, refreshIcons?: boolean): Promise<Listing>;
   search(path: string, query: string, hidden: boolean): Promise<SearchResult>;
   cancelSearch(): Promise<void>;

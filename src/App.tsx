@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { archiveFolderName, isArchive } from '../shared/archives';
-import type { DefaultAppKey, DefaultAppState, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, HandlerKind, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import type { AppSettings, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 
 const api = window.explorer;
 const isMac = /Mac/i.test(navigator.platform);
@@ -26,7 +26,7 @@ type SortKey = 'name' | 'modified' | 'type' | 'size';
 type View = 'details' | 'icons' | 'list' | 'tiles' | 'content';
 type MenuItem = { children?: MenuItem[]; radio?: boolean; label: string; icon?: ReactNode; action?: () => void; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean; divider?: boolean };
 type Popup = { x: number; y: number; items: MenuItem[]; quickActions?: MenuItem[] };
-type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'shortcuts' };
+type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'shortcuts' } | { kind: 'settings' };
 const makeTab = (location = ''): Tab => ({ id: crypto.randomUUID(), location, history: [location], index: 0 });
 const isPlaceDrag = (event: React.DragEvent) => event.dataTransfer.types.includes(PLACE_TYPE);
 function stored<T,>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
@@ -93,15 +93,8 @@ function ToolButton({ label, children, onClick, disabled = false, active = false
 }
 
 export default function App() {
-  // Built per render so the labels follow the active locale.
-  const handlerLabels: Record<HandlerKind, string> = { archive: tr('ZIP 压缩文件'), pdf: tr('PDF 文档'), image: tr('PNG 图像'), text: tr('文本文档') };
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [language, setLanguage] = useState<LanguageState>({ mode: 'zh-CN', locale: 'zh-CN' });
-  const [defaultApp, setDefaultApp] = useState<DefaultAppState | null>(null);
-  useEffect(() => { api.defaultAppStatus().then(setDefaultApp).catch(() => setDefaultApp(null)); }, []);
-  async function changeDefaultApp(key: DefaultAppKey, value: boolean) {
-    await run(tr('正在更新默认应用设置…'), async () => setDefaultApp(await api.setDefaultApp(key, value)));
-  }
   function applyLanguage(state: LanguageState) {
     setLocale(state.locale); setLanguage(state);
     document.documentElement.lang = state.locale; document.title = tr('文件资源管理器');
@@ -304,7 +297,7 @@ export default function App() {
   const chosen = visible.filter(e => selected.has(e.path));
   const single = chosen.length === 1 ? chosen[0] : null;
   // Like Windows: the selected folder, or the current folder when nothing is selected.
-  const pinTarget = selected.size ? (single?.isDirectory && !single.name.endsWith('.app') && !viewingTrash ? single.path : null) : location === TRASH || !isVirtual(location) ? location : null;
+  const pinTarget = selected.size ? (single?.isDirectory && !/\.app$/i.test(single.name) && !viewingTrash ? single.path : null) : location === TRASH || !isVirtual(location) ? location : null;
   const writable = !isVirtual(location) && !submittedQuery;
   useEffect(() => {
     let live = true; setPreview(null);
@@ -472,7 +465,7 @@ export default function App() {
     });
   }
   async function submitModal(skipTrashConfirmation = false) {
-    if (!modal || (modal.kind === 'shortcuts' || modal.kind === 'archive') || operationLock.current) return;
+    if (!modal || (modal.kind === 'shortcuts' || modal.kind === 'archive' || modal.kind === 'settings') || operationLock.current) return;
     operationLock.current = true; setOperation(tr('正在处理…')); setModalError('');
     try {
       if (modal.kind === 'trash') {
@@ -503,7 +496,7 @@ export default function App() {
     if (!reorder && !event.dataTransfer.types.includes(FOLDERS_TYPE)) return null;
     const row = event.currentTarget.getBoundingClientRect();
     const y = event.clientY - row.top; const zone = row.height / (reorder ? 2 : 4);
-    const after = y > row.height - zone;
+    const after = y >= row.height - zone;
     if (!after && y >= zone) return null;
     const node = (event.currentTarget.closest('.tree-node') ?? event.currentTarget).getBoundingClientRect();
     const section = event.currentTarget.closest('.sidebar-section')!.getBoundingClientRect();
@@ -524,12 +517,20 @@ export default function App() {
     event.preventDefault(); event.stopPropagation();
     let moved: string[];
     try { moved = isPlaceDrag(event) ? [event.dataTransfer.getData(PLACE_TYPE)] : JSON.parse(event.dataTransfer.getData('application/x-explorer-paths')); } catch { return true; }
-    const defaults = boot?.places.map(place => place.path) || [];
-    setPins(previous => [...new Set([...previous, ...moved.filter(p => !defaults.includes(p))])]);
-    setUnpinnedDefaults(previous => previous.filter(p => !moved.includes(p)));
-    const order = places.map(place => place.path);
-    const rest = (paths: string[]) => paths.filter(p => !moved.includes(p));
-    setPlaceOrder([...rest(order.slice(0, insertion.index)), ...moved, ...rest(order.slice(insertion.index))]);
+    if (!Array.isArray(moved) || !moved.length || moved.length > 10000 || !moved.every(p => typeof p === 'string' && !p.includes('\0') && (p.startsWith('/') || p === TRASH))) return true;
+    moved = [...new Set(moved)];
+    const insert = () => {
+      const defaults = boot?.places.map(place => place.path) || [];
+      setPins(previous => [...new Set([...previous, ...moved.filter(p => !defaults.includes(p))])]);
+      setUnpinnedDefaults(previous => previous.filter(p => !moved.includes(p)));
+      const order = places.map(place => place.path);
+      const rest = (paths: string[]) => paths.filter(p => !moved.includes(p));
+      setPlaceOrder([...rest(order.slice(0, insertion.index)), ...moved, ...rest(order.slice(insertion.index))]);
+    };
+    if (isPlaceDrag(event)) { if (moved.every(p => places.some(place => place.path === p))) insert(); }
+    else void Promise.all(moved.map(p => api.info(p))).then(entries => {
+      if (entries.every(entry => entry.isDirectory && !/\.app$/i.test(entry.name) && !trashRoots.some(root => entry.path === root || entry.path.startsWith(root + '/')))) insert();
+    }).catch(error => setError(errorMessage(error)));
     return true;
   }
   function chooseFolder() { run(tr('选择文件夹…'), async () => { const path = await api.chooseFolder(); if (path) navigate(path); }); }
@@ -724,6 +725,7 @@ export default function App() {
   const actions = useRef<(action: string) => void>(() => {});
   actions.current = action => {
     if (modal) return;
+    if (action === 'settings') { showModal({ kind: 'settings' }); return; }
     if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
     if (action === 'new-tab') newTab(); if (action === 'choose-folder') chooseFolder();
     if (action === 'new-folder') create(true); if (action === 'refresh') refreshDirectory();
@@ -899,13 +901,17 @@ export default function App() {
       if (event.button !== 3 && event.button !== 4) return;
       event.preventDefault();
       if (event.type !== 'mouseup') return;
-      if (armed === event.button) historyNavigation.current.historyGo(event.button === 3 ? -1 : 1);
+      if (armed === event.button && !historyNavigation.current.blocked) historyNavigation.current.historyGo(event.button === 3 ? -1 : 1);
       armed = -1;
     };
+    const cancel = () => { armed = -1; };
+    window.addEventListener('blur', cancel);
+    window.addEventListener('pointercancel', cancel);
     window.addEventListener('pointerdown', press, true);
     window.addEventListener('mousedown', sideButton);
     window.addEventListener('mouseup', sideButton);
     return () => {
+      window.removeEventListener('blur', cancel); window.removeEventListener('pointercancel', cancel);
       window.removeEventListener('pointerdown', press, true);
       window.removeEventListener('mousedown', sideButton); window.removeEventListener('mouseup', sideButton);
     };
@@ -941,7 +947,7 @@ export default function App() {
         onDragStart={event => {
           const paths = selected.has(entry.path) ? [...selected] : [entry.path];
           event.dataTransfer.setData('application/x-explorer-paths', JSON.stringify(paths)); event.dataTransfer.effectAllowed = 'move'; setPopup(null);
-          if (!viewingTrash && paths.every(p => visible.some(e => e.path === p && e.isDirectory && !e.name.endsWith('.app')))) event.dataTransfer.setData(FOLDERS_TYPE, '1');
+          if (!viewingTrash && paths.every(p => visible.some(e => e.path === p && e.isDirectory && !/\.app$/i.test(e.name)))) event.dataTransfer.setData(FOLDERS_TYPE, '1');
         }}
         onDragOver={event => { if (entry.isDirectory && !viewingTrash && !isPlaceDrag(event)) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDragOver(entry.path); } }}
         onDragLeave={() => setDragOver(null)} onDrop={event => { if (entry.isDirectory) drop(event, entry.path); }}>
@@ -953,7 +959,7 @@ export default function App() {
     </div>;
   }
 
-  return <div className={`explorer-shell ${compact ? 'compact-view' : ''}`} onPointerDown={() => { if (popup) setPopup(null); }} onDragEnd={() => setPlaceMarker(null)}>
+  return <div className={`explorer-shell ${compact ? 'compact-view' : ''}`} onPointerDown={() => { if (popup) setPopup(null); }} onDragEnd={() => { setPlaceMarker(null); clearTimeout(tabHover.current?.timer); tabHover.current = null; }}>
     <header className="tab-strip">
       <div className="traffic-light-space"/>
       <div className="tabs" role="tablist" aria-label={tr('文件夹标签页')}>
@@ -1028,15 +1034,7 @@ export default function App() {
         { label: tr('语言'), icon: <Languages/>, children: [
           ...([{ mode: 'zh-CN', label: '简体中文' }, { mode: 'zh-TW', label: '繁體中文' }, { mode: 'en', label: 'English' }, { mode: 'system', label: tr('跟随系统') }] as const).map(option => ({ label: option.label, radio: true, checked: language.mode === option.mode, disabled: !!operation, action: () => void changeLanguage(option.mode) })),
         ] },
-        { label: tr('默认应用'), icon: <AppWindow/>, divider: true, children: [
-          { label: tr('登录时自动启动'), checked: !!defaultApp?.login, disabled: !defaultApp?.installed, action: () => void changeDefaultApp('login', !defaultApp?.login) },
-          { label: tr('接管桌面（隐藏访达桌面图标）'), checked: !!defaultApp?.desktop, action: () => void changeDefaultApp('desktop', !defaultApp?.desktop) },
-          ...(defaultApp?.installed ? [] : [{ label: tr('登录项需要把应用装到“应用程序”文件夹'), disabled: true }]),
-          { label: tr('用 Mac Explorer 打开以下文件'), divider: true, children: (Object.keys(handlerLabels) as HandlerKind[]).map(kind => ({
-            label: handlerLabels[kind], checked: defaultApp?.handlers[kind] === defaultApp?.self,
-            action: () => void changeDefaultApp(kind, defaultApp?.handlers[kind] !== defaultApp?.self),
-          })) },
-        ] },
+        { label: tr('设置…'), icon: <AppWindow/>, divider: true, action: () => showModal({ kind: 'settings' }) },
         { label: tr('键盘快捷键'), icon: <Keyboard/>, divider: true, action: () => showModal({ kind: 'shortcuts' }) },
       ])}><MoreHorizontal/></ToolButton>
       <div className="command-spacer"/>
@@ -1084,7 +1082,8 @@ export default function App() {
 
     {popup && <ContextMenu popup={popup} onClose={() => setPopup(null)}/>}
     {modal?.kind === 'archive' && <ArchiveDialog archive={modal.archive} onExtracted={() => setRefresh(v => v + 1)} onClose={() => setModal(null)}/>}
-    {modal && modal.kind !== 'archive' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
+    {modal?.kind === 'settings' && <SettingsDialog onClose={() => setModal(null)}/>}
+    {modal && modal.kind !== 'archive' && modal.kind !== 'settings' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
   </div>;
 }
 
@@ -1154,6 +1153,46 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
     </div>) : <p className="archive-empty">{tr('此压缩包为空')}</p>}</div>
     {message && <div className={`archive-result ${failure ? 'failed' : ''}`} role={failure ? 'alert' : 'status'}>{message}</div>}
     <div className="archive-footer"><span>{busy ? tr('正在处理压缩包，请稍候…') : tr('{0} 个项目 · 同名项目会跳过，不覆盖', items.length)}</span><button className="secondary-button" disabled={busy} onClick={close}>{tr('关闭')}</button></div>
+  </dialog>;
+}
+
+function SettingsDialog({ onClose }: { onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [shortcut, setShortcut] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    ref.current?.showModal();
+    let live = true;
+    api.settings().then(value => { if (live) { setSettings(value); setShortcut(value.wakeShortcut); setError(value.wakeShortcutError); } }).catch(error => { if (live) setError(errorMessage(error)); });
+    return () => { live = false; void api.captureShortcut(false).catch(() => {}); };
+  }, []);
+  async function save(action: () => Promise<AppSettings>) {
+    setBusy(true); setError('');
+    try { const value = await action(); setSettings(value); setShortcut(value.wakeShortcut); }
+    catch (error) { setError(errorMessage(error)); }
+    finally { setBusy(false); }
+  }
+  const display = shortcut.replace('Command', '⌘').replace('Control', '⌃').replace('Alt', '⌥').replace('Shift', '⇧');
+  return <dialog ref={ref} className="modal settings-dialog" aria-labelledby="settings-title" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
+    <div className="modal-heading"><h2 id="settings-title">{tr('设置')}</h2><button aria-label={tr('关闭设置')} disabled={busy} onClick={onClose}><X size={18}/></button></div>
+    <section><h3>{tr('唤醒快捷键')}</h3><p>{tr('设置后可从任何应用唤醒 Mac Explorer。')}</p>
+      <div className="shortcut-setting"><input aria-label={tr('唤醒快捷键')} placeholder={tr('点击后按下快捷键')} readOnly value={display} disabled={!settings || busy} onFocus={() => void api.captureShortcut(true).catch(() => {})} onBlur={() => void api.captureShortcut(false).catch(() => {})} onKeyDown={event => {
+        event.stopPropagation(); event.preventDefault();
+        if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { event.currentTarget.blur(); return; }
+        if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return;
+        const code = event.code;
+        const key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit[0-9]$/.test(code) ? code.slice(5) : ({ ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Equal: 'Plus', NumpadAdd: 'Plus', Minus: 'Minus', NumpadSubtract: 'Minus', Comma: 'Comma', Period: 'Period', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'", Backquote: '`', Backslash: String.fromCharCode(92), Slash: '/'  } as Record<string, string>)[code] || code;
+        setShortcut([...event.metaKey ? ['Command'] : [], ...event.ctrlKey ? ['Control'] : [], ...event.altKey ? ['Alt'] : [], ...event.shiftKey ? ['Shift'] : [], key].join('+'));
+        setError('');
+      }}/><button className="secondary-button" disabled={!shortcut || busy} onClick={() => setShortcut('')}>{tr('清除')}</button></div>
+      <p className="settings-note">{tr('请使用修饰键组合或 F1–F24 功能键。')}</p>
+      <button className="primary-button" disabled={!settings || busy || shortcut === settings.wakeShortcut && !settings.wakeShortcutError} onClick={() => void save(() => api.setWakeShortcut(shortcut))}>{tr('保存快捷键')}</button>
+    </section>
+    <section><h3>{tr('启动')}</h3><label className="settings-login"><input type="checkbox" checked={settings?.login || false} disabled={!settings?.loginAvailable || busy} onChange={event => void save(() => api.setLoginEnabled(event.target.checked))}/>{tr('登录时自动启动')}</label>{settings && !settings.loginAvailable && <p className="settings-note">{tr('登录项需要把应用装到“应用程序”文件夹')}</p>}</section>
+    {error && <p className="modal-error" role="alert">{error}</p>}
+    <div className="modal-actions"><button className="secondary-button" disabled={busy} onClick={onClose}>{tr('关闭')}</button></div>
   </dialog>;
 }
 
@@ -1235,7 +1274,7 @@ function NavigationTree({ place, location, hidden, navigate, newTab, drop, conte
     {expanded && <div role="group" aria-label={tr('{0} 的子文件夹', place.name)}>{error ? <p className="tree-note" title={error}>{tr('无法访问')}</p> : !loading && !children.length ? <p className="tree-note">{tr('没有子文件夹')}</p> : children.map(child => <NavigationTree key={child.path} place={{ path: child.path, name: child.name, icon: 'folder' }} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} context={context} level={Math.min(level + 1, 6)}/>)}</div>}
   </div>;
 }
-function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
+function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' | 'settings' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
   const [skipTrashConfirmation, setSkipTrashConfirmation] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null); const inputRef = useRef<HTMLInputElement>(null); const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -1249,8 +1288,7 @@ function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }:
   const title = modal.kind === 'trash' ? tr('移到回收站') : modal.kind === 'rename' ? tr('重命名') : modal.kind === 'folder' ? tr('新建文件夹') : modal.kind === 'file' ? tr('新建文本文档') : tr('键盘快捷键');
   return <dialog ref={dialogRef} className={`modal ${modal.kind === 'shortcuts' ? 'shortcut-modal' : ''}`} aria-labelledby="modal-title" onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}>
     <form onSubmit={event => { event.preventDefault(); onSubmit(modal.kind === 'trash' && skipTrashConfirmation); }}><div className="modal-heading"><h2 id="modal-title">{title}</h2><button type="button" aria-label={tr('关闭对话框')} onClick={onClose} disabled={busy}><X size={18}/></button></div>
-      {modal.kind === 'shortcuts' ? <><p className="shortcut-note">{tr('文件操作遵循 macOS 访达的常用快捷键。')}</p><div className="shortcut-list">{[[tr('重命名'), 'Return'], [tr('打开项目'), '⌘O / ⌘↓'], [tr('复制 / 粘贴 / 撤销'), '⌘C / ⌘V / ⌘Z'], [tr('移动已复制的文件'), '⌥⌘V'], [tr('创建副本'), '⌘D'], [tr('全选 / 新建文件夹'), '⌘A / ⇧⌘N'], [tr('移到回收站'), '⌘⌫'], [tr('快速查看'), 'Space / ⌘Y'], [tr('唤醒 Mac Explorer（全局）'), '⌘E'],
-[tr('后退 / 前进 / 上一级'), tr('⌘[ / ⌘] / Backspace 或 ⌘↑')], [tr('前往文件夹 / 搜索'), '⇧⌘G / ⌘F'], [tr('新建 / 关闭标签页'), '⌘T / ⌘W'], [tr('切换标签页'), '⌃Tab / ⌃⇧Tab'], [tr('图标 / 详细信息视图'), '⌘1 / ⌘2'], [tr('预览窗格 / 隐藏项目'), '⇧⌘P / ⇧⌘.'], [tr('详细信息窗格'), '⌘I']].map(([name, keys]) => <div key={name}><span>{name}</span><kbd>{keys}</kbd></div>)}</div><p className="shortcut-note">{tr('移动文件：先 ⌘C，再到目标文件夹按 ⌥⌘V。保留 Ctrl+C / X / V、F2、F5 等兼容快捷键；输入框内沿用文本编辑快捷键。')}</p></> : modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
+      {modal.kind === 'shortcuts' ? <><p className="shortcut-note">{tr('文件操作遵循 macOS 访达的常用快捷键。')}</p><div className="shortcut-list">{[[tr('重命名'), 'Return'], [tr('打开项目'), '⌘O / ⌘↓'], [tr('复制 / 粘贴 / 撤销'), '⌘C / ⌘V / ⌘Z'], [tr('移动已复制的文件'), '⌥⌘V'], [tr('创建副本'), '⌘D'], [tr('全选 / 新建文件夹'), '⌘A / ⇧⌘N'], [tr('移到回收站'), '⌘⌫'], [tr('快速查看'), 'Space / ⌘Y'], [tr('后退 / 前进 / 上一级'), tr('⌘[ / ⌘] / Backspace 或 ⌘↑')], [tr('前往文件夹 / 搜索'), '⇧⌘G / ⌘F'], [tr('新建 / 关闭标签页'), '⌘T / ⌘W'], [tr('切换标签页'), '⌃Tab / ⌃⇧Tab'], [tr('图标 / 详细信息视图'), '⌘1 / ⌘2'], [tr('预览窗格 / 隐藏项目'), '⇧⌘P / ⇧⌘.'], [tr('详细信息窗格'), '⌘I']].map(([name, keys]) => <div key={name}><span>{name}</span><kbd>{keys}</kbd></div>)}</div><p className="shortcut-note">{tr('移动文件：先 ⌘C，再到目标文件夹按 ⌥⌘V。保留 Ctrl+C / X / V、F2、F5 等兼容快捷键；输入框内沿用文本编辑快捷键。')}</p></> : modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
       {modal.kind === 'trash' && <label className="trash-confirmation-preference"><input type="checkbox" checked={skipTrashConfirmation} disabled={busy} onChange={event => setSkipTrashConfirmation(event.target.checked)}/>{tr('不再显示此提示')}</label>}
       {error && <p className="modal-error" role="alert">{error}</p>}
       <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{modal.kind === 'shortcuts' ? tr('知道了') : tr('取消')}</button>{modal.kind !== 'shortcuts' && <button type="submit" ref={confirmRef} className="primary-button" disabled={busy || modal.kind !== 'trash' && !value.trim()}>{busy ? tr('正在处理…') : modal.kind === 'trash' ? tr('移到回收站') : tr('确定')}</button>}</div>

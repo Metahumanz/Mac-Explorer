@@ -10,8 +10,6 @@ const app = await electron.launch({ ...(process.env.EXPLORER_APP_PATH ? { execut
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
   await page.locator('.file-content[aria-busy=false]').waitFor();
-  // Command+E must stay registered globally so the app can be raised from anywhere.
-  assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered('Command+E')), true);
   // Keep the fixture home, but remove the test harness's Documents override.
   await app.evaluate(({ ipcMain }) => {
     const bootstrap = ipcMain._invokeHandlers.get('bootstrap');

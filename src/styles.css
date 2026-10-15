@@ -401,3 +401,12 @@ button, .tab, .file-row, .archive-row {
 .volume-eject { position: absolute; right: 7px; top: 6px; width: 25px; height: 25px; border-radius: 4px; color: var(--text-secondary); }
 .volume-eject:hover { background: var(--surface-active); color: var(--text); }
 .volume-eject:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.settings-dialog { width: min(560px, calc(100vw - 48px)); max-height: calc(100vh - 48px); padding: 22px 25px 0; }
+.settings-dialog section { padding: 18px 0; border-bottom: 1px solid var(--border); }
+.settings-dialog h3 { margin: 0 0 8px; font-size: 14px; }
+.settings-dialog p:not(.modal-error) { color: var(--text-secondary); line-height: 1.6; }
+.shortcut-setting { display: flex; gap: 8px; margin: 12px 0 8px; }
+.shortcut-setting input { flex: 1; min-width: 0; padding: 9px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); }
+.settings-note { font-size: 12px; }
+.settings-login { display: flex; align-items: center; gap: 8px; }
