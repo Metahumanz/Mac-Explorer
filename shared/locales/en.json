@@ -634,5 +634,9 @@
   "小图标视图": "Small icons view",
   "列表视图": "List view",
   "平铺视图": "Tiles view",
-  "内容视图": "Content view"
+  "内容视图": "Content view",
+  "最近输入的地址": "Recent addresses",
+  "匹配的文件夹": "Matching folders",
+  "复制地址": "Copy address",
+  "已复制地址": "Address copied"
 }

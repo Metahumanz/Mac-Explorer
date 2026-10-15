@@ -78,7 +78,7 @@ try {
   for (const old of ['Meta+t', 'Control+t']) { await page.keyboard.press(old); assert.equal(await page.getByRole('tab').count(), count); }
   await page.keyboard.press('Meta+Alt+t');
   await page.waitForFunction(count => document.querySelectorAll('.tab').length === count + 1, count);
-  await page.getByRole('button', { name: '编辑地址 (⇧⌘G)', exact: true }).click();
+  await page.keyboard.press('Meta+Shift+g');
   const address = page.getByRole('textbox', { name: '文件夹地址', exact: true });
   await address.fill('text editing stays local'); await address.press('Meta+a'); await address.press('Meta+c');
   assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), 'text editing stays local');

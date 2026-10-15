@@ -55,7 +55,8 @@
     "test:file-viewer": "npm run build && node scripts/file-viewer-smoke.mjs",
     "test:updates": "npm run build && node scripts/about-update-smoke.mjs",
     "test:updater-asar": "npm run build && node scripts/updater-asar-smoke.mjs",
-    "test:folder-view": "npm run build && node scripts/folder-view-smoke.mjs && node scripts/folder-view-sync-smoke.mjs"
+    "test:folder-view": "npm run build && node scripts/folder-view-smoke.mjs && node scripts/folder-view-sync-smoke.mjs",
+    "test:address-bar": "npm run build && node scripts/address-bar-smoke.mjs && node scripts/address-bar-regression-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",
