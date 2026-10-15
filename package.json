@@ -1,6 +1,6 @@
 {
   "name": "mac-explorer",
-  "version": "0.1.51",
+  "version": "0.1.52",
   "private": true,
   "description": "A Windows 11-style file explorer for macOS",
   "main": "dist-electron/main.cjs",
@@ -52,7 +52,8 @@
     "test:share": "npm run build && node scripts/share-menu-smoke.mjs",
     "test:operation-shortcuts": "npm run build && node scripts/operation-shortcuts-smoke.mjs",
     "test:file-viewer": "npm run build && node scripts/file-viewer-smoke.mjs",
-    "test:updates": "npm run build && node scripts/about-update-smoke.mjs"
+    "test:updates": "npm run build && node scripts/about-update-smoke.mjs",
+    "test:updater-asar": "npm run build && node scripts/updater-asar-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import nodeFs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
@@ -6,6 +6,8 @@ import { promisify } from 'node:util';
 import { t as tr } from '../shared/i18n';
 import type { UpdateState } from '../shared/types';
 
+// Unpacked updates contain app.asar, which Electron's patched fs treats as a virtual directory.
+const fs: typeof nodeFs = process.versions.electron ? require('node:original-fs').promises : nodeFs;
 const repository = 'https://github.com/qixiaoyu27/Mac-Explorer';
 const latest = 'https://api.github.com/repos/qixiaoyu27/Mac-Explorer/releases/latest';
 const exec = promisify(execFile);

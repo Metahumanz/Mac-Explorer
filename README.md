@@ -33,12 +33,14 @@ Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户：熟悉�
 
 在线安装适用于已安装、位于可写目录的 Apple Silicon 版本；开发模式可以检查更新。当前发布使用临时签名、未经 Apple 公证，更新不会自动移除系统隔离标记，安装后可能仍需 macOS 确认。
 
+若旧版在校验更新后报错，请先退出应用，再执行下方安装命令直接更新；偏好设置保留。
+
 ### 一行命令安装或更新（推荐）
 
 打开 macOS 的「终端」，复制并执行：
 
 ```sh
-MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.51/scripts/install.sh)"
+MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.52/scripts/install.sh)"
 ```
 
 如果 Mac Explorer 让你用 Mac 更顺手，欢迎到 [GitHub 点个 ⭐ Star](https://github.com/qixiaoyu27/Mac-Explorer)，支持项目持续更新！
@@ -58,7 +60,7 @@ MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.gi
 如果你信任本项目，并同意移除 **Mac Explorer 这一个应用**的下载隔离标记，可以直接使用这一行：
 
 ```sh
-MAC_EXPLORER_INSTALL_DIR=/Applications MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.51/scripts/install.sh)"
+MAC_EXPLORER_INSTALL_DIR=/Applications MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.52/scripts/install.sh)"
 ```
 
 它将下载、校验、移除该应用的隔离标记、安装和启动合并执行。SHA-256 和应用签名校验仍然保留，校验失败就停止；不需要 `sudo`，不关闭系统 Gatekeeper，也不修改其他应用。这不是 Apple 公证或安全背书，系统其他安全检查仍可能拦截。若系统明确提示恶意软件，请勿使用此方式继续运行。
@@ -249,6 +251,7 @@ npm run dev
 | `npm run test:vcs` | 真实 Electron 中的 Git / SVN 角标、菜单、差异、提交、备份与设置持久化；SVN 测试需要本机安装 Subversion |
 | `npm run test:ui` | Electron 文件操作与键盘流程 |
 | `npm run test:toolbar` | 固定表头、工具栏配置和隔空投送调用（截获发送） |
+| `npm run test:updater-asar` | 真实 Electron 中校验含 ASAR 的签名应用、清理临时目录和已完成更新；仅使用临时夹具，不替换真实应用 |
 | `npm run test:connections` | 真实 Bonjour 发现、隔空投送页面/拖放、SMB 连接与导航；投送和挂载使用原生接口替身，不传输文件或挂载真实服务器 |
 | `npm run test:view` / `npm run test:theme` | 视图、复选框、外观与设置保存 |
 | `npm run test:icons` | 图标分辨率、尺寸和路径编辑 |
