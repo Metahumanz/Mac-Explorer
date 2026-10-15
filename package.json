@@ -39,7 +39,8 @@
     "test:trash-browser": "npm run build && node scripts/trash-browser-smoke.mjs && node scripts/trash-operations-smoke.mjs",
     "test:dock": "npm run build && node scripts/dock-menu-smoke.mjs",
     "test:drop-move": "npm run build && node scripts/drop-move-smoke.mjs",
-    "test:mouse-navigation": "npm run build && node scripts/mouse-navigation-smoke.mjs"
+    "test:mouse-navigation": "npm run build && node scripts/mouse-navigation-smoke.mjs",
+    "test:quick-access": "npm run build && node scripts/quick-access-order-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",
