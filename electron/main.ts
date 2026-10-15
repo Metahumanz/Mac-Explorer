@@ -353,8 +353,12 @@ ipc('open-terminal', async (input: string) => {
   const directory = absolute(input);
   if (!(await fs.stat(directory)).isDirectory()) throw new Error(tr('请选择文件夹打开终端。'));
   // Pass the directory as a Launch Services document, never as shell code.
-  // Terminal opens a new session at this directory without Automation access.
-  await promisify(execFile)('/usr/bin/open', ['-b', 'com.apple.Terminal', directory]);
+  // Terminal apps open a new session at this directory without Automation access.
+  const helper = path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/default-terminal');
+  let application: string;
+  try { application = (await promisify(execFile)(helper)).stdout; }
+  catch (error) { throw new Error(tr((error as { stderr?: string }).stderr?.trim() || '') || readableError(error)); }
+  await promisify(execFile)('/usr/bin/open', ['-a', application, directory]);
 });
 ipc('share', (inputs: unknown) => new ShareMenu({ filePaths: pathsArg(inputs) }).popup({ window: currentWindow()! }));
 ipc('quick-look', (input: string) => {

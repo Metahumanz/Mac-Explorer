@@ -373,6 +373,7 @@
   "保留包内目录结构 · 已选 {0} 项": "Keep archive folder structure · {0} selected",
   "此位置不是可推出的已挂载磁盘。": "This location is not an ejectable mounted volume.",
   "无效的磁盘操作。": "Invalid disk operation.",
+  "没有可用的终端应用。": "No terminal app is available.",
   "压缩包包含不安全或不支持的路径。": "The archive contains an unsafe or unsupported path.",
   "内存不足。": "Not enough memory.",
   "压缩包包含越界路径，已停止解压。": "The archive contains a path outside its destination. Extraction stopped.",

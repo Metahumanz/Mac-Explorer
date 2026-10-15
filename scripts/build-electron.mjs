@@ -34,7 +34,13 @@ if (!fs.existsSync(volumesBinary) || fs.statSync(volumesSource).mtimeMs > fs.sta
   execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', volumesSource, '-o', volumesBinary], { stdio: 'inherit' });
   execFileSync('codesign', ['--force', '--sign', '-', volumesBinary], { stdio: 'inherit' });
 }
-const archiveSource = 'electron/native/ArchiveReader.c';
+const terminalSource = 'electron/native/DefaultTerminal.swift';
+const terminalBinary = 'dist-electron/native/default-terminal';
+if (!fs.existsSync(terminalBinary) || fs.statSync(terminalSource).mtimeMs > fs.statSync(terminalBinary).mtimeMs) {
+  execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', terminalSource, '-o', terminalBinary], { stdio: 'inherit' });
+  execFileSync('codesign', ['--force', '--sign', '-', terminalBinary], { stdio: 'inherit' });
+}
+const archiveSource ='electron/native/ArchiveReader.c';
 const archiveBinary = 'dist-electron/native/archive-reader';
 if (!fs.existsSync(archiveBinary) || Math.max(fs.statSync(archiveSource).mtimeMs, fs.statSync('scripts/build-electron.mjs').mtimeMs) > fs.statSync(archiveBinary).mtimeMs) {
   execFileSync('xcrun', ['clang', '-target', 'arm64-apple-macos13.0', '-O2', '-Wall', '-Wextra', archiveSource, '-larchive.2', '-o', archiveBinary], { stdio: 'inherit' });
