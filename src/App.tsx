@@ -752,8 +752,8 @@ export default function App() {
     window.addEventListener('keydown', keydown); return () => window.removeEventListener('keydown', keydown);
   });
   useEffect(() => { if (editingAddress) { addressRef.current?.focus(); addressRef.current?.select(); } }, [editingAddress]);
-  const swipeNavigation = useRef({ historyGo, blocked: false, context: '' });
-  swipeNavigation.current = {
+  const historyNavigation = useRef({ historyGo, blocked: false, context: '' });
+  historyNavigation.current = {
     historyGo, blocked: !!(modal || popup || operation || editingName || editingAddress),
     context: `${tab.id}:${tab.index}:${location}`,
   };
@@ -778,7 +778,7 @@ export default function App() {
       // macOS can continue sending zero-delta phase events after fingers lift.
       // They must not keep the previous gesture alive.
       if (!event.deltaX && !event.deltaY) return;
-      const current = swipeNavigation.current;
+      const current = historyNavigation.current;
       const now = performance.now();
       const x = Math.abs(event.deltaX);
       // A fresh stroke can interrupt the previous stroke's momentum without a
@@ -834,6 +834,31 @@ export default function App() {
     };
     document.addEventListener('wheel', swipe, { passive: false });
     return () => { document.removeEventListener('wheel', swipe); stopGestureListener(); };
+  }, []);
+  useEffect(() => {
+    // UI Events defines buttons 3/4 as Back/Forward. Mouse drivers that remap
+    // them to shortcuts or gestures already reach the existing handlers.
+    // Sample the guard at press time in the capture phase, before the shell's
+    // pointerdown handler dismisses an open menu; by mouseup it no longer
+    // applies. Preventing mousedown keeps an address or rename input focused.
+    let armed = -1;
+    const press = (event: PointerEvent) => {
+      if (event.button === 3 || event.button === 4) armed = historyNavigation.current.blocked ? -1 : event.button;
+    };
+    const sideButton = (event: globalThis.MouseEvent) => {
+      if (event.button !== 3 && event.button !== 4) return;
+      event.preventDefault();
+      if (event.type !== 'mouseup') return;
+      if (armed === event.button) historyNavigation.current.historyGo(event.button === 3 ? -1 : 1);
+      armed = -1;
+    };
+    window.addEventListener('pointerdown', press, true);
+    window.addEventListener('mousedown', sideButton);
+    window.addEventListener('mouseup', sideButton);
+    return () => {
+      window.removeEventListener('pointerdown', press, true);
+      window.removeEventListener('mousedown', sideButton); window.removeEventListener('mouseup', sideButton);
+    };
   }, []);
   useEffect(() => {
     const element = contentRef.current;
