@@ -116,8 +116,21 @@ try {
   for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => window.explorer.setTheme(theme), theme);
     await page.waitForFunction(dark => matchMedia('(prefers-color-scheme: dark)').matches === dark, theme === 'dark');
+    for (const [name, icon] of Object.entries(systemFolders)) {
+      if (name === 'Music') continue; // Unpinned above to verify its badge survives.
+      const badge = page.getByRole('option', { name, exact: true }).locator('.folder-badge');
+      const style = await badge.locator('svg').evaluate(el => ({ color: getComputedStyle(el).color, stroke: getComputedStyle(el).strokeWidth, shape: el.innerHTML }));
+      const sidebar = await page.locator(`.sidebar .icon-${icon}`).evaluate(el => ({ color: getComputedStyle(el).color, stroke: getComputedStyle(el).strokeWidth, shape: el.innerHTML }));
+      assert.deepEqual(style, sidebar, `${theme}: ${name} uses the sidebar glyph, color and stroke`);
+      assert.equal(await badge.evaluate(el => getComputedStyle(el).backgroundColor), theme === 'dark' ? 'rgb(43, 43, 43)' : 'rgb(248, 250, 252)');
+      assert.ok(await badge.evaluate(el => el.querySelector('svg').getBoundingClientRect().width < el.getBoundingClientRect().width * 0.8));
+      assert.equal(await page.locator(`.sidebar .icon-${icon}`).evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
+    }
     await page.mouse.move(900, 175);
     await page.screenshot({ path: `artifacts/system-folders-${theme}.png`, animations: 'disabled' });
+    await page.getByRole('slider', { name: '图标大小' }).press('Home');
+    for (let step = 0; step < 4; step++) await page.getByRole('slider', { name: '图标大小' }).press('ArrowRight');
+    await page.screenshot({ path: `artifacts/system-folders-${theme}-64.png`, animations: 'disabled' });
   }
   await page.getByRole('option', { name: 'Downloads', exact: true }).dblclick();
   await page.locator('.file-content[aria-busy="false"]').waitFor();

@@ -96,14 +96,19 @@ async function getClipboard(): Promise<ClipboardInfo> {
       try { const data = JSON.parse(await clipboardText(item, FILES_TYPE)); return { paths: pathsArg(data.paths), cut: data.cut === true }; }
       catch { /* Read native file URLs when custom data is unavailable. */ }
     }
-    if (item.types.includes(FILE_URL_TYPE)) {
-      try { paths.push(fileURLToPath((await clipboardText(item, FILE_URL_TYPE)).replace(/\0/g, ''))); } catch { /* Not a valid file URL. */ }
+    const type = item.types.includes('text/uri-list') ? 'text/uri-list' : FILE_URL_TYPE;
+    if (item.types.includes(type)) {
+      const value = await clipboardText(item, type).catch(() => '');
+      for (const line of type === 'text/uri-list' ? value.split(/\r?\n/) : [value.replace(/\0/g, '')]) {
+        if (!line.startsWith('file://')) continue;
+        try { paths.push(absolute(fileURLToPath(line))); } catch { /* Ignore invalid entries without losing other files. */ }
+      }
     }
   }
   if (!paths.length) for (const line of (await clipboard.readText()).split(/\r?\n/)) {
     if (line.startsWith('file://')) { try { paths.push(fileURLToPath(line)); } catch { /* Invalid URL. */ } }
   }
-  return { paths, cut: false };
+  return { paths: [...new Set(paths)], cut: false };
 }
 async function setClipboard(paths: string[], cut: boolean): Promise<ClipboardInfo> {
   if (!paths.length) { clipboard.clear(); return { paths, cut }; }

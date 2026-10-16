@@ -128,8 +128,7 @@ svg { flex-shrink: 0; }
 .pdf-thumbnail > .pdf-badge { position: absolute; bottom: 0; right: 0; pointer-events: none; }
 .folder-glyph { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; position: relative; }
 .folder-glyph > svg { width: 100%; height: 100%; }
-.folder-badge { position: absolute; bottom: 5%; right: 1%; display: flex; align-items: center; justify-content: center; background: #ffcd50; border-radius: 3px; padding: 1px; }
-.folder-badge .place-icon { stroke-width: 2.1; }
+.folder-badge { position: absolute; bottom: 8%; right: 0; width: 32%; height: 32%; min-width: 11px; min-height: 11px; display: flex; align-items: center; justify-content: center; background: var(--surface-dialog, #f8fafc); border-radius: 32%; box-shadow: 0 1px 3px #0003; }
 .cut { opacity: .44; }
 .hidden-file:not(.selected) .col-name { opacity: .6; }
 .icon-grid { --file-icon-size: 64px; display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--file-icon-size) + 44px), 1fr)); gap: 8px 5px; padding: 22px 22px 30px; align-content: start; }
@@ -370,7 +369,6 @@ h2 { font-weight: 500; }
   .icon-video { color: #c7a1e2; }
   .icon-folder { color: #e2b84f; }
   .icon-drive { color: #a4b1bc; }
-  .folder-badge .place-icon { color: #36576f; }
 }
 
 .archive-dialog { width: 720px; max-width: calc(100vw - 40px); }

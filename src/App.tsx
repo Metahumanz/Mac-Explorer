@@ -102,7 +102,7 @@ function FolderGlyph({ dimension = 38, badge }: { dimension?: number; badge?: st
       <path d="M5.4 12.7h10.3c2.9 0 4.1-2.7 7-2.7h19.9a2.4 2.4 0 0 1 2.4 2.4v23.2a2.4 2.4 0 0 1-2.4 2.4H5.4A2.4 2.4 0 0 1 3 35.6V15.1a2.4 2.4 0 0 1 2.4-2.4Z" fill={`url(#${id}-front)`} stroke="#d7a92c" strokeOpacity=".65" strokeWidth=".45"/>
       <path d="M5.6 13.15h10.1c2.9 0 4.2-2.7 7-2.7h19.7" stroke="#fff3c3" strokeOpacity=".8" strokeWidth=".4" strokeLinecap="round"/>
     </svg>
-    {badge && <span className={`folder-badge badge-${badge}`}><PlaceIcon icon={badge} size={Math.max(8, Math.round(dimension * 0.32))}/></span>}
+    {badge && <span className={`folder-badge badge-${badge}`}><PlaceIcon icon={badge} size={Math.max(7, Math.round(dimension * 0.21))}/></span>}
   </span>;
 }
 function FileGlyph({ entry, dimension = 22, state, badge }: { entry: FileEntry; dimension?: number; state?: VcsState; badge?: string }) {
