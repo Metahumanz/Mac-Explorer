@@ -37,6 +37,8 @@ Pull requests should explain the change, its purpose, and validation performed. 
 
 ## Release Notes Guidelines
 
+- Use the project skill `.agents/skills/mac-explorer-release/SKILL.md` for packaging, installation, source push, and GitHub releases.
+- Keep public release notes focused on changes, contributor credit, and installation. Do not include a validation section or test inventory; still perform necessary release checks internally.
 - Credit contributions inline after each update item: `（#123，@author）`, linking the PR and its author. Credit the actual contributors rather than only the person who merged the PR.
 - Verify attribution against the commits and merged PRs included since the previous release; do not present older contributions as new changes.
 - For direct commits without a PR, use `（@author，abc1234）` with links to the author and commit. Never invent a PR number or author.
@@ -46,3 +48,5 @@ Pull requests should explain the change, its purpose, and validation performed. 
 ## Security & Configuration
 
 Keep Node access in the main process, validate IPC arguments, and preserve context isolation and CSP. Never overwrite collisions or permanently delete user files. Exclude credentials and generated artifacts. Do not replace Finder or alter system defaults without explicit authorization.
+
+Keep visible app copy limited to labels, data, concise status/error messages and essential operation confirmations. Do not show persistent explanatory paragraphs, tutorials, marketing copy or implementation details. Question-mark help beside headings or controls is allowed when hidden until hover or keyboard focus.

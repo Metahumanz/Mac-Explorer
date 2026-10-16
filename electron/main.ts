@@ -1,4 +1,5 @@
 import { AppUpdates } from './updates';
+import { fileProperties } from './properties';
 import { networkAddress } from './network';
 import packageInfo from '../package.json';
 import { bindingsFor, migrateOperationShortcuts, normalizeShortcut, validWakeShortcut, validateWakeBinding, validateOperationShortcuts, type OperationShortcuts } from '../shared/shortcuts';
@@ -29,7 +30,7 @@ import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, 
 let currentLanguage = 'zh-CN';
 // Preserve the requesting window across awaits, even when focus changes.
 const requestWindow = new AsyncLocalStorage<BrowserWindow>();
-const windows = new Map<BrowserWindow, { initialTab?: TabState; watcher?: FSWatcher; watchTimer?: NodeJS.Timeout; searchController?: AbortController; ready?: () => void; rendererReady?: boolean; pendingSettings?: boolean; pendingTabs?: number }>();
+const windows = new Map<BrowserWindow, { initialTab?: TabState; watcher?: FSWatcher; watchTimer?: NodeJS.Timeout; searchController?: AbortController; propertiesScan?: { id: string; controller: AbortController }; ready?: () => void; rendererReady?: boolean; pendingSettings?: boolean; pendingTabs?: number }>();
 let lastActiveWindow: BrowserWindow | undefined;
 const currentWindow = () => requestWindow.getStore() || BrowserWindow.getFocusedWindow() || lastActiveWindow || windows.keys().next().value;
 const fileIcons = new FileIcons(path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/file-icon'));
@@ -218,7 +219,7 @@ ipc('empty-trash', async () => {
     const roots = await trashRoots();
     const snapshot = await snapshotTrash(roots);
     if (!snapshot.length) return { succeeded: [], errors: [] };
-    const answer = await dialog.showMessageBox(currentWindow()!, { type: 'warning', title: tr('清空回收站'), message: tr('永久删除回收站中的 {0} 个项目？', snapshot.length), detail: tr('包含本机及已连接磁盘的回收站。此操作无法撤销。确认后新加入的顶层项目将保留。'), buttons: [tr('取消'), tr('永久删除')], defaultId: 0, cancelId: 0, noLink: true });
+    const answer = await dialog.showMessageBox(currentWindow()!, { type: 'warning', title: tr('清空回收站'), message: tr('永久删除回收站中的 {0} 个项目？', snapshot.length), detail: tr('包含已连接磁盘。此操作无法撤销。'), buttons: [tr('取消'), tr('永久删除')], defaultId: 0, cancelId: 0, noLink: true });
     if (answer.response !== 1) return null;
     const result = await emptyTrash(roots, snapshot);
     if (result.succeeded.length) history.clear();
@@ -407,6 +408,21 @@ ipc('search', async (input: string, query: string, hidden: boolean) => {
 });
 ipc('cancel-search', () => windows.get(currentWindow()!)?.searchController?.abort());
 ipc('info', (input: string) => entryFor(absolute(input)));
+ipc('properties', async (inputs: unknown, request: unknown) => {
+  const paths = pathsArg(inputs);
+  if (!paths.length || typeof request !== 'string' || !request || request.length > 128) throw new Error(tr('无效的文件选择。'));
+  const state = windows.get(currentWindow()!)!;
+  state.propertiesScan?.controller.abort();
+  const scan = { id: request, controller: new AbortController() };
+  state.propertiesScan = scan;
+  try { return await fileProperties(paths, scan.controller.signal); }
+  finally { if (state.propertiesScan === scan) state.propertiesScan = undefined; }
+});
+ipc('cancel-properties', (request: unknown) => {
+  if (typeof request !== 'string' || request.length > 128) throw new Error(tr('无效的文件选择。'));
+  const scan = windows.get(currentWindow()!)?.propertiesScan;
+  if (scan?.id === request) scan.controller.abort();
+});
 ipc('open', async (input: string) => {
   const filePath = absolute(input);
   await fs.access(filePath);
@@ -723,7 +739,7 @@ function createWindow(initialTab?: TabState, position?: { x: number; y: number }
   window.on('move', () => rememberBounds(window));
   window.on('moved', () => rememberBounds(window));
   window.on('focus', () => { lastActiveWindow = window; const before = currentLanguage; const next = languageState(); if (next.locale !== before) { currentLanguage = next.locale; buildMenu(); for (const target of windows.keys()) target.webContents.send('language-changed', next); } });
-  window.on('closed', () => { const state = windows.get(window); state?.watcher?.close(); state?.searchController?.abort(); clearTimeout(state?.watchTimer); windows.delete(window); if (lastActiveWindow === window) lastActiveWindow = undefined; });
+  window.on('closed', () => { const state = windows.get(window); state?.watcher?.close(); state?.searchController?.abort(); state?.propertiesScan?.controller.abort(); clearTimeout(state?.watchTimer); windows.delete(window); if (lastActiveWindow === window) lastActiveWindow = undefined; });
   return window;
 }
 function summon() {

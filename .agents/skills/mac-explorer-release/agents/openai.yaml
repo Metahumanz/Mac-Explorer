@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mac Explorer 发布"
+  short_description: "Mac Explorer 专属打包、安装、推送与发布流程，自动整理更新和贡献署名"
+  default_prompt: "使用 $mac-explorer-release 完成本次 Mac Explorer 发布，发布说明不写验证章节。"

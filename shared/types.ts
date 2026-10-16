@@ -15,6 +15,10 @@ export type ThemeMode = 'light' | 'dark' | 'system';
 export interface TabState { location: string; history: string[]; index: number }
 export interface Bootstrap { initialTab?: TabState; language: LanguageState; theme: ThemeMode; home: string; places: Place[]; volumes: Volume[]; folderViews: { defaults: FolderView; overrides: Record<string, FolderViewOverride> }; initialPath?: string }
 export interface Listing { path: string; entries: FileEntry[] }
+export interface FileProperties {
+  entries: FileEntry[]; size: number; allocated: number; files: number; folders: number;
+  skipped: number; symlinks: number; readOnly: boolean | null;
+}
 export interface TrashListing { entries: FileEntry[]; roots: string[]; unavailable: string[] }
 export interface SearchResult { entries: FileEntry[]; truncated: boolean; skipped: number }
 export interface FileChange { from?: string; to: string }
@@ -87,6 +91,8 @@ export interface ExplorerAPI {
   share(paths: string[], service: string): Promise<void>;
   airDrop(paths: string[]): Promise<void>;
   info(path: string): Promise<FileEntry>;
+  properties(paths: string[], request: string): Promise<FileProperties>;
+  cancelProperties(request: string): Promise<void>;
   preview(path: string): Promise<Preview>;
   icon(path: string, pixels?: number): Promise<string>;
   create(parent: string, name: string, directory: boolean): Promise<string>;

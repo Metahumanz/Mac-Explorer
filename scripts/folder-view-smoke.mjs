@@ -72,7 +72,7 @@ try {
   await menu('查看', '平铺', 'menuitemradio'); await layout('file-tiles');
   await settings(async dialog => {
     await dialog.getByRole('button', { name: '重置所有文件夹', exact: true }).click();
-    await dialog.getByRole('status').filter({ hasText: '所有文件夹已跟随默认值。' }).waitFor();
+    await dialog.getByRole('status').filter({ hasText: '已重置' }).waitFor();
   });
   await layout('file-table');
   // Earlier versions kept layouts in localStorage; they are imported once and removed.

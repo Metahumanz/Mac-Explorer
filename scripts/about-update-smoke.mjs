@@ -51,7 +51,7 @@ try {
   await page.getByRole('alert').filter({ hasText: 'Fixture offline' }).waitFor();
   await app.evaluate(() => { globalThis.updateMode = 'current'; });
   await page.getByRole('button', { name: '检查更新', exact: true }).click();
-  await page.getByText('当前已是最新版本。', { exact: true }).waitFor();
+  await page.getByText('已是最新版本', { exact: true }).waitFor();
   assert.equal(await page.getByRole('alert').count(), 0);
   // Renderer states use fixture IPC responses; no application is replaced by this UI test.
   await app.evaluate(({ ipcMain, BrowserWindow }) => {

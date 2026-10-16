@@ -54,7 +54,7 @@ try {
  await dialog.getByRole('button', { name: '子目录 文件夹', exact: true }).focus(); await page.keyboard.press('Enter');
  await dialog.getByRole('button', { name: '内容.txt', exact: true }).focus();
  await page.keyboard.press('Enter');
- await page.waitForFunction(() => document.querySelector('.archive-result')?.textContent.includes('已用默认应用打开'));
+ await page.waitForFunction(() => document.querySelector('.archive-result')?.textContent.includes('已打开临时副本'));
  temporaryOpens = await app.evaluate(() => globalThis.externalOpens);
  assert.equal(temporaryOpens.length, 1);
  assert.equal(await fs.readFile(temporaryOpens[0], 'utf8'), 'nested');
@@ -65,7 +65,7 @@ try {
  await dialog.getByRole('button', { name: '压缩包内向上一级', exact: true }).click();
  execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0081;65000000;Mac Explorer Test;', zip]);
  await dialog.getByRole('button', { name: '说明.txt', exact: true }).dblclick();
- await page.waitForFunction(() => document.querySelector('.archive-result')?.textContent.includes('已用默认应用打开'));
+ await page.waitForFunction(() => document.querySelector('.archive-result')?.textContent.includes('已打开临时副本'));
  temporaryOpens = await app.evaluate(() => globalThis.externalOpens);
  assert.equal(temporaryOpens.length, 2);
  assert.equal(await fs.readFile(temporaryOpens[1], 'utf8'), 'test content');

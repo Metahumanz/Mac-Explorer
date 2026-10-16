@@ -15,7 +15,7 @@ import { createPortal } from 'react-dom';
 import { archiveFolderName, isArchive } from '../shared/archives';
 import { toolbarActions, defaultToolbar, normalizeToolbar, type ToolbarAction } from '../shared/toolbar';
 import { defaultFolderView, normalizeOverride, resolveFolderView, type FolderLayout, type FolderSort, type FolderView, type FolderViewOverride, type SortKey, type ViewMode } from '../shared/folder-views';
-import type { AppSettings, FileViewerSettings, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
+import type { AppSettings, FileViewerSettings, ExtractMode, ArchivePreview, Bootstrap, ClipboardInfo, FileEntry, FileProperties, OperationResult, Place, Preview, ThemeMode, Volume } from '../shared/types';
 import { vcsMarks, type VcsAction, type VcsState, type VcsStatus } from '../shared/vcs';
 import { VcsDialog, vcsStateLabel } from './VcsDialog';
 
@@ -54,7 +54,7 @@ async function migrateFolderViews() {
 type ToolbarTool = { name: string; label: string; icon: ReactNode; disabled: boolean; action: (event: MouseEvent<HTMLButtonElement>) => void };
 type MenuItem = { children?: MenuItem[]; radio?: boolean; label: string; icon?: ReactNode; action?: () => void; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean; divider?: boolean };
 type Popup = { x: number; y: number; items: MenuItem[]; quickActions?: MenuItem[] };
-type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'settings' } | { kind: 'vcs'; directory: string; paths: string[]; action: VcsAction | 'diff' };
+type Modal = { kind: 'archive'; archive: ArchivePreview } | { kind: 'properties'; entries: FileEntry[] } | { kind: 'folder' | 'file' | 'rename'; path: string; name: string } | { kind: 'trash'; paths: string[] } | { kind: 'settings' } | { kind: 'vcs'; directory: string; paths: string[]; action: VcsAction | 'diff' };
 const makeTab = (location = ''): Tab => ({ id: crypto.randomUUID(), location, history: [location], index: 0 });
 const isPlaceDrag = (event: React.DragEvent) => event.dataTransfer.types.includes(PLACE_TYPE);
 function stored<T,>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
@@ -287,7 +287,8 @@ export default function App() {
     return () => { live = false; clearInterval(timer); window.removeEventListener('focus', focus); };
   }, [boot, location, submittedQuery, refresh, vcsEnabled]);
   useEffect(() => {
-    const sync = () => { void api.captureShortcut(!!modal || isEditing(document.activeElement)).catch(() => {}); };
+    // Only shortcut recorders bypass native menus; ordinary text fields need their edit accelerators.
+    const sync = () => { void api.captureShortcut(!!document.activeElement?.matches('.operation-shortcut input, .shortcut-setting input')).catch(() => {}); };
     const blur = () => queueMicrotask(sync);
     sync(); document.addEventListener('focusin', sync); document.addEventListener('focusout', blur);
     return () => { document.removeEventListener('focusin', sync); document.removeEventListener('focusout', blur); };
@@ -613,7 +614,7 @@ export default function App() {
     });
   }
   async function submitModal(skipTrashConfirmation = false) {
-    if (!modal || (modal.kind === 'archive' || modal.kind === 'settings' || modal.kind === 'vcs') || operationLock.current) return;
+    if (!modal || (modal.kind === 'archive' || modal.kind === 'settings' || modal.kind === 'vcs' || modal.kind === 'properties') || operationLock.current) return;
     operationLock.current = true; setOperation(tr('正在处理…')); setModalError('');
     try {
       if (modal.kind === 'trash') {
@@ -818,7 +819,7 @@ export default function App() {
       { label: tr('移到回收站'), icon: <Trash2/>, shortcut: shortcutHint('trash'), danger: true, action: () => trash(paths) },
       ...(entry.isDirectory ? [{ label: places.some(place => place.path === entry.path) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, divider: true, action: () => togglePin(entry.path) }] : []),
       { label: tr('在访达中显示'), icon: <ExternalLink/>, divider: true, action: () => run(tr('正在显示…'), () => api.reveal(entry.path)) },
-      { label: tr('属性'), icon: <Info/>, shortcut: shortcutHint('details-pane'), action: () => toggleDetails(true) },
+      { label: tr('属性'), icon: <Info/>, action: () => showModal({ kind: 'properties', entries: paths.map(path => entries.find(item => item.path === path)).filter((item): item is FileEntry => !!item) }) },
     ] : [
       { label: tr('新建'), icon: <Plus/>, disabled: !writable || !!operation, children: newMenu },
       { label: tr('粘贴'), icon: <ClipboardPaste/>, shortcut: shortcutHint('paste'), divider: true, disabled: !writable || !clipboard.paths.length, action: () => paste() },
@@ -1314,21 +1315,21 @@ export default function App() {
         {viewingTrash && trashOperationError && !error && <div className="error-bar" role="alert"><Info size={17}/><span>{trashOperationError}</span><button aria-label={tr('关闭操作错误提示')} onClick={() => setTrashOperationError('')}><X size={15}/></button></div>}
         {error && <div className="error-bar" role="alert"><Info size={17}/><span>{error}</span>{error.includes(tr('完全磁盘访问权限')) && <button className="permission-settings-button" disabled={openingPrivacySettings} onClick={() => void openPrivacySettings()} title={tr('打开系统设置中的完全磁盘访问权限')}>{openingPrivacySettings ? tr('正在打开…') : tr('前往设置')}</button>}<button title={tr('关闭提示')} aria-label={tr('关闭错误提示')} onClick={() => setError('')}><X size={15}/></button></div>}
         {vcsStatus && <div className="vcs-summary" role="status"><span>{vcsStatus.kind === 'git' ? 'Git' : 'SVN'}{vcsStatus.branch ? ` · ${vcsStatus.branch}` : ''}</span>{vcsStatus.error ? <span className="vcs-error">{vcsStatus.error}</span> : <span>{tr('本地版本状态')}</span>}<button className="secondary-button" onClick={() => setRefresh(value => value + 1)}>{tr('刷新版本状态')}</button></div>}
-        {viewingTrash && <div className="search-summary"><Trash2 size={16}/><span>{tr('回收站')}</span><small>{tr('还原到原位置；无法确定原位置时选择文件夹')}</small><button className="secondary-button" disabled={!selected.size || !!operation} onClick={() => restoreTrash()}>{tr('还原')}</button><button className="secondary-button" disabled={!!operation} onClick={clearTrash}>{tr('清空回收站…')}</button></div>}
+        {viewingTrash && <div className="search-summary"><Trash2 size={16}/><span>{tr('回收站')}</span><button className="secondary-button" disabled={!selected.size || !!operation} onClick={() => restoreTrash()}>{tr('还原')}</button><button className="secondary-button" disabled={!!operation} onClick={clearTrash}>{tr('清空回收站…')}</button></div>}
         {submittedQuery && !connectionPage && <div className="search-summary"><Search size={16}/><span>{tr('“{0}” 的搜索结果', submittedQuery)}</span><small>{loading ? tr('正在搜索子文件夹…') : searchNote || tr('{0} 个匹配项目', visible.length)}</small><button onClick={() => { setQuery(''); setSubmittedQuery(''); }}>{tr('退出搜索')}</button></div>}
         <div ref={contentRef} tabIndex={0} className={`file-content view-${view} ${dragOver === location ? 'drop-target' : ''}`} aria-label={label(location)} aria-busy={loading}
           onPointerDown={startMarquee} onClickCapture={event => { if (suppressMarqueeClick.current) { event.preventDefault(); event.stopPropagation(); suppressMarqueeClick.current = false; } }}
           onContextMenu={event => contextMenu(event)}
           onDragOver={event => { if ((writable || location === AIRDROP) && !isPlaceDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = location === AIRDROP ? 'copy' : 'move'; setDragOver(location); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(null); }} onDrop={event => drop(event, location)}>
-          {location === AIRDROP ? <AirDropPage busy={!!operation} choose={() => sendAirDrop()}/> : location === NETWORK ? <NetworkPage volumes={boot?.volumes || []} refresh={refresh} query={submittedQuery} busy={!!operation} connect={connectNetwork} open={navigate} rescan={refreshDirectory}/> : location === PC && !submittedQuery ? <div className="computer-content"><h2><ChevronDown size={14}/>{tr('设备和驱动器（{0}）', boot?.volumes.length || 0)}</h2><div className="drive-grid">{boot?.volumes.map(volume => <button className="drive-card" key={volume.path} onContextMenu={event => menuAt(event, [{ label: tr('打开'), action: () => navigate(volume.path) }, ...(volume.canEject ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])} onDoubleClick={() => navigate(volume.path)} onKeyDown={event => { if (event.key === 'Enter') navigate(volume.path); }}><DriveGlyph path={volume.path}/><span className="drive-info"><strong title={volume.name}>{volume.name}</strong><span className="drive-kind">{tr('本地磁盘')}</span><span className="storage-track" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, (1 - volume.free / volume.total) * 100))}%` }}/></span><span className="drive-capacity"><span>{tr('{0} 可用', size(volume.free))}</span><span>{tr('共 {0}', size(volume.total))}</span></span></span></button>)}</div></div> : loading ? <Loading/> : visible.length ? fileRows() : <div className="empty-state">{submittedQuery ? <Search size={42} strokeWidth={1.2}/> : <FolderGlyph dimension={68}/>}<h2>{error ? tr('无法显示此位置') : submittedQuery ? tr('没有找到匹配的项目') : viewingTrash ? tr('回收站为空') : tr('此文件夹为空')}</h2><p>{error ? tr('检查访问权限，或返回上一个文件夹。') : submittedQuery ? tr('尝试其他名称，或到上一级文件夹中搜索。') : viewingTrash ? tr('这里显示回收站中的项目。') : tr('将文件拖到这里，或使用“新建”创建文件夹。')}</p>{error && <button className="secondary-button" onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button>}</div>}
+          {location === AIRDROP ? <AirDropPage busy={!!operation} choose={() => sendAirDrop()}/> : location === NETWORK ? <NetworkPage volumes={boot?.volumes || []} refresh={refresh} query={submittedQuery} busy={!!operation} connect={connectNetwork} open={navigate} rescan={refreshDirectory}/> : location === PC && !submittedQuery ? <div className="computer-content"><h2><ChevronDown size={14}/>{tr('设备和驱动器（{0}）', boot?.volumes.length || 0)}</h2><div className="drive-grid">{boot?.volumes.map(volume => <button className="drive-card" key={volume.path} onContextMenu={event => menuAt(event, [{ label: tr('打开'), action: () => navigate(volume.path) }, ...(volume.canEject ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])} onDoubleClick={() => navigate(volume.path)} onKeyDown={event => { if (event.key === 'Enter') navigate(volume.path); }}><DriveGlyph path={volume.path}/><span className="drive-info"><strong title={volume.name}>{volume.name}</strong><span className="drive-kind">{tr('本地磁盘')}</span><span className="storage-track" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, (1 - volume.free / volume.total) * 100))}%` }}/></span><span className="drive-capacity"><span>{tr('{0} 可用', size(volume.free))}</span><span>{tr('共 {0}', size(volume.total))}</span></span></span></button>)}</div></div> : loading ? <Loading/> : visible.length ? fileRows() : <div className="empty-state">{submittedQuery ? <Search size={42} strokeWidth={1.2}/> : <FolderGlyph dimension={68}/>}<h2>{error ? tr('无法显示此位置') : submittedQuery ? tr('没有找到匹配的项目') : viewingTrash ? tr('回收站为空') : tr('此文件夹为空')}</h2>{error && <button className="secondary-button" onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button>}</div>}
           {selectionBox && <div className="selection-marquee" style={selectionBox} aria-hidden="true"/>}
         </div>
       </main>
       {details && <aside className="details-pane" aria-label={tr('详细信息')}><div className="details-header"><h2>{tr('详细信息')}</h2><button aria-label={tr('关闭详细信息')} onClick={() => setDetails(false)}><X size={17}/></button></div>
-        {single ? <><div className="preview-hero">{preview?.kind === 'image' ? <img src={preview.content} alt={single.name}/> : <FileGlyph entry={single} dimension={70} badge={folderIcon(single.path)}/>}</div><h3>{single.name}</h3><p className="detail-kind">{type(single)}</p><dl><dt>{tr('位置')}</dt><dd title={parent(single.path)}>{parent(single.path)}</dd><dt>{tr('大小')}</dt><dd>{single.isDirectory ? tr('文件夹') : tr('{0}（{1} 字节）', size(single.size), single.size.toLocaleString(getLocale()))}</dd><dt>{tr('修改日期')}</dt><dd>{date(single.modified)}</dd><dt>{tr('创建日期')}</dt><dd>{date(single.created)}</dd>{single.isSymlink && <><dt>{tr('链接')}</dt><dd>{tr('符号链接')}</dd></>}</dl>{preview?.kind === 'text' && <div className="text-preview"><h4>{tr('内容预览')}</h4><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div>}<button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}<span>Space</span></button></> : <div className="details-empty">{chosen.length > 1 ? <Copy size={46} strokeWidth={1.1}/> : <FolderGlyph dimension={75}/>}<h3>{chosen.length > 1 ? tr('已选择 {0} 个项目', chosen.length) : label(location)}</h3><p>{chosen.length > 1 ? tr('文件大小合计 {0}', size(totalSelected)) : tr('选择一个文件，查看预览和详细信息。')}</p></div>}
+        {single ? <><div className="preview-hero">{preview?.kind === 'image' ? <img src={preview.content} alt={single.name}/> : <FileGlyph entry={single} dimension={70} badge={folderIcon(single.path)}/>}</div><h3>{single.name}</h3><p className="detail-kind">{type(single)}</p><dl><dt>{tr('位置')}</dt><dd title={parent(single.path)}>{parent(single.path)}</dd><dt>{tr('大小')}</dt><dd>{single.isDirectory ? tr('文件夹') : tr('{0}（{1} 字节）', size(single.size), single.size.toLocaleString(getLocale()))}</dd><dt>{tr('修改日期')}</dt><dd>{date(single.modified)}</dd><dt>{tr('创建日期')}</dt><dd>{date(single.created)}</dd>{single.isSymlink && <><dt>{tr('链接')}</dt><dd>{tr('符号链接')}</dd></>}</dl>{preview?.kind === 'text' && <div className="text-preview"><h4>{tr('内容预览')}</h4><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div>}<button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}<span>Space</span></button></> : <div className="details-empty">{chosen.length > 1 ? <Copy size={46} strokeWidth={1.1}/> : <FolderGlyph dimension={75}/>}<h3>{chosen.length > 1 ? tr('已选择 {0} 个项目', chosen.length) : label(location)}</h3>{chosen.length > 1 && <p>{tr('文件大小合计 {0}', size(totalSelected))}</p>}</div>}
       </aside>}
       {previewPane && <aside className="details-pane preview-pane" aria-label={tr('预览窗格')}><div className="details-header"><h2>{tr('预览')}</h2><button aria-label={tr('关闭预览')} onClick={() => setPreviewPane(false)}><X size={17}/></button></div>
-        {!single ? <div className="details-empty"><PanelRight size={46} strokeWidth={1.1}/><p>{chosen.length > 1 ? tr('请选择一个文件进行预览。') : tr('选择要预览的文件。')}</p></div> : <><h3>{single.name}</h3>{preview?.kind === 'image' ? <img className="pane-image-preview" src={preview.content} alt={single.name}/> : preview?.kind === 'text' ? <div className="text-preview"><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div> : <div className="details-empty"><FileGlyph entry={single} dimension={70} badge={folderIcon(single.path)}/><p>{preview ? single.isDirectory ? tr('文件夹不提供内容预览。') : tr('此文件无法在窗格中预览。') : tr('正在加载预览…')}</p>{!single.isDirectory && <button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}</button>}</div>}</>}
+        {!single ? <div className="details-empty"><PanelRight size={46} strokeWidth={1.1}/><p>{chosen.length > 1 ? tr('已选择 {0} 个项目', chosen.length) : tr('未选择项目')}</p></div> : <><h3>{single.name}</h3>{preview?.kind === 'image' ? <img className="pane-image-preview" src={preview.content} alt={single.name}/> : preview?.kind === 'text' ? <div className="text-preview"><pre>{preview.content}</pre>{preview.truncated && <small>{tr('仅显示前 16 KB')}</small>}</div> : <div className="details-empty"><FileGlyph entry={single} dimension={70} badge={folderIcon(single.path)}/><p>{preview ? tr('无预览') : tr('正在加载预览…')}</p>{!single.isDirectory && <button className="secondary-button" onClick={() => run(tr('正在预览…'), () => api.quickLook(single.path))}>{tr('快速查看')}</button>}</div>}</>}
       </aside>}
     </div>
 
@@ -1338,8 +1339,95 @@ export default function App() {
     {modal?.kind === 'archive' && <ArchiveDialog archive={modal.archive} onExtracted={() => setRefresh(v => v + 1)} onClose={() => setModal(null)}/>}
     {modal?.kind === 'settings' && <SettingsDialog theme={theme} language={language} onThemeChange={async mode => setTheme(await api.setTheme(mode))} onLanguageChange={changeLanguage} toolbar={toolbar} onToolbarChange={setToolbar} tools={toolbarTools} onClose={() => setModal(null)}/>}
     {modal?.kind === 'vcs' && <VcsDialog directory={modal.directory} paths={modal.paths} action={modal.action} enabled={!!vcsEnabled} onChanged={() => setRefresh(value => value + 1)} onClose={() => setModal(null)}/>}
-    {modal && modal.kind !== 'archive' && modal.kind !== 'settings' && modal.kind !== 'vcs' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
+    {modal?.kind === 'properties' && <PropertiesDialog entries={modal.entries} onClose={() => setModal(null)}/>}
+    {modal && modal.kind !== 'archive' && modal.kind !== 'settings' && modal.kind !== 'vcs' && modal.kind !== 'properties' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
   </div>;
+}
+
+function PropertiesDialog({ entries, onClose }: { entries: FileEntry[]; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
+  function moveDialog(left: number, top: number) {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    Object.assign(dialog.style, {
+      margin: '0', right: 'auto', bottom: 'auto',
+      left: `${Math.max(12, Math.min(left, innerWidth - bounds.width - 12))}px`,
+      top: `${Math.max(12, Math.min(top, innerHeight - bounds.height - 12))}px`,
+    });
+  }
+  function startDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || !event.isPrimary || (event.target as Element).closest('button')) return;
+    event.preventDefault();
+    ref.current?.getAnimations().forEach(animation => animation.finish());
+    const bounds = ref.current!.getBoundingClientRect();
+    drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  function endDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+  useEffect(() => {
+    const clamp = () => {
+      const dialog = ref.current;
+      if (dialog?.style.left) moveDialog(parseFloat(dialog.style.left), parseFloat(dialog.style.top));
+    };
+    const resize = () => { drag.current = null; clamp(); };
+    const observer = new ResizeObserver(clamp);
+    if (ref.current) observer.observe(ref.current);
+    window.addEventListener('resize', resize);
+    return () => { observer.disconnect(); window.removeEventListener('resize', resize); };
+  }, []);
+  const id = useId();
+  const [data, setData] = useState<FileProperties | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    ref.current?.showModal();
+    let live = true;
+    const request = crypto.randomUUID();
+    void api.properties(entries.map(entry => entry.path), request).then(value => { if (live) setData(value); }).catch(error => { if (live) setError(errorMessage(error)); });
+    return () => { live = false; void api.cancelProperties(request).catch(() => {}); };
+  }, []);
+  const current = data?.entries || entries;
+  const single = current.length === 1 ? current[0] : null;
+  const name = single?.name || tr('{0} 个项目', current.length);
+  const locations = [...new Set(current.map(entry => parent(entry.path)))];
+  const number = (value: number) => value.toLocaleString(getLocale());
+  const bytes = (value: number) => value < 1024 ? size(value) : tr('{0}（{1} 字节）', size(value), number(value));
+  const pending = error ? tr('不可用') : tr('正在计算…');
+  return <dialog ref={ref} className="modal properties-dialog" aria-labelledby={`${id}-title`} onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}>
+    <div className="modal-heading properties-drag-handle" role="group" tabIndex={0} aria-label={tr('拖动或使用方向键移动属性窗口')} onPointerDown={startDrag} onPointerMove={event => {
+      const current = drag.current;
+      if (current?.pointerId === event.pointerId) moveDialog(current.left + event.clientX - current.x, current.top + event.clientY - current.y);
+    }} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={() => { drag.current = null; }} onKeyDown={event => {
+      if (event.target !== event.currentTarget) return;
+      const delta = ({ ArrowLeft: [-10, 0], ArrowRight: [10, 0], ArrowUp: [0, -10], ArrowDown: [0, 10] } as Record<string, number[]>)[event.key];
+      if (!delta) return;
+      event.preventDefault();
+      ref.current?.getAnimations().forEach(animation => animation.finish());
+      const bounds = ref.current!.getBoundingClientRect(); moveDialog(bounds.left + delta[0], bounds.top + delta[1]);
+    }}><h2 id={`${id}-title`}>{tr('{0} 属性', name)}</h2><button aria-label={tr('关闭属性')} onClick={onClose}><X size={17}/></button></div>
+    <div className="properties-tabs" role="tablist" aria-label={tr('属性')}><button id={`${id}-tab`} role="tab" aria-selected="true" aria-controls={`${id}-panel`}>{tr('常规')}</button></div>
+    <section className="properties-panel" id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-tab`}>
+      <div className="properties-name">{single ? <FileGlyph entry={single} dimension={42}/> : <Copy size={38} strokeWidth={1.4}/>}<input aria-label={tr('名称')} readOnly value={name}/></div>
+      <dl className="properties-fields">
+        <dt>{tr('类型')}</dt><dd>{single ? type(single) : tr('多个项目')}</dd>
+        <dt>{tr('位置')}</dt><dd>{locations.length === 1 ? locations[0] : tr('多个位置')}</dd>
+      </dl>
+      <dl className="properties-fields properties-storage" aria-busy={!data && !error} aria-live="polite">
+        <dt>{tr('大小')}</dt><dd>{data ? bytes(data.size) : pending}</dd>
+        <dt>{tr('占用空间')}</dt><dd>{data ? bytes(data.allocated) : pending}</dd>
+        {(current.length > 1 || single?.isDirectory) && <><dt>{tr('包含')}</dt><dd>{data ? tr('{0} 个文件，{1} 个文件夹', number(data.files), number(data.folders)) : pending}</dd></>}
+      </dl>
+      {single && <><dl className="properties-fields"><dt>{tr('创建日期')}</dt><dd>{date(single.created)}</dd><dt>{tr('修改日期')}</dt><dd>{date(single.modified)}</dd></dl><div className="properties-attributes"><span>{tr('属性')}</span><div>{data ? <label><input type="checkbox" checked={data.readOnly === true} disabled/>{tr('只读')}</label> : <span className="properties-pending">{error ? tr('不可用') : tr('正在读取…')}</span>}<label><input type="checkbox" checked={single.hidden} disabled/>{tr('隐藏')}</label></div></div></>}
+      {data && data.skipped > 0 && <p className="properties-note" role="status">{tr('部分统计 · {0} 项无法读取', number(data.skipped))}</p>}
+      {error && <p className="modal-error" role="alert">{error}</p>}
+    </section>
+    <div className="properties-actions"><button className="secondary-button" onClick={onClose}>{tr('取消')}</button><button className="primary-button" onClick={onClose}>{tr('确定')}</button></div>
+  </dialog>;
 }
 
 function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePreview; onClose: () => void; onExtracted: () => void }) {
@@ -1382,7 +1470,7 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
     lock.current = true; setBusy(true); setMessage(tr('正在打开文件…')); setFailure(false);
     try {
       await api.openArchiveFile(archive.path, folder + name);
-      setMessage(tr('已用默认应用打开临时副本。修改不会写回压缩包；需要保留修改请另存到指定位置。'));
+      setMessage(tr('已打开临时副本 · 修改需另存'));
     } catch (e) { setFailure(true); setMessage(errorMessage(e)); }
     finally { lock.current = false; setBusy(false); }
   }
@@ -1410,7 +1498,7 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
         <button className="secondary-button" disabled={busy || !selected.size} onClick={() => extract(false)}>{tr('解压选中项')}</button><button className="primary-button" disabled={busy || !archive.entries.length} onClick={() => extract(true)}>{tr('全部解压')}</button>
       </div>
     </div>
-    <div className="archive-selection"><label><input type="checkbox" aria-label={tr('全选当前目录')} disabled={busy || !items.length} checked={!!items.length && selected.size === items.length} onChange={event => setSelected(new Set(event.target.checked ? items.map(([name]) => name) : []))}/>{tr('全选当前目录')}</label><span>{tr('保留包内目录结构 · 已选 {0} 项', selected.size)}</span></div>
+    <div className="archive-selection"><label><input type="checkbox" aria-label={tr('全选当前目录')} disabled={busy || !items.length} checked={!!items.length && selected.size === items.length} onChange={event => setSelected(new Set(event.target.checked ? items.map(([name]) => name) : []))}/>{tr('全选当前目录')}</label><span>{tr('已选 {0} 项', selected.size)}</span></div>
     <div className="archive-list" role="list" aria-label={tr('压缩包内容')} aria-busy={busy}>{items.length ? items.map(([name, directory]) => <div key={name} className={`archive-entry ${selected.has(name) ? 'selected' : ''}`}>
       <input type="checkbox" aria-label={tr('选择 {0}', name)} checked={selected.has(name)} disabled={busy} onChange={() => toggle(name)}/>
       <button disabled={busy} aria-label={`${name}${directory ? tr(' 文件夹') : ''}`} onClick={event => { if (event.ctrlKey || event.metaKey) toggle(name); else setSelected(new Set([name])); }} onDoubleClick={() => openMember(name, directory)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openMember(name, directory); } }}>
@@ -1419,7 +1507,7 @@ function ArchiveDialog({ archive, onClose, onExtracted }: { archive: ArchivePrev
     </div>) : <p className="archive-empty">{tr('此压缩包为空')}</p>}</div>
     {message && <div className={`archive-result ${failure ? 'failed' : ''}`} role={failure ? 'alert' : 'status'}>{message}</div>}
     {modeMenu && <ContextMenu popup={modeMenu} label={tr('解压位置')} onClose={closeModeMenu}/>}
-    <div className="archive-footer"><span>{busy ? tr('正在处理压缩包，请稍候…') : tr('{0} 个项目 · 同名项目会跳过，不覆盖', items.length)}</span><button className="secondary-button" disabled={busy} onClick={close}>{tr('关闭')}</button></div>
+    <div className="archive-footer"><span>{busy ? tr('正在处理…') : tr('{0} 个项目 · 跳过同名项', items.length)}</span><button className="secondary-button" disabled={busy} onClick={close}>{tr('关闭')}</button></div>
   </dialog>;
 }
 
@@ -1526,7 +1614,7 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
   const operationsChanged = JSON.stringify(operationDraft) !== JSON.stringify(settings?.operationShortcuts ?? {});
   const display = shortcut.replace('Command', '⌘').replace('Control', '⌃').replace('Alt', '⌥').replace('Shift', '⇧');
   return <dialog ref={ref} className="modal settings-dialog" aria-labelledby={`${id}-title`} onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
-    <div className="modal-heading settings-drag-handle" role="group" tabIndex={0} aria-label={tr('拖动或使用方向键移动设置窗口')} title={tr('拖动或使用方向键移动设置窗口')} onPointerDown={startDrag} onPointerMove={event => {
+    <div className="modal-heading settings-drag-handle" role="group" tabIndex={0} aria-label={tr('拖动或使用方向键移动设置窗口')} onPointerDown={startDrag} onPointerMove={event => {
       const current = drag.current;
       if (current?.pointerId === event.pointerId) moveDialog(current.left + event.clientX - current.x, current.top + event.clientY - current.y);
     }} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={() => { drag.current = null; }} onKeyDown={event => {
@@ -1565,7 +1653,7 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
             <p>{tr('不会替换桌面及系统“打开／保存”窗口。')}</p>
           </SettingsHelp>
         </div>
-        {fileViewer && !fileViewer.available && <p className="settings-note">{tr('请在打包后的 Mac Explorer 中设置文件查看器。')}</p>}
+        {fileViewer && !fileViewer.available && <p className="settings-note">{tr('不可用')}</p>}
         {(fileViewerError || fileViewer?.error) && <p className="modal-error" role="alert">{fileViewerError || fileViewer?.error}</p>}
       </fieldset>
       <fieldset className="settings-group"><legend>{tr('版本控制')}</legend><div className="settings-toggle-row"><label className="settings-toggle"><input type="checkbox" aria-describedby={`${id}-vcs-note`} checked={settings?.versionControl ?? true} disabled={!settings || busy} onChange={event => {
@@ -1600,14 +1688,12 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
             <option value="ascending">{tr('递增')}</option><option value="descending">{tr('递减')}</option>
           </select></label>
           </div>
-          <p className="settings-note">{tr('在文件夹中更改布局或排序只影响该文件夹，其余文件夹使用这里的默认值。')}</p>
           <div className="settings-reset-row"><button type="button" className="secondary-button" disabled={!settings || busy} onClick={() => void save(async () => { const value = await api.resetFolderViews(); setFoldersReset(true); return value; })}>{tr('重置所有文件夹')}</button>
-            {foldersReset && <span className="settings-note" role="status">{tr('所有文件夹已跟随默认值。')}</span>}</div>
+            {foldersReset && <span className="settings-note" role="status">{tr('已重置')}</span>}</div>
         </>;
       })()}</fieldset>
     </div>
     <div className="settings-panel" id={`${id}-panel-toolbar`} role="tabpanel" aria-labelledby={`${id}-tab-toolbar`} hidden={section !== 'toolbar'} tabIndex={0}>
-      <p className="settings-note">{tr('勾选显示按钮，使用箭头调整顺序。更改自动保存。')}</p>
       <div className="toolbar-options" role="group" aria-label={tr('工具栏按钮')}>
         {[...toolbar, ...toolbarActions.filter(id => !toolbar.includes(id))].map(id => {
           const index = toolbar.indexOf(id); const tool = tools[id];
@@ -1624,7 +1710,6 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
     <div className="settings-panel" id={`${id}-panel-shortcuts`} role="tabpanel" aria-labelledby={`${id}-tab-shortcuts`} hidden={section !== 'shortcuts'} tabIndex={0}>
 
       <section className="settings-shortcuts"><h3>{tr('文件操作快捷键')}</h3>
-        <p className="settings-note">{tr('点击组合键框后按键录入；自定义会替换该操作的原有组合。')}</p>
         <div className="operation-shortcuts">
           {shortcutActionIDs.map(action => {
             const label = tr(shortcutActions[action].label);
@@ -1644,14 +1729,13 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
             </div>;
           })}
         </div>
-        <p className="settings-note">{tr('检查操作之间、唤醒快捷键及常见系统保留组合的冲突。输入框保留文本编辑快捷键。')}</p>
         <div className="operation-shortcut-feedback">
           {operationConflict && <p className="settings-shortcut-error" role="alert">{operationConflict}</p>}
           <div className="shortcut-save-actions"><button className="secondary-button" disabled={!settings || busy || !Object.keys(operationDraft).length} onClick={() => { setOperationDraft({}); setError(''); }}>{tr('恢复默认快捷键')}</button>
           <button className="primary-button" disabled={!settings || busy || !operationsChanged || !!operationConflict} onClick={() => void save(async () => { const value = await api.setOperationShortcuts(operationDraft); setOperationDraft(value.operationShortcuts); return value; })}>{tr('保存操作快捷键')}</button></div>
         </div>
       </section>
-    <fieldset className="settings-group"><legend>{tr('唤醒快捷键')}</legend><p>{tr('设置后可从任何应用唤醒 Mac Explorer。')}</p>
+    <fieldset className="settings-group"><legend>{tr('唤醒快捷键')}</legend>
       <div className="shortcut-setting"><input aria-label={tr('唤醒快捷键')} placeholder={tr('点击后按下快捷键')} readOnly value={display} disabled={!settings || busy} onKeyDown={event => {
         if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) return;
         event.stopPropagation(); event.preventDefault();
@@ -1662,7 +1746,6 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
         if (next) setShortcut(next);
         setError('');
       }}/><button className="secondary-button" disabled={!shortcut || busy} onClick={() => setShortcut('')}>{tr('清除')}</button></div>
-      <p className="settings-note">{tr('请使用修饰键组合或 F1–F24 功能键。')}</p>
       {wakeConflict && <p className="settings-shortcut-error" role="alert">{wakeConflict}</p>}
       <button className="primary-button" disabled={!settings || busy || !!wakeConflict || shortcut === settings.wakeShortcut && !settings.wakeShortcutError} onClick={() => void save(() => api.setWakeShortcut(shortcut))}>{tr('保存快捷键')}</button>
     </fieldset>
@@ -1755,7 +1838,7 @@ function NavigationTree({ place, folderIcon, location, hidden, navigate, newTab,
     {expanded && <div role="group" aria-label={tr('{0} 的子文件夹', place.name)}>{error ? <p className="tree-note" title={error}>{tr('无法访问')}</p> : !loading && !children.length ? <p className="tree-note">{tr('没有子文件夹')}</p> : children.map(child => <NavigationTree key={child.path} place={{ path: child.path, name: child.name, icon: folderIcon(child.path) || 'folder' }} folderIcon={folderIcon} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} context={context} level={Math.min(level + 1, 6)}/>)}</div>}
   </div>;
 }
-function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' | 'settings' | 'vcs' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
+function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }: { modal: Exclude<Modal, { kind: 'archive' | 'settings' | 'vcs' | 'properties' }>; value: string; onChange: (value: string) => void; error: string; busy: boolean; onClose: () => void; onSubmit: (skipTrashConfirmation?: boolean) => void }) {
   const [skipTrashConfirmation, setSkipTrashConfirmation] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null); const inputRef = useRef<HTMLInputElement>(null); const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -1769,7 +1852,7 @@ function ModalDialog({ modal, value, onChange, error, busy, onClose, onSubmit }:
   const title = modal.kind === 'trash' ? tr('移到回收站') : modal.kind === 'rename' ? tr('重命名') : modal.kind === 'folder' ? tr('新建文件夹') : tr('新建文本文档');
   return <dialog ref={dialogRef} className="modal" aria-labelledby="modal-title" onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}>
     <form onSubmit={event => { event.preventDefault(); onSubmit(modal.kind === 'trash' && skipTrashConfirmation); }}><div className="modal-heading"><h2 id="modal-title">{title}</h2><button type="button" aria-label={tr('关闭对话框')} onClick={onClose} disabled={busy}><X size={18}/></button></div>
-      {modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p><small>{tr('文件将移入 macOS 回收站，你可以从那里恢复。')}</small></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
+      {modal.kind === 'trash' ? <div className="trash-description"><Trash2 size={34} strokeWidth={1.4}/><div><p>{modal.paths.length === 1 ? tr('将“{0}”移到回收站？', base(modal.paths[0])) : tr('将这 {0} 个项目移到回收站？', modal.paths.length)}</p></div></div> : <><label className="name-label" htmlFor="entry-name">{tr('名称')}</label><input ref={inputRef} id="entry-name" value={value} onChange={event => onChange(event.target.value)} disabled={busy} autoComplete="off"/><p className="modal-location">{tr('位置：')}{modal.kind === 'rename' ? parent(modal.path) : modal.path}</p></>}
       {modal.kind === 'trash' && <label className="trash-confirmation-preference"><input type="checkbox" checked={skipTrashConfirmation} disabled={busy} onChange={event => setSkipTrashConfirmation(event.target.checked)}/>{tr('不再显示此提示')}</label>}
       {error && <p className="modal-error" role="alert">{error}</p>}
       <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{tr('取消')}</button><button type="submit" ref={confirmRef} className="primary-button" disabled={busy || modal.kind !== 'trash' && !value.trim()}>{busy ? tr('正在处理…') : modal.kind === 'trash' ? tr('移到回收站') : tr('确定')}</button></div>
