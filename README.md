@@ -12,8 +12,6 @@
 
 Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户，提供多标签、路径栏、导航树、文件操作、压缩包浏览和 Git / SVN 集成。应用直接管理本机文件，与 Finder 共存，不替换 Finder。
 
-**1.1.0 是原生架构更新：由 Electron 迁移至 Swift + AppKit，运行时不再依赖 Electron、Node.js 或 WebView。** `main` 维护原生版，旧 Electron 实现保留在 [`electron` 分支](https://github.com/qixiaoyu27/Mac-Explorer/tree/electron)。
-
 ## 下载与安装
 
 支持 **Apple Silicon（M 系列）· macOS 13 及以上**。暂不提供 Intel、Windows 或 Linux 安装包；macOS 13 最低版本尚未完成实机回归。
