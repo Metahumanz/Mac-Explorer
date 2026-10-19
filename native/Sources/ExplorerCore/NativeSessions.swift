@@ -1,0 +1,23 @@
+import Foundation
+
+public struct NativeSavedWindow: Codable, Sendable {
+  public let locations: [String]
+  public let frame: String
+  public init(locations: [String], frame: String) { self.locations = locations; self.frame = frame }
+}
+public enum NativeSessions {
+  public static func validLocation(_ value: String) -> URL? {
+    guard value.utf8.count <= 32768, !value.contains("\0"), let url = URL(string: value) else { return nil }
+    if url.isFileURL, url.path.hasPrefix("/"), url.query == nil, url.fragment == nil, url.user == nil, url.password == nil, url.host == nil || url.host == "" || url.host == "localhost" { return url }
+    if url.scheme == "explorer", ["computer", "trash", "airdrop", "network"].contains(url.host ?? ""), url.query == nil, url.fragment == nil { return url }
+    return nil
+  }
+  public static func load(_ defaults: UserDefaults) -> [NativeSavedWindow] {
+    guard let data = defaults.data(forKey: "nativeWindows"), data.count <= 1024 * 1024, let windows = try? JSONDecoder().decode([NativeSavedWindow].self, from: data) else { return [] }
+    return windows.prefix(12).map { NativeSavedWindow(locations: Array($0.locations.filter { validLocation($0) != nil }.prefix(100)), frame: String($0.frame.prefix(512))) }.filter { !$0.locations.isEmpty }
+  }
+  public static func save(_ windows: [NativeSavedWindow], to defaults: UserDefaults) throws {
+    let valid = windows.prefix(12).map { NativeSavedWindow(locations: Array($0.locations.filter { validLocation($0) != nil }.prefix(100)), frame: String($0.frame.prefix(512))) }
+    defaults.set(try JSONEncoder().encode(valid), forKey: "nativeWindows")
+  }
+}

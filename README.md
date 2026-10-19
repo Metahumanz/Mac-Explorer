@@ -1,3 +1,5 @@
+> `main` 维护 Swift/AppKit 原生版，构建、运行与功能说明见 [native/README.md](native/README.md)。Electron 版保留在 [`electron`](https://github.com/qixiaoyu27/Mac-Explorer/tree/electron) 分支。以下历史发行说明对应 Electron 版；原生版尚未发布。
+
 <div align="center">
   <img src="design/icon-selected-mirrored.png" width="112" alt="Mac Explorer 图标">
   <h1>Mac Explorer</h1>

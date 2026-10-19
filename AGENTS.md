@@ -1,6 +1,10 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Branch Layout
+
+`main` maintains the Swift/AppKit application in `native/`. `electron` preserves the Electron implementation. For native builds and checks, follow `native/README.md`: use `python3 -I native/scripts/build.py`, `python3 -I native/scripts/check-core.py`, and `python3 -I native/scripts/smoke.py --validation`. Native outputs in `native/output/` and `native/.build/` are generated and must remain untracked. The Electron directories below remain as legacy code and shared build resources; do not remove them without checking native build dependencies.
+
+## Project Structure & Module Organization (Electron)
 
 Mac Explorer is an Electron application that reproduces Windows 11 File Explorer workflows on macOS. `src/` contains the React interface and CSS tokens; `electron/` owns native integration, filesystem operations, undo history, and the isolated preload bridge. `shared/types.ts` defines the IPC contract. `tests/` contains filesystem tests; `scripts/` contains build, icon, and desktop smoke tooling. Generated application bundles live in `release/`.
 

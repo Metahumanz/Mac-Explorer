@@ -1,0 +1,117 @@
+# Mac Explorer Native
+
+Swift + AppKit 的独立实现，最低 macOS 13，不依赖 Electron、Node.js 或 WebView。原生控件复现 Windows 11 文件资源管理器的工作流，并复用现有 Swift 文件图标服务、文档模板和图标资源。
+
+原生版由 `main` 分支维护，Electron 版保留在 `electron` 分支。原型最初基于 `4473c44`。本轮对齐基线是主工作区 `db820e2` 及其当前 1.1.0 开发改动，不是本工作树内保留的旧 Electron 源码。原生版本号见 `VERSION`；它有独立 Bundle ID 和偏好设置。本轮只开发和隔离检查，不安装、发布或重新公开已撤回的版本，不替换 Finder 或自动启用系统默认项。
+
+## 构建和打开
+
+在本工作树根目录执行，需要 macOS、Xcode Command Line Tools 和 Python 3：
+
+```sh
+python3 -I native/scripts/build.py
+open 'native/output/Mac Explorer Native.app'
+```
+
+指定文件夹：
+
+```sh
+open -n 'native/output/Mac Explorer Native.app' --args --path "$HOME/Documents"
+```
+
+已有原型正在运行时使用独立测试构建：
+
+```sh
+python3 -I native/scripts/build.py --validation
+open 'native/output/validation/Mac Explorer Native.app'
+```
+
+普通构建 Bundle ID 为 `local.macexplorer.native-prototype`；测试构建为 `local.macexplorer.native-validation`。构建只写入忽略提交的 `native/output/` 与 `native/.build/`，不安装应用。产物是本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证。
+
+## 功能实现
+
+以下是已接入源码的能力清单。实际检查结果以本轮终端输出及新生成的检查报告为准，不把旧截图或旧报告当作本轮验收。
+
+- Explorer 标签栏、命令栏、面包屑、地址编辑和建议、导航树、排序/查看/更多菜单、状态栏；浅色、深色、跟随系统。
+- 八种布局、图标大小、紧凑视图、复选框、扩展名和隐藏项目；详细信息及预览窗格；键盘选择、框选、拖放、长名称展开与 Quick Look。
+- 每文件夹分别保存布局和排序覆盖；打开时更新最近使用时间，最多保留 5,000 个位置；全局默认设置和重置；跨窗口设置同步。
+- 独立标签导航历史、中键关闭、悬停拖动切换标签、拖出独立窗口；当前窗口菜单；窗口与会话保存、Dock 新建窗口/标签、无窗口重新唤起和外部打开。
+- 快速访问固定、取消固定、拖动排序、跨窗口同步；只读导入 Finder 收藏夹，按来源顺序合并且不删除已有固定项；iCloud Drive 位于此电脑分组。
+- 文件夹 vnode 监听、保留选择与滚动、编辑/模态期间延后刷新；递归名称搜索有数量上限且不穿过符号链接或应用包。
+- 新建文件夹、文本和 Office 模板；复制、剪切、粘贴、副本、拖入拖出、重命名、系统回收站与撤销；打开方式提供默认应用、共同可用应用、其他应用和纯文本编辑。
+- 独立可拖动属性窗口：大小、实际占用、文件/文件夹数、日期、只读和隐藏属性；后台统计可取消；帮助仅在问号悬停或焦点时显示。
+- 多卷回收站汇总、来源记录、原地还原/选择还原目录、清空前确认；iCloud 权限失败时选择授权目录、取消和错误显示。
+- 压缩包内部浏览、子目录导航、选择、临时打开、安全解压到指定位置和 ZIP 压缩；使用随应用构建的 libarchive C helper。
+- Git/SVN 状态角标和父目录汇总、分支、差异、暂存/添加、提交、更新、丢弃；执行前预览、陈旧计划拒绝及丢弃备份；关闭集成会停止检测进程。
+- 简中、繁中、英文和跟随系统；工具栏定制、操作快捷键录入/冲突校验及恢复默认；操作快捷键允许规定的裸按键，系统全局唤醒键仍要求修饰键或功能键。
+- 此电脑实际挂载卷和容量、卷推出；AirDrop 文件选择/拖入；SMB 地址连接和 Bonjour 发现；鼠标侧键及触控板导航。
+- 可选系统文件查看器接入及恢复、全局唤醒、原生专用自动更新与安装入口。系统默认项仅在用户明确启用后修改，原生更新拒绝 Electron 产物。
+
+## 文件安全边界
+
+实际文件操作会执行；普通删除进入系统回收站。清空回收站是单独确认的永久操作。
+
+- 新建、复制和移动拒绝覆盖现有目标，包括断裂符号链接；同目录复制编号，同目录移动为空操作，目录不能转入自己或后代。
+- 系统根、系统目录和当前用户主目录作为修改源时拒绝重命名、移动或删除；普通复制保留。用户创建的符号链接只操作链接本身。
+- 撤销记录保存操作完成后目标的设备、inode 和出生时间；路径被外部替换后拒绝操作。撤销新建/复制仍进入回收站，恢复原位置拒绝碰撞；部分失败可重试。
+- 回收站来源记录同时绑定条目、回收站根和原父目录身份；父目录被链接替换时拒绝自动还原，可另选目录。清空只操作确认时顶层条目及根身份仍匹配的项目，不清理随后新增的顶层项目；链接只删除自身。
+- 解压拒绝路径穿越、链接越界、覆盖和源归档覆盖；Git/SVN 操作限制在所选仓库并拒绝陈旧预览，丢弃前创建备份。
+- 跨卷复制/移动不是原子事务；网络断线、外部并发改写和操作间竞争无法只靠临时目录检查完成全部实机验收。
+
+## 检查入口
+
+无需 XCTest 的核心检查，所有破坏性夹具限定在新建临时目录：
+
+```sh
+python3 -I native/scripts/check-core.py
+python3 -I native/scripts/check-trash.py
+python3 -I native/scripts/check-vcs.py
+python3 -I native/scripts/check-archives.py
+python3 -I native/scripts/check-localization.py
+python3 -I native/scripts/check-native-install.py
+```
+
+`check-core.py` 覆盖目录、过滤/排序、文件操作、属性、监听、快速访问、最新核心能力、网络解析、回收站、更新与系统文件查看器，也可传入检查名运行单项。`check-trash.py` 专测撤销身份和模拟多卷回收站，不调用用户真实 Trash。Git/SVN 检查创建本地临时仓库和仓库服务端；安装检查用签名夹具和临时安装目录，不覆盖日常应用。
+
+隔离 AppKit 检查：
+
+```sh
+python3 -I native/scripts/smoke.py --validation
+```
+
+测试构建使用独立 Bundle ID；文件操作使用临时目录、模拟回收站和命名剪贴板。检查包含真实 AppKit 控件及独立窗口的生命周期、视图设置、操作快捷键等入口。应用内事件驱动不等同于外部辅助功能或真实 Finder 操作；根目录旧的 `native/output/smoke/` 报告不代表本轮新检查结果。普通构建也可运行 `smoke.py`，但应先关闭对应原型实例。
+
+标准 XCTest 用例位于 `Tests/ExplorerCoreTests/`，需要包含 XCTest 的完整工具链；只有实际执行 `swift test --package-path native` 成功后才能报告通过。
+
+## 原生产物
+
+正常构建后可生成独立原生 DMG/ZIP：
+
+```sh
+python3 -I native/scripts/package-release.py
+```
+
+产物使用 `Mac-Explorer-Native-{version}-mac-arm64` 名称和 `SHA256SUMS-native.txt`，不会冒充或覆盖 Electron 发布附件。`scripts/install-native.sh` 与 `update-native.sh` 是原生安装/更新入口，校验版本、校验和、Bundle ID、可执行文件和签名。本轮没有向 GitHub 发布原生附件，也没有将开发产物安装到用户的 Applications。
+
+## 视觉对照
+
+```sh
+node native/scripts/reference.mjs
+python3 -I native/scripts/compare.py --validation
+```
+
+Electron 对照入口需要已安装依赖并构建；`EXPLORER_REFERENCE_ROOT` 可指向实际主工作区，避免把本工作树的旧 Electron 当作新功能基线。对照输出位于 `native/output/reference/`，文件与截图均为夹具。AppKit 与 Chromium 的文字、菜单、阴影、滚动条和焦点绘制不同；功能对齐不表示逐像素一致。
+
+## 尚需真实环境验收
+
+当前不再把压缩包、Git/SVN、多语言、选择框选、回收站或系统集成列为“未实现”。源码接入与全部使用环境验收仍须分开：
+
+- 真实 iCloud 授权弹窗、取消、账号/同步状态及权限恢复；真实 Finder 收藏夹变化和跨应用剪切板操作。
+- AirDrop 实际接收方、SMB 登录/断线、Bonjour 的真实局域网发现；外接卷推出及物理跨卷失败恢复。
+- macOS 13 最低版本与不同硬件、系统隐私授权和默认处理器的完整实机路径。
+- 公开原生更新服务、真实下载后退出安装和回滚，以及 Developer ID/公证分发；临时签名夹具不能代替公开更新验收。
+- 当前目录监听不是递归内容同步；应用外原地改写和特殊网络卷事件仍可能需要刷新。
+
+## 源码位置
+
+`Sources/ExplorerCore/` 管理目录、搜索、文件操作、回收站、属性、监听、归档、Git/SVN、更新验证和本地化。`Sources/MacExplorerNative/` 管理 AppKit 主界面、窗口、设置、对话框、系统集成和界面检查。`Helpers/ArchiveReader.c` 为归档 helper；`scripts/` 提供构建、隔离检查、对照和原生打包工具。SVG 图标许可见 `ICON-LICENSE.txt`。

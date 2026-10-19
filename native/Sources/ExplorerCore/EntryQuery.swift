@@ -1,0 +1,58 @@
+import Foundation
+
+public enum EntrySort: String, CaseIterable, Sendable {
+  case name
+  case modified
+  case size
+  case kind
+}
+
+public enum EntryQuery {
+  public static func apply(
+    _ entries: [FileEntry],
+    showHidden: Bool,
+    query: String,
+    sort: EntrySort,
+    ascending: Bool
+  ) -> [FileEntry] {
+    let locale = NativeLanguage.formatLocale
+    let textOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+    let nameOptions: String.CompareOptions = [.numeric, .caseInsensitive, .diacriticInsensitive]
+    return entries.filter { entry in
+      (showHidden || !entry.isHidden)
+        && (query.isEmpty || entry.name.range(of: query, options: textOptions, locale: locale) != nil)
+    }.sorted { left, right in
+      if left.isDirectory != right.isDirectory { return left.isDirectory }
+
+      var order: ComparisonResult
+      switch sort {
+      case .name:
+        order = left.name.compare(right.name, options: nameOptions, locale: locale)
+      case .modified:
+        switch (left.modified, right.modified) {
+        case let (leftDate?, rightDate?): order = compare(leftDate, rightDate)
+        case (nil, .some): order = .orderedAscending
+        case (.some, nil): order = .orderedDescending
+        case (nil, nil): order = .orderedSame
+        }
+      case .size:
+        order = compare(left.size, right.size)
+      case .kind:
+        order = left.kind.compare(right.kind, options: nameOptions, locale: locale)
+      }
+      if order == .orderedSame {
+        order = left.name.compare(right.name, options: nameOptions, locale: locale)
+      }
+      if order == .orderedSame {
+        order = left.url.path.compare(right.url.path, options: .literal)
+      }
+      return ascending ? order == .orderedAscending : order == .orderedDescending
+    }
+  }
+
+  private static func compare<Value: Comparable>(_ left: Value, _ right: Value) -> ComparisonResult {
+    if left < right { return .orderedAscending }
+    if left > right { return .orderedDescending }
+    return .orderedSame
+  }
+}

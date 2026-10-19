@@ -1,0 +1,62 @@
+import { _electron as electron } from 'playwright';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+
+const output = path.resolve('native/output/reference');
+await fs.mkdir(output, { recursive: true });
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-reference-'));
+await fs.mkdir(path.join(root, '.Trash'));
+for (const name of ['Applications', 'Desktop', 'Downloads', 'Documents', 'Pictures', 'Music', 'Movies']) await fs.mkdir(path.join(root, name));
+const docs = path.join(root, 'Documents');
+for (const name of ['项目资料', '设计素材', '归档']) await fs.mkdir(path.join(docs, name));
+for (const [name, content] of [['会议记录.txt', '项目进度\n界面复刻核对\n'], ['产品需求.md', '# 产品需求\n文件资源管理器\n'], ['预算清单.csv', '项目,金额\n开发,1200\n'], ['使用说明.txt', '界面验证夹具\n'], ['.隐藏说明.txt', '隐藏项目\n']]) await fs.writeFile(path.join(docs, name), content);
+for (let i = 1; i <= 18; i++) await fs.writeFile(path.join(docs, `文档 ${String(i).padStart(2, '0')}.txt`), `文件内容 ${i}\n`);
+for (const name of await fs.readdir(docs)) await fs.utimes(path.join(docs, name), new Date('2026-10-16T01:00:00Z'), new Date('2026-10-16T01:00:00Z'));
+await fs.writeFile(path.join(output, 'fixture-path.txt'), docs);
+const referenceRoot = process.env.EXPLORER_REFERENCE_ROOT || process.cwd();
+const app = await electron.launch({ args: [referenceRoot], env: { ...process.env, EXPLORER_TEST_ROOT: root, EXPLORER_TEST_LOCALE: 'zh-CN', EXPLORER_TEST_HIDDEN: '1' } });
+try {
+  const page = await app.firstWindow();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1180, 780));
+  await page.getByRole('option', { name: '会议记录.txt', exact: true }).waitFor();
+  await page.evaluate(async () => { await window.explorer.setTheme('light'); await window.explorer.setVersionControl(false); });
+  await page.locator('.vcs-summary').waitFor({ state: 'detached' });
+  const choose = async name => { await page.getByRole('button', { name: '查看', exact: true }).click(); await page.getByRole('menuitemradio', { name, exact: true }).click(); await page.waitForTimeout(250); };
+  await choose('详细信息');
+  await page.screenshot({ path: path.join(output, 'electron-details.png') });
+  await fs.writeFile(path.join(output, 'geometry.json'), JSON.stringify(await page.evaluate(() => Object.fromEntries(['.tab-strip', '.navigation-bar', '.command-bar', '.sidebar', '.file-content', '.status-bar', '.address-bar', '.search-box'].map(selector => { const e = document.querySelector(selector); const r = e.getBoundingClientRect(); return [selector, { x: r.x, y: r.y, width: r.width, height: r.height }]; }))), null, 2));
+  await page.getByRole('button', { name: '查看', exact: true }).click();
+  await page.screenshot({ path: path.join(output, 'electron-view-menu.png') });
+  await page.keyboard.press('Escape');
+  await choose('大图标');
+  await page.screenshot({ path: path.join(output, 'electron-icons.png') });
+  await page.evaluate(async () => { await window.explorer.setTheme('dark'); });
+  await choose('详细信息');
+  await page.screenshot({ path: path.join(output, 'electron-dark.png') });
+  await page.evaluate(async () => { await window.explorer.setTheme('light'); });
+  await page.getByRole('button', { name: '更多', exact: true }).click();
+  await page.getByRole('menuitem', { name: '设置…', exact: true }).click();
+  await page.locator('.settings-dialog').waitFor();
+  await page.screenshot({ path: path.join(output, 'electron-settings.png') });
+  for (const [title, file] of [['自定义工具栏', 'electron-settings-toolbar.png'], ['键盘快捷键', 'electron-settings-shortcuts.png']]) {
+    await page.locator('.settings-dialog').getByRole('tab', { name: title, exact: true }).click();
+    await page.screenshot({ path: path.join(output, file) });
+  }
+  await page.locator('.settings-dialog').getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '新建', exact: true }).click();
+  await page.getByRole('menuitem', { name: '文件夹', exact: true }).click();
+  await page.locator('.inline-name').waitFor();
+  await page.screenshot({ path: path.join(output, 'electron-new-folder.png') });
+  await page.locator('.inline-name').press('Escape');
+  await fs.rmdir(path.join(docs, '新建文件夹'));
+  await page.getByRole('option', { name: '产品需求.md', exact: true }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '属性', exact: true }).click();
+  await page.locator('.properties-dialog').waitFor();
+  await page.waitForTimeout(350);
+  await page.screenshot({ path: path.join(output, 'electron-properties.png') });
+  await fs.writeFile(path.join(output, 'properties-geometry.json'), JSON.stringify(await page.locator('.properties-dialog').evaluate(element => { const rect = element.getBoundingClientRect(); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }; }), null, 2));
+  await page.locator('.properties-dialog').getByRole('button', { name: '取消', exact: true }).click();
+  await fs.writeFile(path.join(output, 'reference-version.json'), JSON.stringify({ root: referenceRoot, version: await app.evaluate(({ app }) => app.getVersion()) }, null, 2));
+  console.log(`Reference screenshots saved. Fixture: ${docs}`);
+} finally { await app.close(); }
