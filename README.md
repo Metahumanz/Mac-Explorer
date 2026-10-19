@@ -4,8 +4,8 @@
   <p><strong>熟悉的文件管理方式，自然融入 Mac。</strong></p>
   <p>为习惯 Windows 文件资源管理器的你，带来一款原生 Mac 文件管理应用。</p>
   <p>
-    <a href="https://github.com/qixiaoyu27/Mac-Explorer/releases/latest"><strong>下载 Mac Explorer</strong></a> &nbsp;·&nbsp;
-    <a href="#下载与安装">安装指南</a> &nbsp;·&nbsp;
+    <a href="#下载与安装"><strong>一键安装</strong></a> &nbsp;·&nbsp;
+    <a href="https://github.com/qixiaoyu27/Mac-Explorer/releases/latest">下载安装包</a> &nbsp;·&nbsp;
     <a href="https://github.com/qixiaoyu27/Mac-Explorer/releases">更新记录</a>
   </p>
   <p><sub>macOS 13 及以上 · Apple Silicon（M 系列）· 免费开源</sub></p>
@@ -41,24 +41,26 @@
 
 适用于 **Apple Silicon（M 系列）Mac，macOS 13 及以上**。
 
-1. 前往 [下载页面](https://github.com/qixiaoyu27/Mac-Explorer/releases/latest)，选择 **DMG** 安装包。
-2. 打开 DMG，将 **Mac Explorer** 拖入 **Applications（应用程序）**。更新时请先退出旧版本。
-3. 打开应用，按需允许访问桌面、文稿或下载文件夹。
+### 一键安装或升级
 
-**首次打开：** 当前版本尚未经过 Apple 公证。如果 macOS 阻止打开，请确认安装包来自本仓库，再前往「系统设置 → 隐私与安全性」允许打开。如果系统明确提示恶意软件，请勿继续运行。
-
-**后续更新：** 在「设置 → 关于」中检查更新，或从下载页面获取新版本。
-
-<details>
-<summary>偏好终端？一条命令安装或升级</summary>
-
-先退出 Mac Explorer，然后执行：
+打开「终端」，粘贴以下命令并回车。已安装的用户请先退出 Mac Explorer，再执行同一命令升级。
 
 ```sh
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.1.0/scripts/install.sh)"
 ```
 
-默认安装到 `/Applications/Mac Explorer.app`。命令使用固定版本的安装脚本，下载最新正式版应用；安装前自动校验下载文件，不需要 Homebrew 或 sudo。
+自动下载最新正式版并安装到「应用程序」，安装前校验下载文件，无需 Homebrew 或 sudo。
+
+**首次打开：** 当前版本尚未经过 Apple 公证。如果 macOS 阻止打开，请确认安装包来自本仓库，再前往「系统设置 → 隐私与安全性」允许打开。如果系统明确提示恶意软件，请勿继续运行。首次访问文件夹时，按需授予权限。
+
+**后续更新：** 再次执行上方命令，或在「设置 → 关于」中检查更新。
+
+<details>
+<summary>也可以手动安装 DMG</summary>
+
+1. 前往 [下载页面](https://github.com/qixiaoyu27/Mac-Explorer/releases/latest)，选择 **DMG** 安装包。
+2. 打开 DMG，将 **Mac Explorer** 拖入 **Applications（应用程序）**。更新时请先退出旧版本。
+3. 打开应用，按需允许访问桌面、文稿或下载文件夹。
 
 </details>
 
