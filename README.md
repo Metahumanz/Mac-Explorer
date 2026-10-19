@@ -31,7 +31,15 @@
 brew install --cask qixiaoyu27/tap/mac-explorer
 ```
 
-通过我们维护的 Tap 下载正式版，校验后安装到「应用程序」。没有 Homebrew，也可以直接 [下载 DMG](https://github.com/qixiaoyu27/Mac-Explorer/releases/latest)。
+通过我们维护的 Tap 下载正式版，校验后安装到「应用程序」。
+
+**还没有 Homebrew？** 先执行 [Homebrew 官方安装命令](https://brew.sh/)：
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+完成后按终端中的「Next steps」提示配置环境，再运行上方 Mac Explorer 安装命令。也可以直接 [下载 DMG](https://github.com/qixiaoyu27/Mac-Explorer/releases/latest)。
 
 <sub>应用支持 macOS 13 及以上 · Apple Silicon（M 系列）；Homebrew 自身的系统要求以其官网为准。</sub>
 
