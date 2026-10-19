@@ -3,7 +3,31 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { listTrash } from '../electron/trash';
+import { listTrash, recycleItem } from '../electron/trash';
+
+test('iCloud recycle retries after a scoped folder selection and preserves files on cancellation or failure', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-cloud-trash-'));
+  try {
+    const cloud = path.join(root, 'iCloud'); const folder = path.join(cloud, 'folder');
+    await fs.mkdir(folder, { recursive: true });
+    const source = path.join(folder, '归档.zip'); await fs.writeFile(source, 'preserved');
+    const denied = () => Object.assign(new Error('Denied'), { code: 'EACCES' });
+    let calls = 0; let prompts = 0;
+    const recycle = async () => { calls++; if (calls === 1) throw denied(); return '/trash/result'; };
+    assert.equal(await recycleItem(source, cloud, recycle, async initial => { prompts++; assert.equal(initial, cloud); return cloud; }), '/trash/result');
+    assert.equal(calls, 2); assert.equal(prompts, 1);
+    calls = 0;
+    assert.equal(await recycleItem(source, cloud, recycle, async () => folder), '/trash/result');
+    const fail = async () => { throw denied(); };
+    await assert.rejects(recycleItem(source, cloud, fail, async () => null), { code: 'ECANCELED' });
+    await assert.rejects(recycleItem(source, cloud, fail, async () => root), /请选择/);
+    await assert.rejects(recycleItem(source, cloud, fail, async () => cloud), { code: 'EACCES' });
+    const noPrompt = async () => { assert.fail('Unrelated failures must not request iCloud access'); };
+    await assert.rejects(recycleItem(path.join(root, 'local'), cloud, fail, noPrompt), { code: 'EACCES' });
+    await assert.rejects(recycleItem(source, cloud, async () => { throw Object.assign(new Error('Missing'), { code: 'ENOENT' }); }, noPrompt), { code: 'ENOENT' });
+    assert.equal(await fs.readFile(source, 'utf8'), 'preserved');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
 
 test('trash browsing merges roots, preserves files and confines directory navigation', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-trash-test-'));

@@ -3,6 +3,7 @@ import type { ExplorerAPI } from '../shared/types';
 
 const api: ExplorerAPI = {
   bootstrap: () => ipcRenderer.invoke('bootstrap'),
+  finderFavorites: () => ipcRenderer.invoke('finder-favorites'),
   detachTab: (tab, point, single) => ipcRenderer.invoke('detach-tab', tab, point, single),
   windowReady: () => ipcRenderer.invoke('window-ready'),
   setLanguage: mode => ipcRenderer.invoke('set-language', mode),

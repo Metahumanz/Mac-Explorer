@@ -678,5 +678,18 @@
   "差异已截断（3,000 行）": "Diff truncated (3,000 lines)",
   "已完成": "Completed",
   "备份：{0}": "Backup: {0}",
-  "已打开临时副本 · 修改需另存": "Temporary copy opened · Save changes separately"
+  "已打开临时副本 · 修改需另存": "Temporary copy opened · Save changes separately",
+  "从 Finder 导入收藏夹": "Import Finder favorites",
+  "收藏夹导入说明": "Favorites import help",
+  "读取 Finder 收藏夹并合并到快速访问，保留现有项目和顺序。": "Read Finder favorites and merge them into Quick Access, preserving existing items and order.",
+  "已导入 {0} 项": "Imported {0} items",
+  "没有新增收藏夹": "No new favorites",
+  "未找到收藏夹": "No favorites found",
+  "跳过 {0} 项": "Skipped {0} items",
+  "无法读取 Finder 收藏夹。": "Unable to read Finder favorites.",
+  "无法将项目移到回收站。": "Could not move the item to the Recycle Bin.",
+  "已取消": "Cancelled",
+  "允许访问 iCloud Drive": "Allow access to iCloud Drive",
+  "允许访问": "Allow access",
+  "请选择包含该项目的 iCloud Drive 文件夹。": "Choose an iCloud Drive folder containing this item."
 }

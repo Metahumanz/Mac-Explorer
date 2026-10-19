@@ -1,5 +1,6 @@
 #import <AppKit/AppKit.h>
 #include <node_api.h>
+#include <cerrno>
 #include <string>
 
 static napi_value Text(napi_env env, NSString *value) {
@@ -108,14 +109,47 @@ static napi_value Share(napi_env env, napi_callback_info info) {
   napi_value result; napi_get_undefined(env, &result); return result;
 }
 
+static napi_value TrashItem(napi_env env, napi_callback_info info) {
+  size_t argc = 1; napi_value paths;
+  napi_get_cb_info(env, info, &argc, &paths, nullptr, nullptr);
+  if (argc != 1) { napi_throw_type_error(env, nullptr, "Expected one file path"); return nullptr; }
+  NSArray<NSURL *> *items = FileURLs(env, paths);
+  if (!items) return nullptr;
+  if (items.count != 1) { napi_throw_type_error(env, nullptr, "Expected one file path"); return nullptr; }
+  napi_deferred deferred; napi_value promise;
+  napi_create_promise(env, &deferred, &promise);
+  // Use the app's identity and Finder's recycle service, including File Provider locations.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [[NSWorkspace sharedWorkspace] recycleURLs:items completionHandler:^(NSDictionary<NSURL *, NSURL *> *destinations, NSError *error) {
+      napi_handle_scope scope; napi_open_handle_scope(env, &scope);
+      NSURL *destination = destinations[items.firstObject];
+      if (destination) napi_resolve_deferred(env, deferred, Text(env, destination.path));
+      else {
+        napi_value failure;
+        napi_create_error(env, nullptr, Text(env, error.localizedDescription ?: @"无法将项目移到回收站。"), &failure);
+        if (([error.domain isEqualToString:NSCocoaErrorDomain] && (error.code == NSFileWriteNoPermissionError || error.code == NSFileReadNoPermissionError)) ||
+            ([error.domain isEqualToString:NSPOSIXErrorDomain] && (error.code == EACCES || error.code == EPERM)) ||
+            ([error.domain isEqualToString:NSOSStatusErrorDomain] && (error.code == -54 || error.code == -5000))) {
+          napi_set_named_property(env, failure, "code", Text(env, @"EACCES"));
+        }
+        napi_reject_deferred(env, deferred, failure);
+      }
+      napi_close_handle_scope(env, scope);
+    }];
+  });
+  return promise;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
-  napi_value airDrop, shareServices, share;
+  napi_value airDrop, shareServices, share, trashItem;
   napi_create_function(env, "airDrop", NAPI_AUTO_LENGTH, AirDrop, nullptr, &airDrop);
   napi_create_function(env, "shareServices", NAPI_AUTO_LENGTH, ShareServices, nullptr, &shareServices);
   napi_create_function(env, "share", NAPI_AUTO_LENGTH, Share, nullptr, &share);
   napi_set_named_property(env, exports, "shareServices", shareServices);
   napi_set_named_property(env, exports, "share", share);
   napi_set_named_property(env, exports, "airDrop", airDrop);
+  napi_create_function(env, "trashItem", NAPI_AUTO_LENGTH, TrashItem, nullptr, &trashItem);
+  napi_set_named_property(env, exports, "trashItem", trashItem);
   return exports;
 }
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)

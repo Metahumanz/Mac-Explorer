@@ -25,12 +25,7 @@ if (!fs.existsSync(binary) || Math.max(fs.statSync(source).mtimeMs, fs.statSync(
   execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', source, '-o', binary], { stdio: 'inherit' });
   execFileSync('codesign', ['--force', '--sign', '-', binary], { stdio: 'inherit' });
 }
-const trashSource = 'electron/native/TrashItem.swift';
-const trashBinary = 'dist-electron/native/trash-item';
-if (!fs.existsSync(trashBinary) || fs.statSync(trashSource).mtimeMs > fs.statSync(trashBinary).mtimeMs) {
-  execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', trashSource, '-o', trashBinary], { stdio: 'inherit' });
-  execFileSync('codesign', ['--force', '--sign', '-', trashBinary], { stdio: 'inherit' });
-}
+fs.rmSync('dist-electron/native/trash-item', { force: true });
 const volumesSource = 'electron/native/Volumes.swift';
 const volumesBinary = 'dist-electron/native/volumes';
 if (!fs.existsSync(volumesBinary) || fs.statSync(volumesSource).mtimeMs > fs.statSync(volumesBinary).mtimeMs) {
@@ -54,6 +49,12 @@ const terminalBinary = 'dist-electron/native/default-terminal';
 if (!fs.existsSync(terminalBinary) || fs.statSync(terminalSource).mtimeMs > fs.statSync(terminalBinary).mtimeMs) {
   execFileSync('xcrun', ['swiftc', '-target', 'arm64-apple-macos13.0', '-O', terminalSource, '-o', terminalBinary], { stdio: 'inherit' });
   execFileSync('codesign', ['--force', '--sign', '-', terminalBinary], { stdio: 'inherit' });
+}
+const favoritesSource = 'electron/native/FinderFavorites.swift';
+const favoritesBinary = 'dist-electron/native/finder-favorites';
+if (!fs.existsSync(favoritesBinary) || Math.max(fs.statSync(favoritesSource).mtimeMs, fs.statSync('scripts/build-electron.mjs').mtimeMs) > fs.statSync(favoritesBinary).mtimeMs) {
+  execFileSync('xcrun', ['swiftc', '-suppress-warnings', '-target', 'arm64-apple-macos13.0', '-O', favoritesSource, '-o', favoritesBinary], { stdio: 'inherit' });
+  execFileSync('codesign', ['--force', '--sign', '-', favoritesBinary], { stdio: 'inherit' });
 }
 const archiveSource ='electron/native/ArchiveReader.c';
 const archiveBinary = 'dist-electron/native/archive-reader';

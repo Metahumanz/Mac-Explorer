@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'explorer-about-'));
+const version = JSON.parse(await fs.readFile('package.json', 'utf8')).version;
+const nextVersion = version.split('.').map((part, index) => Number(part) + (index === 2 ? 1 : 0)).join('.');
 await fs.mkdir(path.join(root, 'Documents'));
 await fs.mkdir('artifacts/settings', { recursive: true });
 let app;
@@ -19,7 +21,7 @@ try {
   };
   await open();
   const info = await page.evaluate(() => window.explorer.about());
-  assert.equal(info.version, JSON.parse(await fs.readFile('package.json', 'utf8')).version);
+  assert.equal(info.version, version);
   assert.equal(info.author, 'qixiaoyu27'); assert.equal(info.license, 'GPL-3.0-only');
   await page.getByRole('heading', { name: 'Mac Explorer', exact: true }).waitFor();
   await assert.rejects(page.evaluate(() => window.explorer.openProject('https://example.com')), /无效/);
@@ -28,23 +30,23 @@ try {
   assert.deepEqual(await app.evaluate(() => globalThis.openedProjectURLs), ['https://github.com/qixiaoyu27/Mac-Explorer/releases']);
   await assert.rejects(page.evaluate(() => window.explorer.installUpdate()), /下载/);
   assert.equal((await page.evaluate(() => window.explorer.updateState())).canInstall, false);
-  await app.evaluate(() => {
+  await app.evaluate(({}, nextVersion) => {
     globalThis.updateMode = 'available'; globalThis.updateRequests = [];
     globalThis.fetch = async url => {
       globalThis.updateRequests.push(url);
       if (globalThis.updateMode === 'offline') throw new Error('Fixture offline');
-      const version = globalThis.updateMode === 'current' ? '0.0.1' : '0.1.999';
+      const version = globalThis.updateMode === 'current' ? '0.0.1' : nextVersion;
       return new Response(JSON.stringify({ tag_name: `v${version}`, body: 'Fixture release notes\n<script>window.untrusted=true</script>', assets: [`Mac-Explorer-${version}-mac-arm64.zip`, 'SHA256SUMS.txt'].map(name => ({ name, size: 100, browser_download_url: `https://github.com/qixiaoyu27/Mac-Explorer/releases/download/v${version}/${name}` })) }), { status: 200 });
     };
-  });
+  }, nextVersion);
   await page.getByRole('button', { name: '检查更新', exact: true }).click();
-  await page.getByText('发现新版本 0.1.999', { exact: true }).waitFor();
+  await page.getByText(`发现新版本 ${nextVersion}`, { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: '下载更新', exact: true }).count(), 0);
   assert.equal(await page.locator('.update-notes').count(), 0);
   assert.equal(await page.getByText('Fixture release notes', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => window.untrusted), undefined);
   await page.getByRole('button', { name: '关闭设置', exact: true }).click();
-  await open(); await page.getByText('发现新版本 0.1.999', { exact: true }).waitFor();
+  await open(); await page.getByText(`发现新版本 ${nextVersion}`, { exact: true }).waitFor();
   assert.deepEqual(await app.evaluate(() => globalThis.updateRequests), ['https://api.github.com/repos/qixiaoyu27/Mac-Explorer/releases/latest']);
   await app.evaluate(() => { globalThis.updateMode = 'offline'; });
   await page.getByRole('button', { name: '检查更新', exact: true }).click();

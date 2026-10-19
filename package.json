@@ -1,6 +1,6 @@
 {
   "name": "mac-explorer",
-  "version": "0.1.61",
+  "version": "1.0.0",
   "private": true,
   "description": "A Windows 11-style file explorer for macOS",
   "main": "dist-electron/main.cjs",
@@ -32,6 +32,7 @@
     "test:document-icons": "npm run build && node scripts/document-icons-smoke.mjs",
     "test:motion": "npm run build && node scripts/motion-smoke.mjs",
     "test:trash-confirmation": "npm run build && node scripts/trash-confirmation-smoke.mjs",
+    "test:trash-native": "npm run build && node scripts/trash-native-smoke.mjs",
     "test:applications-address": "npm run build && node scripts/applications-address-smoke.mjs",
     "test:office-thumbnails": "npm run build && node scripts/office-thumbnails-smoke.mjs",
     "test:thumbnail-cache": "npm run build && node scripts/thumbnail-cache-smoke.mjs",
@@ -59,7 +60,8 @@
     "test:updater-asar": "npm run build && node scripts/updater-asar-smoke.mjs",
     "test:folder-view": "npm run build && node scripts/folder-view-smoke.mjs && node scripts/folder-view-sync-smoke.mjs",
     "test:address-bar": "npm run build && node scripts/address-bar-smoke.mjs && node scripts/address-bar-regression-smoke.mjs",
-    "test:text-input-shortcuts": "npm run build && node scripts/text-input-shortcuts-smoke.mjs"
+    "test:text-input-shortcuts": "npm run build && node scripts/text-input-shortcuts-smoke.mjs",
+    "test:finder-favorites": "npm run build && node scripts/finder-favorites-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

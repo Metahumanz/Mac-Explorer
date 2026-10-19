@@ -7,13 +7,14 @@ export interface FileEntry {
   size: number; modified: number; created: number; extension: string; hidden: boolean;
 }
 export interface Place { path: string; name: string; icon: string }
+export interface FinderFavorites { places: Place[]; skipped: number }
 export interface ShareService { title: string; icon: string }
 export interface FileViewerSettings { enabled: boolean; canRestore: boolean; available: boolean; error: string }
 export interface Volume extends Place { total: number; free: number; canEject: boolean; isNetwork: boolean }
 export interface NetworkServer { name: string; address: string }
 export type ThemeMode = 'light' | 'dark' | 'system';
 export interface TabState { location: string; history: string[]; index: number }
-export interface Bootstrap { initialTab?: TabState; language: LanguageState; theme: ThemeMode; home: string; places: Place[]; volumes: Volume[]; folderViews: { defaults: FolderView; overrides: Record<string, FolderViewOverride> }; initialPath?: string }
+export interface Bootstrap { initialTab?: TabState; language: LanguageState; theme: ThemeMode; home: string; places: Place[]; cloudDrive?: Place; volumes: Volume[]; folderViews: { defaults: FolderView; overrides: Record<string, FolderViewOverride> }; initialPath?: string }
 export interface Listing { path: string; entries: FileEntry[] }
 export interface FileProperties {
   entries: FileEntry[]; size: number; allocated: number; files: number; folders: number;
@@ -35,6 +36,7 @@ export interface UpdateState {
 }
 export interface ExplorerAPI {
   bootstrap(): Promise<Bootstrap>;
+  finderFavorites(): Promise<FinderFavorites>;
   detachTab(tab: TabState, point: { x: number; y: number }, single: boolean): Promise<void>;
   windowReady(): Promise<void>;
   setLanguage(mode: LanguageMode): Promise<LanguageState>;

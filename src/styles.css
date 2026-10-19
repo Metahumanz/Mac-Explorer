@@ -573,3 +573,9 @@ button, .tab, .file-row, .archive-row {
 .about-link:hover { text-decoration-thickness: 2px; }
 .settings-dialog .about-update .modal-error { color: var(--danger, #b92727); white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (prefers-color-scheme: dark) { .settings-dialog .about-update .modal-error { color: #ffaaaa; } }
+
+.icon-icloud { color: var(--accent); }
+.settings-legend-help { display: inline-flex; align-items: center; gap: 5px; }
+.favorites-import-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.favorites-import-status > svg { color: var(--accent); flex-shrink: 0; }
+.favorites-import-button { display: inline-flex; align-items: center; gap: 8px; }

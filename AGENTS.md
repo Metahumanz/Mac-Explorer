@@ -38,6 +38,7 @@ Pull requests should explain the change, its purpose, and validation performed. 
 ## Release Notes Guidelines
 
 - Use the project skill `.agents/skills/mac-explorer-release/SKILL.md` for packaging, installation, source push, and GitHub releases.
+- From 1.0.0, follow the SemVer policy in [README.md](README.md#版本策略): PATCH for compatible fixes, MINOR for compatible features, MAJOR for incompatible changes. Choose versions from accumulated release scope, not build count; never overwrite published versions.
 - Keep public release notes focused on changes, contributor credit, and installation. Do not include a validation section or test inventory; still perform necessary release checks internally.
 - Credit contributions inline after each update item: `（#123，@author）`, linking the PR and its author. Credit the actual contributors rather than only the person who merged the PR.
 - Verify attribution against the commits and merged PRs included since the previous release; do not present older contributions as new changes.

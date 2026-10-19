@@ -5,6 +5,20 @@ import { createHash } from 'node:crypto';
 import { absolute, listDirectory, moveNoReplace, readableError } from './files';
 import type { TrashListing, OperationResult } from '../shared/types';
 
+export async function recycleItem(input: string, cloudRoot: string, recycle: (input: string) => Promise<string>, chooseFolder: (root: string) => Promise<string | null>): Promise<string> {
+  const source = absolute(input);
+  try { return await recycle(source); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EACCES' || !source.startsWith(cloudRoot + path.sep)) throw error;
+    // File Provider access can require an Open panel selection even with its privacy switch enabled.
+    const chosen = await chooseFolder(cloudRoot);
+    if (!chosen) throw Object.assign(new Error(tr('已取消')), { code: 'ECANCELED' });
+    const directory = absolute(chosen);
+    if ((directory !== cloudRoot && !directory.startsWith(cloudRoot + path.sep)) || !source.startsWith(directory + path.sep)) throw new Error(tr('请选择包含该项目的 iCloud Drive 文件夹。'));
+    return recycle(source);
+  }
+}
+
 export async function listTrash(roots: string[], directory?: string): Promise<TrashListing> {
   const result: TrashListing = { entries: [], roots, unavailable: [] };
   if (directory !== undefined) {

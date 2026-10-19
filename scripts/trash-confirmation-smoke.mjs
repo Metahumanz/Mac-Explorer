@@ -15,6 +15,7 @@ try {
     globalThis.failTrash = false;
     ipcMain.removeHandler('trash');
     ipcMain.handle('trash', (_event, paths) => {
+      if (globalThis.failTrash === 'result') return { succeeded: [], errors: paths.map(path => ({ path, message: 'Fixture trash failure' })) };
       if (globalThis.failTrash) throw new Error('Test failure');
       globalThis.trashCalls.push(paths);
       return { succeeded: paths, errors: [] };
@@ -54,6 +55,12 @@ try {
   await page.waitForFunction(() => document.querySelector('.status-feedback')?.textContent.includes('已移到回收站'));
   assert.equal(await dialog.count(), 0);
   assert.equal(await app.evaluate(() => globalThis.trashCalls.length), 3);
+  await app.evaluate(() => { globalThis.failTrash = 'result'; });
+  await open();
+  await page.getByRole('alert').filter({ hasText: 'Fixture trash failure' }).waitFor();
+  await page.getByRole('button', { name: '刷新 (F5)', exact: true }).click();
+  await page.getByRole('option', { name: 'example.txt', exact: true }).waitFor();
+  assert.match(await page.getByRole('alert').innerText(), /Fixture trash failure/);
   assert.equal(await fs.readFile(path.join(root, 'Documents', 'example.txt'), 'utf8'), 'Preserve this fixture');
-  console.log('PASS: cancel does not persist; failure remains retryable; confirm persists; shortcut skips after reload; fixture preserved.');
+  console.log('PASS: cancel does not persist; failure remains retryable and visible after refresh; confirm persists; shortcut skips after reload; fixture preserved.');
 } finally { await app.close(); await fs.rm(root, { recursive: true, force: true }); }

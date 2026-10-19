@@ -40,7 +40,7 @@ Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户：熟悉�
 打开 macOS 的「终端」，复制并执行：
 
 ```sh
-MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.53/scripts/install.sh)"
+MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.0.0/scripts/install.sh)"
 ```
 
 如果 Mac Explorer 让你用 Mac 更顺手，欢迎到 [GitHub 点个 ⭐ Star](https://github.com/qixiaoyu27/Mac-Explorer)，支持项目持续更新！
@@ -60,7 +60,7 @@ MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.gi
 如果你信任本项目，并同意移除 **Mac Explorer 这一个应用**的下载隔离标记，可以直接使用这一行：
 
 ```sh
-MAC_EXPLORER_INSTALL_DIR=/Applications MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v0.1.53/scripts/install.sh)"
+MAC_EXPLORER_INSTALL_DIR=/Applications MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.0.0/scripts/install.sh)"
 ```
 
 它将下载、校验、移除该应用的隔离标记、安装和启动合并执行。SHA-256 和应用签名校验仍然保留，校验失败就停止；不需要 `sudo`，不关闭系统 Gatekeeper，也不修改其他应用。这不是 Apple 公证或安全背书，系统其他安全检查仍可能拦截。若系统明确提示恶意软件，请勿使用此方式继续运行。
@@ -105,10 +105,20 @@ xattr -dr com.apple.quarantine "/Applications/Mac Explorer.app"
 每次发布附带 `SHA256SUMS.txt`。在下载目录运行以下命令，并将输出与同一 Release 中的校验文件对照：
 
 ```sh
-shasum -a 256 Mac-Explorer-0.1.40-mac-arm64.dmg
+shasum -a 256 Mac-Explorer-1.0.0-mac-arm64.dmg
 ```
 
 使用 ZIP 时，对 ZIP 文件执行相同校验即可。
+
+## 版本策略
+
+从 **1.0.0** 起遵循[语义化版本（SemVer）](https://semver.org/lang/zh-CN/)，采用 `主版本.次版本.修订版本`：
+
+- **PATCH**：兼容的缺陷修复或小幅界面修正，例如 `1.0.0 → 1.0.1`。
+- **MINOR**：兼容的新增功能，例如 `1.0.1 → 1.1.0`，修订版本归零。
+- **MAJOR**：不兼容变更，例如 `1.1.0 → 2.0.0`，次版本和修订版本归零。
+
+兼容性以公开约定的文件操作、系统打开集成、安装与更新入口、偏好与数据格式，以及支持平台为准；内部重构或 IPC 调整本身不构成主版本升级。每次正式发布根据累计变更决定版本，不按本地构建次数递增。已发布的版本、tag 和附件不可覆盖，修正须发布新版本。
 
 ## 熟悉的操作，真正的 Mac 文件
 
@@ -118,7 +128,7 @@ shasum -a 256 Mac-Explorer-0.1.40-mac-arm64.dmg
 | 在路径栏直接输入 | 单击当前路径即可编辑；面包屑可快速跳转上级目录 |
 | 按自己的方式看文件 | 八种视图、32–128 px 图标调节、Retina 图标、排序与紧凑视图 |
 | 一次选择多个文件 | 空白处拖动框选，支持边缘滚动；⌘/Ctrl 增减选择、Shift 追加、Esc 取消。项目复选框悬停时显示，勾选后保持显示 |
-| 常用目录随手可达 | 快速访问固定与取消固定，默认目录也可取消 |
+| 常用目录随手可达 | 快速访问固定与取消固定，默认目录也可取消；支持从 Finder 导入收藏夹 |
 | 右键完成日常任务 | 新建、重命名、复制、剪切、粘贴、ZIP 压缩、选择打开方式、使用文本编辑、打开终端 |
 | 从图标识别文件 | PDF 首页、图片及 Office 内容缩略图，右下角显示默认应用图标；Office 预览范围由 macOS Quick Look 决定，无法预览时回退系统文件图标。更改默认应用后刷新目录生效 |
 | 不打开文件也能看内容 | 文本和图片预览、详细信息窗格、Space 调用 macOS 快速查看 |
@@ -154,6 +164,12 @@ ZIP、TAR.GZ、7z 已通过测试；其他格式（包括 RAR）取决于 macOS 
 *首页浅色截图来自 v0.1.53，深色截图来自 v0.1.25；均为实际应用，使用临时演示目录，不包含个人数据。*
 
 启动应用和新建标签页默认进入个人文件夹。侧栏保留快速访问固定项；启动时保留其他目录标签页，并选中个人文件夹。
+
+### Finder 收藏夹与 iCloud Drive
+
+在 **设置 → 常规 → 快速访问** 点击「从 Finder 导入收藏夹」，将可访问的收藏文件夹合并到快速访问，保留已有顺序并跳过重复项；不会修改 Finder 收藏夹。以后新增的收藏夹可再次导入。
+
+已启用的 iCloud Drive 显示在侧栏「此电脑」及磁盘列表下方。删除文件因访问权限被拒绝时，应用会请求选择允许访问的 iCloud 文件夹；取消后保留原文件。
 
 ## 设置
 

@@ -87,7 +87,7 @@ try {
   const toggle = () => page.getByRole('switch', { name: '使用 Mac Explorer 显示文件', exact: true });
   assert.equal(await toggle().isChecked(), false);
   const help = () => page.getByRole('button', { name: '文件查看器说明', exact: true });
-  const bubble = () => page.locator('.settings-help').first().getByRole('tooltip', { includeHidden: true });
+  const bubble = () => page.locator('.settings-help-bubble[id$="-file-viewer-note"]');
   assert.equal(await bubble().isVisible(), false);
   assert.ok(await toggle().locator('xpath=../..').evaluate(element => element.getBoundingClientRect().height) < 40);
   await help().hover(); await page.getByRole('tooltip').waitFor();
@@ -98,7 +98,7 @@ try {
     assert.equal(await page.getByText(text, { exact: true }).isVisible(), true);
   }
   await page.getByRole('heading', { name: '设置', exact: true }).hover();
-  await page.waitForFunction(() => !document.querySelector('[role=tooltip]').matches(':popover-open'));
+  await page.waitForFunction(() => [...document.querySelectorAll('[role=tooltip]')].every(element => !element.matches(':popover-open')));
   await help().focus(); await page.getByRole('tooltip').waitFor();
   await page.keyboard.press('Escape');
   assert.equal(await bubble().isVisible(), false);
@@ -136,7 +136,7 @@ try {
   assert.equal(await page.getByText('仅在仓库内启用。关闭后停止状态检测与刷新；需要已安装 Git 或 SVN 命令行工具。', { exact: true }).isVisible(), true);
   await page.screenshot({ path: path.resolve('artifacts/file-viewer/vcs-help-light-fixture.png') });
   await page.getByRole('heading', { name: '设置', exact: true }).hover();
-  await page.waitForFunction(() => !document.querySelectorAll('[role=tooltip]')[1].matches(':popover-open'));
+  await page.waitForFunction(() => [...document.querySelectorAll('[role=tooltip]')].every(element => !element.matches(':popover-open')));
   await vcsHelp.focus(); await page.getByRole('tooltip').waitFor(); await page.keyboard.press('Escape');
   assert.equal(await vcsBubble.isVisible(), false);
   assert.equal((await page.evaluate(() => window.explorer.settings())).versionControl, true);

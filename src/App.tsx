@@ -5,7 +5,7 @@ import { t as tr, getLocale, setLocale, type LanguageState, type LanguageMode } 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   Archive, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ArrowDownWideNarrow, Radar, Check, ChevronDown, ChevronRight,
-  ClipboardPaste, Copy, Download, ExternalLink, FilePlus2, FileText, Film, FolderOpen,
+  ClipboardPaste, Copy, Download, ExternalLink, FilePlus2, FileText, Film, FolderOpen, Cloud, FolderInput,
   FolderPlus, HardDrive, Image, Info, CircleHelp, LayoutGrid, List, Loader2, Sheet, Presentation,
   PanelLeft, Eye, FileType, SquareCheck, ChevronsDownUp,
   Monitor, MoreHorizontal, Music2, PanelRight, Pin, Plus, RotateCw, Scissors, AppWindow, Globe,
@@ -77,7 +77,7 @@ function Eject({ size = 16 }: { size?: number }) {
 
 function PlaceIcon({ icon, size: dimension = 18 }: { icon: string; size?: number }) {
   if (icon === 'applications') return <svg width={dimension} height={dimension} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="place-icon icon-applications" aria-hidden="true"><path d="m9 3 10 17M15 3 5 20M3 15h11m4 0h3"/></svg>;
-  const Component = ({ trash: Trash2, star: Star, desktop: Monitor, download: Download, document: FileText, image: Image, music: Music2, video: Film, drive: HardDrive, folder: FolderOpen, computer: Monitor, airdrop: Radar, network: Globe } as Record<string, typeof FolderOpen>)[icon] || FolderOpen;
+  const Component = ({ trash: Trash2, star: Star, desktop: Monitor, download: Download, document: FileText, image: Image, music: Music2, video: Film, drive: HardDrive, folder: FolderOpen, computer: Monitor, airdrop: Radar, network: Globe, icloud: Cloud } as Record<string, typeof FolderOpen>)[icon] || FolderOpen;
   return <Component size={dimension} strokeWidth={1.6} className={`place-icon icon-${icon}`} aria-hidden="true" />;
 }
 function ViewGlyph({ mode }: { mode: 'extra' | 'large' | 'medium' | 'small' | 'list' | 'details' | 'tiles' | 'content' }) {
@@ -218,6 +218,10 @@ export default function App() {
   const [compact, setCompact] = useState(() => stored('compact', false));
   const [checkboxes, setCheckboxes] = useState(() => stored('checkboxes', false));
   const [pins, setPins] = useState<string[]>(() => stored('pins', []));
+  const [finderPlaces, setFinderPlaces] = useState<Place[]>(() => {
+    const saved = stored<unknown>('finderPlaces', []);
+    return Array.isArray(saved) ? saved.filter((item): item is Place => item && typeof item.path === 'string' && item.path.startsWith('/') && !item.path.includes('\0') && typeof item.name === 'string' && item.icon === 'folder') : [];
+  });
   const [unpinnedDefaults, setUnpinnedDefaults] = useState<string[]>(() => stored('unpinnedDefaults', []));
   const [placeOrder, setPlaceOrder] = useState<string[]>(() => stored('placeOrder', []));
   const [placeMarker, setPlaceMarker] = useState<{ index: number; top: number } | null>(null);
@@ -349,7 +353,7 @@ export default function App() {
     setTabs(initial); setActiveID(initial[0].id);
     void api.windowReady();
   }).catch(e => { setError(errorMessage(e)); setLoading(false); }); }, []);
-  useEffect(() => { for (const [key, value] of Object.entries({ hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent, typedPaths })) localStorage.setItem(key, JSON.stringify(value)); }, [hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, unpinnedDefaults, placeOrder, recent, typedPaths]);
+  useEffect(() => { for (const [key, value] of Object.entries({ hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, finderPlaces, unpinnedDefaults, placeOrder, recent, typedPaths })) localStorage.setItem(key, JSON.stringify(value)); }, [hidden, extensions, details, previewPane, navigationPane, compact, checkboxes, pins, finderPlaces, unpinnedDefaults, placeOrder, recent, typedPaths]);
   useEffect(() => { if (boot) localStorage.setItem('tabs', JSON.stringify(tabs.map(t => t.location))); }, [tabs, boot]);
   // Animate the existing surface, preserving focus, selection, and scroll state.
   useEffect(() => {
@@ -365,6 +369,7 @@ export default function App() {
     return () => { cancel(); reduced.removeEventListener('change', cancel); };
   }, [loading, location, activeID, view]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 4500); return () => clearTimeout(timer); }, [toast]);
+  useEffect(() => { setTrashOperationError(''); }, [location]);
   useEffect(() => {
     if (!boot) return;
     const version = ++generation.current;
@@ -411,11 +416,11 @@ export default function App() {
 
   const places = useMemo<Place[]>(() => {
     const rank = (path: string) => { const index = placeOrder.indexOf(path); return index < 0 ? placeOrder.length : index; };
-    return [...(boot?.places || []).filter(place => !unpinnedDefaults.includes(place.path)), ...pins.filter(p => p !== TRASH && !boot?.places.some(place => place.path === p)).map(p => ({ path: p, name: base(p), icon: p === '/Applications' || p === `${boot?.home}/Applications` ? 'applications' : 'folder' }))]
+    return [...(boot?.places || []).filter(place => !unpinnedDefaults.includes(place.path)), ...pins.filter(p => p !== TRASH && p !== boot?.cloudDrive?.path && !boot?.places.some(place => place.path === p)).map(p => ({ path: p, name: finderPlaces.find(place => place.path === p)?.name || base(p), icon: p === '/Applications' || p === `${boot?.home}/Applications` ? 'applications' : 'folder' }))]
       .sort((a, b) => rank(a.path) - rank(b.path));
-  }, [boot, pins, unpinnedDefaults, placeOrder]);
-  const label = useCallback((value: string) => value === '/Applications' || value === `${boot?.home}/Applications` ? tr('应用程序') : value === TRASH ? tr('回收站') : value === AIRDROP ? tr('隔空投送') : value === NETWORK ? tr('网络') : value.startsWith('trash:') ? base(value.slice(6)) : value === PC ? tr('此电脑') : !value || value === boot?.home ? tr('个人文件夹') : boot?.places.find(p => p.path === value)?.name || places.find(p => p.path === value)?.name || base(value), [boot, places, language.locale]);
-  const folderIcon = (value: string) => boot?.places.find(place => place.path === value)?.icon || (value === `${boot?.home}/Applications` ? 'applications' : undefined);
+  }, [boot, pins, finderPlaces, unpinnedDefaults, placeOrder]);
+  const label = useCallback((value: string) => value === '/Applications' || value === `${boot?.home}/Applications` ? tr('应用程序') : value === TRASH ? tr('回收站') : value === AIRDROP ? tr('隔空投送') : value === NETWORK ? tr('网络') : value.startsWith('trash:') ? base(value.slice(6)) : value === PC ? tr('此电脑') : !value || value === boot?.home ? tr('个人文件夹') : (boot?.cloudDrive?.path === value ? boot.cloudDrive.name : undefined) || boot?.places.find(p => p.path === value)?.name || places.find(p => p.path === value)?.name || base(value), [boot, places, language.locale]);
+  const folderIcon = (value: string) => (boot?.cloudDrive?.path === value ? 'icloud' : undefined) || boot?.places.find(place => place.path === value)?.icon || (value === `${boot?.home}/Applications` ? 'applications' : undefined);
   const displayName = (entry: FileEntry) => entry.isDirectory && /\.app$/i.test(entry.name) ? entry.name.slice(0, -4) : extensions || entry.isDirectory || !entry.extension ? entry.name : entry.name.slice(0, -(entry.extension.length + 1));
   const visible = useMemo(() => {
     const items = entries.filter(e => hidden || !e.hidden || revealedPaths.includes(e.path));
@@ -431,7 +436,7 @@ export default function App() {
   const chosen = visible.filter(e => selected.has(e.path));
   const single = chosen.length === 1 ? chosen[0] : null;
   // Like Windows: the selected folder, or the current folder when nothing is selected.
-  const pinTarget = selected.size ? (single?.isDirectory && !/\.app$/i.test(single.name) && !viewingTrash ? single.path : null) : !isVirtual(location) ? location : null;
+  const pinTarget = selected.size ? (single?.isDirectory && single.path !== boot?.cloudDrive?.path && !/\.app$/i.test(single.name) && !viewingTrash ? single.path : null) : !isVirtual(location) && location !== boot?.cloudDrive?.path ? location : null;
   const writable = !isVirtual(location) && !submittedQuery;
   useEffect(() => {
     let live = true; setPreview(null);
@@ -567,7 +572,10 @@ export default function App() {
     if (success) { setEditingName(null); contentRef.current?.focus(); }
   }
   async function moveToTrash(paths: string[]) {
-    report(await api.trash(paths), tr('已移到回收站'));
+    setTrashOperationError('');
+    const result = await api.trash(paths);
+    setTrashOperationError(result.errors.map(item => `${base(item.path)}：${item.message}`).join('\n'));
+    report(result, tr('已移到回收站'));
     setSelected(new Set());
   }
   function trash(paths = [...selected]) {
@@ -637,6 +645,17 @@ export default function App() {
       setPins(previous => previous.filter(p => p !== path));
     } else setPins(previous => pinned ? previous.filter(p => p !== path) : [...new Set([...previous, path])]);
     if (!pinned) setPlaceOrder(previous => previous.filter(p => p !== path));
+  }
+  async function importFavorites() {
+    const result = await api.finderFavorites();
+    const incoming = result.places.filter(place => place.path !== boot?.cloudDrive?.path && place.path !== boot?.home);
+    const added = incoming.filter(place => !places.some(current => current.path === place.path));
+    const defaults = boot?.places.map(place => place.path) || [];
+    setFinderPlaces(previous => [...previous.filter(place => !incoming.some(item => item.path === place.path)), ...incoming]);
+    setPins(previous => [...new Set([...previous, ...incoming.filter(place => !defaults.includes(place.path)).map(place => place.path)])]);
+    setUnpinnedDefaults(previous => previous.filter(path => !incoming.some(place => place.path === path)));
+    setPlaceOrder(previous => [...new Set([...places.map(place => place.path), ...previous, ...added.map(place => place.path)])]);
+    return { added: added.length, skipped: result.skipped, total: result.places.length };
   }
   // Reordering splits a row at its middle. Pinning a dragged folder only uses
   // the row edges; the centre keeps the regular move-into-folder drop.
@@ -817,7 +836,7 @@ export default function App() {
       { label: tr('复制文件地址'), icon: <Copy/>, action: () => run(tr('复制地址…'), () => api.copyText(paths.join('\n')), tr('已复制文件地址')) },
       { label: tr('重命名'), icon: <TextCursorInput/>, shortcut: shortcutHint('rename'), disabled: paths.length !== 1, action: () => rename(target) },
       { label: tr('移到回收站'), icon: <Trash2/>, shortcut: shortcutHint('trash'), danger: true, action: () => trash(paths) },
-      ...(entry.isDirectory ? [{ label: places.some(place => place.path === entry.path) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, divider: true, action: () => togglePin(entry.path) }] : []),
+      ...(entry.isDirectory && entry.path !== boot?.cloudDrive?.path ? [{ label: places.some(place => place.path === entry.path) ? tr('从快速访问取消固定') : tr('固定到快速访问'), icon: <Pin/>, divider: true, action: () => togglePin(entry.path) }] : []),
       { label: tr('在访达中显示'), icon: <ExternalLink/>, divider: true, action: () => run(tr('正在显示…'), () => api.reveal(entry.path)) },
       { label: tr('属性'), icon: <Info/>, action: () => showModal({ kind: 'properties', entries: paths.map(path => entries.find(item => item.path === path)).filter((item): item is FileEntry => !!item) }) },
     ] : [
@@ -1306,14 +1325,15 @@ export default function App() {
         <div className="nav-divider"/>
         <button className={`nav-item parent-nav ${location === PC ? 'current' : ''}`} onClick={() => navigate(PC)}><ChevronDown className="nav-chevron" size={12}/><PlaceIcon icon="computer"/><span>{tr('此电脑')}</span></button>
         {boot?.volumes.map(volume => <NavigationTree key={volume.path} place={volume} folderIcon={folderIcon} location={location} hidden={hidden} navigate={navigate} newTab={newTab} drop={drop} level={1} eject={volume.canEject ? () => ejectVolume(volume) : undefined} ejecting={!!operation} context={(event, target) => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(target.path) }, terminalItem(target.path), ...(volume.canEject && target.path === volume.path ? [{ label: tr('推出“{0}”', volume.name), icon: <Eject/>, disabled: !!operation, action: () => ejectVolume(volume) }] : [])])}/>)}
+        {boot?.cloudDrive && <button className={`nav-item ${location === boot.cloudDrive.path ? 'current' : ''}`} onClick={() => navigate(boot.cloudDrive!.path)} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(boot.cloudDrive!.path) }])}><PlaceIcon icon="icloud"/><span>iCloud Drive</span></button>}
         <button className={`nav-item ${viewingTrash ? 'current' : ''}`} onClick={() => navigate(TRASH)} onAuxClick={event => { if (event.button === 1) newTab(TRASH); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(TRASH) }])}><PlaceIcon icon="trash"/><span>{tr('回收站')}</span></button>
         {[AIRDROP, NETWORK].map(destination => <button key={destination} className={`nav-item ${location === destination ? 'current' : ''}`} onClick={() => navigate(destination)} onAuxClick={event => { if (event.button === 1) newTab(destination); }} onContextMenu={event => menuAt(event, [{ label: tr('在新标签页中打开'), icon: <Plus/>, action: () => newTab(destination) }])}
           onDragOver={event => { if (destination === AIRDROP && !isPlaceDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }} onDrop={event => drop(event, destination)}><PlaceIcon icon={destination}/><span>{label(destination)}</span></button>)}
       </nav>}
 
       <main className={`main-pane ${details || previewPane ? 'has-details' : ''}`}>
-        {viewingTrash && trashOperationError && !error && <div className="error-bar" role="alert"><Info size={17}/><span>{trashOperationError}</span><button aria-label={tr('关闭操作错误提示')} onClick={() => setTrashOperationError('')}><X size={15}/></button></div>}
-        {error && <div className="error-bar" role="alert"><Info size={17}/><span>{error}</span>{error.includes(tr('完全磁盘访问权限')) && <button className="permission-settings-button" disabled={openingPrivacySettings} onClick={() => void openPrivacySettings()} title={tr('打开系统设置中的完全磁盘访问权限')}>{openingPrivacySettings ? tr('正在打开…') : tr('前往设置')}</button>}<button title={tr('关闭提示')} aria-label={tr('关闭错误提示')} onClick={() => setError('')}><X size={15}/></button></div>}
+        {trashOperationError && !error && <div className="error-bar" role="alert"><Info size={17}/><span>{trashOperationError}</span><button aria-label={tr('关闭操作错误提示')} onClick={() => setTrashOperationError('')}><X size={15}/></button></div>}
+        {error && <div className="error-bar" role="alert"><Info size={17}/><span>{error}</span>{error.includes(tr('完全磁盘访问权限')) && <button className="permission-settings-button" disabled={openingPrivacySettings} onClick={() => void openPrivacySettings()} title={tr('打开系统设置中的完全磁盘访问权限')}>{openingPrivacySettings ? tr('正在打开…') : tr('前往设置')}</button>}<button title={tr('关闭提示')} aria-label={tr('关闭错误提示')} onClick={() => { setError(''); setTrashOperationError(''); }}><X size={15}/></button></div>}
         {vcsStatus && <div className="vcs-summary" role="status"><span>{vcsStatus.kind === 'git' ? 'Git' : 'SVN'}{vcsStatus.branch ? ` · ${vcsStatus.branch}` : ''}</span>{vcsStatus.error ? <span className="vcs-error">{vcsStatus.error}</span> : <span>{tr('本地版本状态')}</span>}<button className="secondary-button" onClick={() => setRefresh(value => value + 1)}>{tr('刷新版本状态')}</button></div>}
         {viewingTrash && <div className="search-summary"><Trash2 size={16}/><span>{tr('回收站')}</span><button className="secondary-button" disabled={!selected.size || !!operation} onClick={() => restoreTrash()}>{tr('还原')}</button><button className="secondary-button" disabled={!!operation} onClick={clearTrash}>{tr('清空回收站…')}</button></div>}
         {submittedQuery && !connectionPage && <div className="search-summary"><Search size={16}/><span>{tr('“{0}” 的搜索结果', submittedQuery)}</span><small>{loading ? tr('正在搜索子文件夹…') : searchNote || tr('{0} 个匹配项目', visible.length)}</small><button onClick={() => { setQuery(''); setSubmittedQuery(''); }}>{tr('退出搜索')}</button></div>}
@@ -1337,7 +1357,7 @@ export default function App() {
 
     {popup && <ContextMenu popup={popup} onClose={() => setPopup(null)}/>}
     {modal?.kind === 'archive' && <ArchiveDialog archive={modal.archive} onExtracted={() => setRefresh(v => v + 1)} onClose={() => setModal(null)}/>}
-    {modal?.kind === 'settings' && <SettingsDialog theme={theme} language={language} onThemeChange={async mode => setTheme(await api.setTheme(mode))} onLanguageChange={changeLanguage} toolbar={toolbar} onToolbarChange={setToolbar} tools={toolbarTools} onClose={() => setModal(null)}/>}
+    {modal?.kind === 'settings' && <SettingsDialog onImportFavorites={importFavorites} theme={theme} language={language} onThemeChange={async mode => setTheme(await api.setTheme(mode))} onLanguageChange={changeLanguage} toolbar={toolbar} onToolbarChange={setToolbar} tools={toolbarTools} onClose={() => setModal(null)}/>}
     {modal?.kind === 'vcs' && <VcsDialog directory={modal.directory} paths={modal.paths} action={modal.action} enabled={!!vcsEnabled} onChanged={() => setRefresh(value => value + 1)} onClose={() => setModal(null)}/>}
     {modal?.kind === 'properties' && <PropertiesDialog entries={modal.entries} onClose={() => setModal(null)}/>}
     {modal && modal.kind !== 'archive' && modal.kind !== 'settings' && modal.kind !== 'vcs' && modal.kind !== 'properties' && <ModalDialog modal={modal} value={modalValue} onChange={setModalValue} error={modalError} busy={!!operation} onClose={() => { if (!operation) setModal(null); }} onSubmit={submitModal}/>}
@@ -1527,7 +1547,8 @@ function SettingsHelp({ id, label, children }: { id: string; label: string; chil
   </span>;
 }
 
-function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, language, onThemeChange, onLanguageChange }: {
+function SettingsDialog({ onImportFavorites, onClose, toolbar, onToolbarChange, tools, theme, language, onThemeChange, onLanguageChange }: {
+  onImportFavorites: () => Promise<{ added: number; skipped: number; total: number }>;
   onClose: () => void; toolbar: ToolbarAction[]; onToolbarChange: (value: ToolbarAction[]) => void; tools: Record<ToolbarAction, ToolbarTool>;
   theme: ThemeMode; language: LanguageState; onThemeChange: (mode: ThemeMode) => Promise<void>; onLanguageChange: (mode: LanguageMode) => Promise<void>;
 }) {
@@ -1577,6 +1598,7 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [foldersReset, setFoldersReset] = useState(false);
+  const [importResult, setImportResult] = useState<{ added: number; skipped: number; total: number } | null>(null);
   const tabs = [{ id: 'general', label: tr('常规') }, { id: 'toolbar', label: tr('自定义工具栏') }, { id: 'shortcuts', label: tr('键盘快捷键') }, { id: 'about', label: tr('关于') }];
   useEffect(() => {
     let live = true;
@@ -1641,6 +1663,10 @@ function SettingsDialog({ onClose, toolbar, onToolbarChange, tools, theme, langu
       <fieldset className="settings-group"><legend>{tr('语言')}</legend><label className="settings-language"><span>{tr('界面语言')}</span><select aria-label={tr('界面语言')} value={language.mode} disabled={busy} onChange={event => void save(() => onLanguageChange(event.target.value as LanguageMode))}>
         <option value="system">{tr('跟随系统')}</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en">English</option>
       </select></label></fieldset>
+      <fieldset className="settings-group"><legend><span className="settings-legend-help">{tr('快速访问')}<SettingsHelp id={`${id}-favorites-note`} label={tr('收藏夹导入说明')}><p>{tr('读取 Finder 收藏夹并合并到快速访问，保留现有项目和顺序。')}</p></SettingsHelp></span></legend>
+        <button className="secondary-button favorites-import-button" disabled={busy} onClick={() => { setImportResult(null); void save(async () => { setImportResult(await onImportFavorites()); }); }}><FolderInput size={16}/>{tr('从 Finder 导入收藏夹')}</button>
+        {importResult && <p className="favorites-import-status" role="status"><Check size={15}/><span>{importResult.added ? tr('已导入 {0} 项', importResult.added) : importResult.total ? tr('没有新增收藏夹') : tr('未找到收藏夹')}{importResult.skipped > 0 && ` · ${tr('跳过 {0} 项', importResult.skipped)}`}</span></p>}
+      </fieldset>
       <fieldset className="settings-group"><legend>{tr('系统文件查看器（实验）')}</legend>
         <div className="settings-toggle-row"><label className="settings-toggle"><input type="checkbox" role="switch" aria-describedby={`${id}-file-viewer-note`} checked={fileViewer?.enabled ?? false} disabled={busy || !fileViewer?.available || fileViewer.enabled && !fileViewer.canRestore} onChange={event => {
           const enabled = event.target.checked; const previous = fileViewer;

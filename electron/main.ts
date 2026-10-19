@@ -24,8 +24,8 @@ import { VersionControl } from './vcs';
 import { FolderViews } from './folder-views';
 import { validFolderView, validLayout, validOverride, validSort, type FolderViewChange, type LegacyFolderViews } from '../shared/folder-views';
 import type { VcsAction } from '../shared/vcs';
-import { listTrash, TrashOrigins, snapshotTrash, emptyTrash } from './trash';
-import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ShareService, ThemeMode, Volume, NetworkServer } from '../shared/types';
+import { listTrash, TrashOrigins, snapshotTrash, emptyTrash, recycleItem } from './trash';
+import type { AppSettings, TabState, Bootstrap, ClipboardInfo, OperationResult, Place, Preview, ShareService, ThemeMode, Volume, NetworkServer, FinderFavorites } from '../shared/types';
 
 let currentLanguage = 'zh-CN';
 // Preserve the requesting window across awaits, even when focus changes.
@@ -175,10 +175,25 @@ async function bootstrap(): Promise<Bootstrap> {
     { name: tr('视频'), path: path.join(home, 'Movies'), icon: 'video' },
   ];
   const places = (await Promise.all(candidates.map(async place => (await fs.stat(place.path).catch(() => null))?.isDirectory() ? place : null))).filter((p): p is Place => p !== null);
+  const cloudPath = path.join(home, 'Library/Mobile Documents/com~apple~CloudDocs');
+  const cloudDrive = (await fs.stat(cloudPath).catch(() => null))?.isDirectory() ? { path: cloudPath, name: 'iCloud Drive', icon: 'icloud' } : undefined;
   const volumes = await readVolumes();
-  return { initialTab: windows.get(currentWindow()!)?.initialTab, language: languageState(), theme: nativeTheme.themeSource, home, places, volumes, folderViews: { defaults: folderViews.defaults, overrides: folderViews.overrides() }, initialPath: testRoot ? path.join(testRoot, 'Documents') : process.env.EXPLORER_START_PATH };
+  return { cloudDrive, initialTab: windows.get(currentWindow()!)?.initialTab, language: languageState(), theme: nativeTheme.themeSource, home, places, volumes, folderViews: { defaults: folderViews.defaults, overrides: folderViews.overrides() }, initialPath: testRoot ? path.join(testRoot, 'Documents') : process.env.EXPLORER_START_PATH };
 }
 ipc('bootstrap', bootstrap);
+ipc('finder-favorites', async (): Promise<FinderFavorites> => {
+  const helper = path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/finder-favorites');
+  try {
+    const { stdout } = await promisify(execFile)(helper, [], { timeout: 10000, maxBuffer: 1024 * 1024 });
+    const value = JSON.parse(stdout) as FinderFavorites;
+    if (!Array.isArray(value.places) || value.places.length > 10000 || !Number.isSafeInteger(value.skipped) || value.skipped < 0) throw new Error();
+    for (const place of value.places) {
+      absolute(place.path);
+      if (typeof place.name !== 'string' || place.icon !== 'folder') throw new Error();
+    }
+    return value;
+  } catch { throw new Error(tr('无法读取 Finder 收藏夹。')); }
+});
 ipc('set-language', async (mode: unknown) => {
   const state = await saveLanguage(mode);
   currentLanguage = state.locale;
@@ -236,15 +251,17 @@ async function moveToSystemTrash(input: string) {
     trashed = path.join(root, path.basename(source));
     await moveNoReplace(source, trashed);
   } else {
-    const helper = path.join(__dirname.replace(/app\.asar(?=\/)/, 'app.asar.unpacked'), 'native/trash-item');
-    const { stdout } = await promisify(execFile)(helper, [source]);
-    trashed = absolute(JSON.parse(stdout).path);
+    if (!nativeSharing) throw new Error(tr('无法将项目移到回收站。'));
+    trashed = absolute(await recycleItem(source, path.join(os.homedir(), 'Library/Mobile Documents/com~apple~CloudDocs'), input => nativeSharing!.trashItem([input]), async root => {
+      const picked = await dialog.showOpenDialog(currentWindow()!, { title: tr('允许访问 iCloud Drive'), buttonLabel: tr('允许访问'), defaultPath: root, properties: ['openDirectory'] });
+      return picked.canceled ? null : picked.filePaths[0] || null;
+    }));
   }
   try { await trashOrigins.remember(trashed, source); }
   catch { throw new Error(tr('文件已移入回收站，但无法保存原位置。请在回收站使用“还原到…”恢复。')); }
 }
 ipc('take-open-paths', () => openPaths.splice(0));
-let nativeSharing: { airDrop(paths: string[]): void; shareServices(paths: string[]): ShareService[]; share(paths: string[], service: string): void } | undefined;
+let nativeSharing: { airDrop(paths: string[]): void; shareServices(paths: string[]): ShareService[]; share(paths: string[], service: string): void; trashItem(paths: string[]): Promise<string> } | undefined;
 let wakeShortcut = '';
 let operationShortcuts: OperationShortcuts = {};
 let wakeShortcutError = '';
@@ -586,7 +603,10 @@ ipc('trash', async (inputs: unknown): Promise<OperationResult> => {
   const result: OperationResult = { succeeded: [], errors: [] };
   for (const input of pathsArg(inputs)) {
     try { await moveToSystemTrash(input); result.succeeded.push(input); }
-    catch (error) { result.errors.push({ path: input, message: readableError(error) }); }
+    catch (error) {
+      result.errors.push({ path: input, message: readableError(error) });
+      if ((error as NodeJS.ErrnoException).code === 'ECANCELED') break;
+    }
   }
   if (result.succeeded.length) history.clear();
   return result;
