@@ -98,7 +98,7 @@ Apple Silicon（M 系列）· macOS 13+。默认安装到 `/Applications/Mac Exp
 - 每个更新项就地署名。PR 使用 `（[#编号](PR链接)，[@作者](作者链接)）`；无 PR 的直接提交使用 `（[@作者](作者链接)，[短哈希](提交链接)）`。
 - 从上次正式版本到本次 tag 的 commits / merged PR 核实作者；不能只署名合并人，不重复算旧贡献，不虚构 PR 编号。
 - 反馈者放单独的“贡献者”段落，不能写成代码作者。
-- 如提供命令行安装示例，将 raw installer URL 固定到本次 `refs/tags/v版本/scripts/install.sh`。安装脚本仍按官方 latest 校验清单选择最新安装包，不应声称这是强制安装某历史版本的入口。
+- 面向用户的命令行安装入口统一使用 `brew install --cask qixiaoyu27/tap/mac-explorer`，注明需要预先安装 Homebrew，并提供 DMG 备用方式。不再在 README 或新发布说明中推广旧 curl 安装命令。底层安装脚本仍服务于应用内更新、打包与历史入口兼容，不能随文档入口调整删除；已发布 tag 不修改。
 
 ## GitHub Release
 

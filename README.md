@@ -23,32 +23,28 @@
 
 ## 下载与安装
 
-**一条命令，完成安装与升级。**
+**使用 Homebrew，一条命令安装。**
 
-打开「终端」，粘贴并执行以下命令。升级前请先退出应用。
-
-```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.1.0/scripts/install.sh)"
-```
-
-自动获取最新正式版，校验后安装到「应用程序」。无需 Homebrew 或 sudo。
-
-<sub>支持 macOS 13 及以上 · Apple Silicon（M 系列）</sub>
-
-> **首次打开**
-> 当前版本尚未经过 Apple 公证。若 macOS 阻止打开，请确认下载来源为本仓库，再到「系统设置 → 隐私与安全性」允许打开。若系统明确提示恶意软件，请勿继续运行。
-
-**后续更新：** 再次执行上方命令，或在「设置 → 关于」中检查更新。
-
-### 使用 Homebrew
-
-已经用 Homebrew 管理应用？也可以通过我们维护的 Tap 安装：
+已安装 [Homebrew](https://brew.sh/)？打开「终端」，执行：
 
 ```sh
 brew install --cask qixiaoyu27/tap/mac-explorer
 ```
 
-更新、卸载及从已有安装迁移的说明见 [Homebrew 安装指南](https://github.com/qixiaoyu27/homebrew-tap#readme)。
+通过我们维护的 Tap 下载正式版，校验后安装到「应用程序」。没有 Homebrew，也可以直接 [下载 DMG](https://github.com/qixiaoyu27/Mac-Explorer/releases/latest)。
+
+<sub>应用支持 macOS 13 及以上 · Apple Silicon（M 系列）；Homebrew 自身的系统要求以其官网为准。</sub>
+
+> **首次打开**
+> 当前版本尚未经过 Apple 公证。若 macOS 阻止打开，请确认下载来源为本仓库，再到「系统设置 → 隐私与安全性」允许打开。若系统明确提示恶意软件，请勿继续运行。
+
+**后续更新：** 退出应用后执行以下命令，也可以在「设置 → 关于」中检查更新。
+
+```sh
+brew update && brew upgrade --cask --greedy qixiaoyu27/tap/mac-explorer
+```
+
+**已经安装过？** 从 DMG 或旧脚本安装的用户，转用 Homebrew 前请先阅读 [迁移说明](https://github.com/qixiaoyu27/homebrew-tap#安装)，避免已有应用冲突。卸载方法见 [Homebrew 安装指南](https://github.com/qixiaoyu27/homebrew-tap#readme)。
 
 <details>
 <summary>也可以手动安装 DMG</summary>
@@ -62,7 +58,7 @@ brew install --cask qixiaoyu27/tap/mac-explorer
 <details>
 <summary>从早期版本升级</summary>
 
-从早期 Electron 版升级时，请使用上方安装命令或手动安装 DMG。旧版应用内更新器无法自动完成此次迁移。
+从早期 Electron 版升级时，请退出旧应用并手动安装 DMG；如需转用 Homebrew，请按上方迁移说明操作。旧版应用内更新器无法自动完成此次迁移。
 
 个人文件不受影响。外观、快捷键和窗口会话等偏好需要重新设置；收藏夹可通过「设置 → 常规 → 从 Finder 导入收藏夹」重新导入。
 
