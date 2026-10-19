@@ -40,6 +40,16 @@
 
 **后续更新：** 再次执行上方命令，或在「设置 → 关于」中检查更新。
 
+### 使用 Homebrew
+
+已经用 Homebrew 管理应用？也可以通过我们维护的 Tap 安装：
+
+```sh
+brew install --cask qixiaoyu27/tap/mac-explorer
+```
+
+更新、卸载及从已有安装迁移的说明见 [Homebrew 安装指南](https://github.com/qixiaoyu27/homebrew-tap#readme)。
+
 <details>
 <summary>也可以手动安装 DMG</summary>
 
