@@ -61,7 +61,7 @@ final class ExplorerMenu: NSObject {
     let origin = NSPoint(x: max(region.minX + 4, min(proposedX, region.maxX - width - 4)), y: max(region.minY + 4, min(point.y - height, region.maxY - height - 4)))
     panel = MenuPanel(contentRect: NSRect(origin: origin, size: NSSize(width: width, height: height)), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     super.init()
-    panel.backgroundColor = .clear; panel.isOpaque = false; panel.hasShadow = true
+    panel.backgroundColor = .clear; panel.isOpaque = false; panel.hasShadow = false
     panel.level = .popUpMenu; panel.isReleasedWhenClosed = false
     let background = MenuSurface(frame: NSRect(x: 0, y: 0, width: width, height: height))
     panel.contentView = background
