@@ -10,7 +10,7 @@
   </p>
 </div>
 
-![Mac Explorer 产品展示：示例工作空间与文件预览](docs/images/explorer-demo.jpg)
+![Mac Explorer 产品展示](docs/images/explorer-light-0.1.53.png)
 
 Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户，提供多标签、路径栏、导航树、文件操作、压缩包浏览和 Git / SVN 集成。应用直接管理本机文件，与 Finder 共存，不替换 Finder。
 
