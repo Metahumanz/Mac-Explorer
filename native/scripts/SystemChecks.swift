@@ -26,6 +26,23 @@ struct SystemChecks {
     func rejected(_ name: String, _ action: () throws -> Void) throws { do { try action() } catch { checks += 1; return }; throw NSError(domain: "Check", code: 1, userInfo: [NSLocalizedDescriptionKey: "Accepted " + name]) }
     func write(_ value: [String: Any], _ url: URL) throws { try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0).write(to: url, options: .atomic) }
     func read(_ url: URL) throws -> NSDictionary { try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as! NSDictionary }
+    let suite = "NativeUpdateScheduleChecks." + UUID().uuidString
+    let preferences = UserDefaults(suiteName: suite)!
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    try check(NativeUpdateFrequency.saved(in: preferences) == .daily, "Default frequency is daily")
+    for frequency in NativeUpdateFrequency.allCases {
+      preferences.set(frequency.rawValue, forKey: NativeUpdateFrequency.preferenceKey)
+      try check(NativeUpdateFrequency.saved(in: UserDefaults(suiteName: suite)!) == frequency, "Frequency persists")
+      try check(frequency.isDue(lastCheck: nil, now: now, launching: true) == (frequency != .never), "First launch policy")
+    }
+    for (frequency, interval) in [(NativeUpdateFrequency.daily, 86_400.0), (.weekly, 604_800.0)] {
+      try check(!frequency.isDue(lastCheck: now.addingTimeInterval(-interval + 1), now: now, launching: true), "Do not check early after restart")
+      try check(frequency.isDue(lastCheck: now.addingTimeInterval(-interval), now: now, launching: false), "Check at interval while running")
+      try check(frequency.isDue(lastCheck: now.addingTimeInterval(1), now: now, launching: false), "Recover from clock rollback")
+    }
+    try check(!NativeUpdateFrequency.launch.isDue(lastCheck: nil, now: now, launching: false), "Every launch does not repeat while running")
+    try check(!NativeUpdateFrequency.never.isDue(lastCheck: nil, now: now, launching: false), "Never suppresses periodic checks")
     let system = root.appendingPathComponent("system.plist"), backup = root.appendingPathComponent("backup.plist")
     let original: [String: Any] = ["global":"local.macexplorer.desktop", "handlers":[["LSHandlerContentType":"public.folder","LSHandlerRoleAll":"local.macexplorer.desktop"], ["LSHandlerContentType":"public.text","LSHandlerRoleAll":"editor.app"]]]
     try write(original, system)

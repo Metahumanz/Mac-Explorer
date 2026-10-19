@@ -2,7 +2,7 @@
 
 Swift + AppKit 的独立实现，最低 macOS 13，不依赖 Electron、Node.js 或 WebView。原生控件复现 Windows 11 文件资源管理器的工作流，并复用现有 Swift 文件图标服务、文档模板和图标资源。
 
-原生版由 `main` 分支维护，Electron 版保留在 `electron` 分支。原型最初基于 `4473c44`。本轮对齐基线是主工作区 `db820e2` 及其当前 1.1.0 开发改动，不是本工作树内保留的旧 Electron 源码。原生版本号见 `VERSION`；它有独立 Bundle ID 和偏好设置。本轮只开发和隔离检查，不安装、发布或重新公开已撤回的版本，不替换 Finder 或自动启用系统默认项。
+原生版由 `main` 分支维护，Electron 版保留在 `electron` 分支。原型最初基于 `4473c44`。本轮对齐基线是主工作区 `db820e2` 及其当前 1.1.0 开发改动，不是本工作树内保留的旧 Electron 源码。原生版本号见 `VERSION`；它有独立 Bundle ID 和偏好设置。1.1.0 起提供原生发布包，安装说明见[根目录 README](../README.md#下载与安装)。应用不替换 Finder，也不会自动启用系统默认项。
 
 ## 构建和打开
 

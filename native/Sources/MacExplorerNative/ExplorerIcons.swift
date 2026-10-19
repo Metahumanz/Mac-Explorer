@@ -33,9 +33,19 @@ enum ExplorerIcons {
     return image
   }
 
+  static func folderBadge(for url: URL) -> String? {
+    let path = url.standardizedFileURL.path
+    if path == "/Applications" || path == "/System/Applications" { return "applications" }
+    guard url.deletingLastPathComponent().standardizedFileURL == FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL else { return nil }
+    return ["Desktop": "desktop", "Documents": "document", "Downloads": "download",
+            "Pictures": "image", "Music": "music", "Movies": "video", "Public": "public",
+            "Sites": "network", "Library": "library", "Applications": "applications"][url.lastPathComponent]
+  }
+
   /// Exact FolderGlyph geometry/gradient stops from src/App.tsx (48 × 44 viewBox).
   /// A drawing-handler representation rerenders at the destination backing scale.
-  static func folder(size: CGFloat = 22) -> NSImage {
+  static func folder(size: CGFloat = 22, url: URL? = nil) -> NSImage {
+    let badge = url.flatMap { folderBadge(for: $0) }.map { Self.image($0, size: 24, color: rgb(0x946b16)) }
     let dimension = max(1, size)
     let image = NSImage(size: NSSize(width: dimension, height: dimension), flipped: true) { rect in
       guard let context = NSGraphicsContext.current?.cgContext else { return false }
@@ -99,6 +109,7 @@ enum ExplorerIcons {
       context.setLineWidth(0.4)
       context.setLineCap(.round)
       context.strokePath()
+      badge?.draw(in: NSRect(x: 15, y: 16, width: 18, height: 18), from: .zero, operation: .sourceOver, fraction: 0.85, respectFlipped: true, hints: nil)
       return true
     }
     image.isTemplate = false
@@ -238,6 +249,14 @@ enum ExplorerIcons {
     case "image":
       rect(3, 3, 18, 18, 2); circle(8.5, 8.5, 1.5)
       line([(21, 15), (16, 10), (5, 21)])
+    case "public":
+      circle(9, 7, 3); circle(17, 8, 2.5)
+      curve((3, 21), (3, 10), (15, 10), (15, 21))
+      curve((15, 13), (20, 12), (22, 16), (22, 21))
+    case "library":
+      line([(2, 8), (12, 2), (22, 8), (2, 8)])
+      for x: CGFloat in [5, 10, 14, 19] { line([(x, 10), (x, 19)]) }
+      line([(3, 21), (21, 21)])
     case "music":
       line([(9, 18), (9, 5), (21, 3), (21, 16)])
       p.addEllipse(in: CGRect(x: 3, y: 15, width: 6, height: 6))

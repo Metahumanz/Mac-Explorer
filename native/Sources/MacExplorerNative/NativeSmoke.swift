@@ -16,6 +16,7 @@ enum NativeSmoke {
     do {
       try await until { !browser.loading && browser.snapshot != nil && browser.entries.count == 10_003 }
       window.contentView?.layoutSubtreeIfNeeded()
+      checks += try await NativeInputNavigationChecks.runBrowser(browser: browser, window: window)
       try expect(!browser.content.hasAmbiguousLayout && browser.content.bounds.height > 300, "file area has a non-ambiguous usable layout")
       try await until { IconLoader.shared.isIdle && IconLoader.shared.loads > 0 }
       try expect(browser.table.numberOfRows == 10_003, "10,003 visible fixture entries loaded")
@@ -51,6 +52,13 @@ enum NativeSmoke {
       browser.previewButton.performClick(nil)
       window.contentView?.layoutSubtreeIfNeeded()
       try expect(browser.paneMode == "preview" && browser.pane.bounds.width == 276, "preview command opens the matching-width pane")
+      let paneScroll = browser.pane.subviews.compactMap { $0 as? NSScrollView }.first
+      try expect(browser.pane.leftBorder && paneScroll?.frame.minX == 1 && paneScroll?.frame.maxX == browser.pane.bounds.maxX, "pane content leaves the full-height divider uncovered")
+      for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+        NSApp.appearance = NSAppearance(named: appearance)
+        try capture(window, at: report.deletingLastPathComponent().appendingPathComponent("native-preview-\(name).png"))
+      }
+      NSApp.appearance = NSAppearance(named: .aqua)
       menu[8].action?()
       try expect(browser.paneMode == "details", "details and preview panes are mutually exclusive")
       menu[8].action?()
@@ -153,6 +161,7 @@ enum NativeSmoke {
       try expect(browser.content.bounds.height > 300 && browser.address.bounds.width > 250, "compact window preserves navigation and usable file area")
       try capture(window, at: report.deletingLastPathComponent().appendingPathComponent("native-compact.png"))
       NSApp.appearance = nil
+      checks += try await NativeParityChecks.run(source: browser, output: report.deletingLastPathComponent())
       checks += try await exerciseOperations(browser: browser, window: window)
       checks += try await NativeInteractionChecks.run(source: browser, output: report.deletingLastPathComponent())
       checks += try await NativeLatestChecks.run(parent: window)
@@ -209,12 +218,33 @@ enum NativeSmoke {
       browser.executeAction("settings")
       try await until { modalWindows(window).count == 2 }
       try capture(window, at: output.appendingPathComponent("native-settings.png"))
-      for (title, file) in [("自定义工具栏", "native-settings-toolbar.png"), ("键盘快捷键", "native-settings-shortcuts.png")] {
+      for modal in modalWindows(window) { modal.contentView?.layoutSubtreeIfNeeded() }
+      guard let light = dialogButtons(window).first(where: { $0.title == "浅色" }),
+            let scroll = light.enclosingScrollView, let document = scroll.documentView,
+            scroll.contentView.bounds.minY == 0,
+            light.convert(light.bounds, to: document).minY >= 20,
+            light.visibleRect.contains(light.bounds)
+      else { throw Failure(description: "Settings must open at the top with the appearance controls fully visible: \(dialogButtons(window).filter { $0.title == "浅色" }.map { "frame=\($0.frame), visible=\($0.visibleRect), scroll=\(String(describing: $0.enclosingScrollView?.contentView.bounds))" })") }
+      let settingsWindows = modalWindows(window)
+      let appearances = settingsWindows.map(\.appearance)
+      settingsWindows.forEach { $0.appearance = NSAppearance(named: .darkAqua) }
+      try capture(window, at: output.appendingPathComponent("native-settings-dark.png"))
+      for (modal, appearance) in zip(settingsWindows, appearances) { modal.appearance = appearance }
+
+      for (title, file) in [("自定义工具栏", "native-settings-toolbar.png"), ("键盘快捷键", "native-settings-shortcuts.png"), ("关于", "native-settings-about.png")] {
         guard let button = dialogButtons(window).first(where: { $0.title == title }) else { throw Failure(description: "Missing settings tab: \(title)") }
         button.performClick(nil); try await Task.sleep(nanoseconds: 100_000_000)
+        if title == "关于" {
+          let text = dialogText(window).joined(separator: "\n")
+          guard text.contains("尚未检查更新"), text.contains("GPL-3.0-only"), !text.contains("当前版本："),
+                ["项目主页", "GitHub 发布页", "问题反馈", "开源许可", "检查更新"].allSatisfy({ title in dialogButtons(window).contains { $0.title == title } })
+          else { throw Failure(description: "About page is missing migrated content") }
+        }
         try capture(window, at: output.appendingPathComponent(file))
       }
+      try write(["passed": true, "checks": ["Settings opens at the top with fully visible appearance controls", "Light and dark settings screenshots captured", "All four settings tabs render"]], to: output.appendingPathComponent("settings-report.json"))
       try dismissDialog(window)
+      browser.setView(.details)
       browser.executeAction("new-folder")
       try await until {
         guard !browser.loading, let index = browser.entries.firstIndex(where: { $0.name == "新建文件夹" }), let cell = browser.table.view(atColumn: 0, row: index, makeIfNecessary: false) as? NameCell else { return false }
@@ -231,6 +261,34 @@ enum NativeSmoke {
       try capture(window, at: output.appendingPathComponent("native-properties.png")); try dismissDialog(window)
       let areas: [String: NSView] = [".tab-strip": browser.tabsBar, ".navigation-bar": browser.navigationBar, ".command-bar": browser.commandBar, ".sidebar": browser.sidebar, ".file-content": browser.content, ".status-bar": browser.footer, ".address-bar": browser.addressBar, ".search-box": browser.searchBox]
       let geometry = areas.mapValues { area in let rect = area.convert(area.bounds, to: browser.view); return ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height] }
+      if let index = browser.entries.firstIndex(where: { $0.name == "产品需求.md" }) {
+        browser.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        browser.executeAction("details-pane")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try capture(window, at: output.appendingPathComponent("native-details-pane.png"))
+        browser.executeAction("details-pane")
+        let items = browser.contextItems(), quickNames = ["剪切", "复制", "重命名", "移到回收站"]
+        ExplorerMenu.show(items.filter { !quickNames.contains($0.title) }, at: NSPoint(x: window.frame.midX, y: window.frame.midY + 180), owner: window, quickActions: quickNames.compactMap { name in items.first { $0.title == name } })
+        try capture(window, at: output.appendingPathComponent("native-context.png")); ExplorerMenu.dismiss()
+      }
+      let appItems = ["Finder（默认）", "Visual Studio Code", "Books", "ChatGPT", "Mac Explorer", "选择其他应用"].map { ExplorerMenuItem(title: $0, icon: "applications") }
+      let appWidth = ExplorerMenu.fittedWidth(appItems, submenu: true)
+      guard appWidth >= 180 && appWidth < 230,
+            ExplorerMenu.fittedWidth([ExplorerMenuItem(title: "复制", shortcut: "⌃⌥⇧⌘C")], submenu: true) >= 180 else { throw Failure(description: "Submenu must fit measured labels and shortcuts") }
+      ExplorerMenu.show([ExplorerMenuItem(title: "打开方式", children: appItems)], at: NSPoint(x: window.frame.midX, y: window.frame.midY + 180), owner: window)
+      if let menu = window.childWindows?.last, let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: menu.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125) { NSApp.sendEvent(down) }
+      try await Task.sleep(nanoseconds: 100_000_000)
+      guard window.childWindows?.contains(where: { abs($0.frame.width - appWidth) < 0.5 }) == true else { throw Failure(description: "Open With submenu uses measured width") }
+      try capture(window, at: output.appendingPathComponent("native-open-with-width.png")); ExplorerMenu.dismiss()
+      browser.navigate(to: URL(string: "explorer://network")!)
+      browser.search.stringValue = "no-such-network-parity-fixture"
+      browser.search.sendAction(browser.search.action, to: browser.search.target)
+      try await Task.sleep(nanoseconds: 5_500_000_000)
+      try capture(window, at: output.appendingPathComponent("native-network.png"))
+      browser.navigate(to: URL(string: "explorer://airdrop")!)
+      try capture(window, at: output.appendingPathComponent("native-airdrop.png"))
+      browser.navigate(to: root)
+      try await until { !browser.loading && !browser.entries.isEmpty }
       window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY, width: 800, height: 530), display: true)
       window.contentView?.layoutSubtreeIfNeeded()
       try await Task.sleep(nanoseconds: 100_000_000)
@@ -327,7 +385,7 @@ enum NativeSmoke {
     button.performClick(nil)
   }
 
-  private static func until(_ predicate: () -> Bool) async throws {
+  static func until(_ predicate: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(20)
     while !predicate() {
       if Date() > deadline { throw Failure(description: "Timed out waiting for native UI state") }

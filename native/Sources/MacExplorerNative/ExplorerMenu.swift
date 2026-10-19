@@ -49,9 +49,21 @@ final class ExplorerMenu: NSObject {
   }
   static func dismiss() { current?.close(); current = nil }
 
+  static func fittedWidth(_ items: [ExplorerMenuItem], submenu: Bool, quickActions: [ExplorerMenuItem] = []) -> CGFloat {
+    let font = NSFont.systemFont(ofSize: 12)
+    let contentWidth = items.map { item -> CGFloat in
+      let title = (item.title as NSString).size(withAttributes: [.font: font]).width
+      let trailing: CGFloat = !item.children.isEmpty || item.loadChildren != nil ? 34 : item.shortcut.isEmpty ? 12 : (item.shortcut as NSString).size(withAttributes: [.font: font]).width + 28
+      return ceil(10 + 56 + title + trailing)
+    }.max() ?? 0
+    let quickWidth = quickActions.map { ceil(($0.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 10)]).width) + 12 }.max() ?? 0
+    let quickRowWidth = quickActions.isEmpty ? 0 : quickWidth * CGFloat(quickActions.count) + 12 + CGFloat(quickActions.count - 1) * 2
+    return max(max(submenu ? 180 : 235, min(350, contentWidth)), quickRowWidth)
+  }
+
   private init(items: [ExplorerMenuItem], at point: NSPoint, owner: NSWindow, parent: ExplorerMenu? = nil, quickActions: [ExplorerMenuItem] = []) {
     self.owner = owner; self.parent = parent
-    let width: CGFloat = max(235, min(350, items.map { CGFloat($0.title.count * 13 + $0.shortcut.count * 6 + 92) }.max() ?? 230))
+    let width = Self.fittedWidth(items, submenu: parent != nil, quickActions: quickActions)
     let fullHeight = CGFloat(items.count * 33 + items.filter(\.divider).count * 11 + 12 + (quickActions.isEmpty ? 0 : 63))
     let screen = owner.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
     let viewport = owner.contentView.map { owner.convertToScreen($0.convert($0.bounds, to: nil)) } ?? owner.frame
@@ -191,6 +203,7 @@ private final class MenuRow: NSView {
     super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
     addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
   }
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
   override func mouseEntered(with event: NSEvent) { hover?() }
   override func mouseUp(with event: NSEvent) { if item.enabled { perform?() } }
   override func draw(_ dirtyRect: NSRect) {

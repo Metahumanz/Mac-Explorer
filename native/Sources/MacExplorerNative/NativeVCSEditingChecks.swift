@@ -38,12 +38,13 @@ enum NativeVCSEditingChecks {
       guard let index = browser.entries.firstIndex(where: { $0.name == "tracked.txt" }) else { throw NativeSmoke.Failure(description: "VCS editing fixture file is visible") }
       browser.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
       window.contentView?.layoutSubtreeIfNeeded()
-      guard let preview = browser.pane.subviews.first(where: { $0 is QLPreviewView }) else { throw NativeSmoke.Failure(description: "VCS editing fixture has a real preview") }
+      func descendants(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
+      guard let preview = descendants(browser.pane).first(where: { $0 is QLPreviewView }) else { throw NativeSmoke.Failure(description: "VCS editing fixture has a real preview") }
       if scenario == "unchanged" {
         let cell = browser.table.view(atColumn: 0, row: index, makeIfNecessary: true)
         browser.setVersionControl(true)
         try await until { reads(browser) == 0 }
-        record(browser.pane.subviews.contains(where: { $0 === preview }), "Unchanged VCS status retains the existing Quick Look preview", checks: &checks, failures: &failures)
+        record(descendants(browser.pane).contains(where: { $0 === preview }), "Unchanged VCS status retains the existing Quick Look preview", checks: &checks, failures: &failures)
         record(browser.table.view(atColumn: 0, row: index, makeIfNecessary: true) === cell, "Unchanged VCS status retains the existing file row", checks: &checks, failures: &failures)
       }
       browser.executeAction("rename")

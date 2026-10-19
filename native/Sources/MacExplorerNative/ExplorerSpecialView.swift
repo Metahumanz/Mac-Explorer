@@ -3,7 +3,7 @@ import ExplorerCore
 
 typealias ExplorerVolume = NativeVolume
 
-final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServiceDelegate {
+final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServiceDelegate, NSTextFieldDelegate {
   var onNavigate: ((URL) -> Void)?
   // Retained for source compatibility; connections are handled by the Native service.
   var onConnect: ((String) -> Void)?
@@ -11,28 +11,36 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   private var connectionTask: Task<Void, Never>?
   private var ejecting = Set<String>()
   private var mode = ""
+  private var query = ""
   private var revision = 0
   private let scroll = NSScrollView(), document = SurfaceView()
   private let heading = label("", size: 20)
-  private let choose = ExplorerButton(title: NL("选择文件"), icon: "plus")
+  private let choose = EDButton(title: NL("选择文件…"), style: .primary)
   private let server = NSTextField(string: "smb://")
-  private let connect = ExplorerButton(title: NL("连接"), icon: "network")
-  private let refresh = ExplorerButton(title: NL("重新扫描"), icon: "refresh")
+  private let connect = EDButton(title: NL("连接"), style: .primary)
+  private let refresh = EDButton(title: NL("重新查找"), style: .secondary)
+  private let serverTitle = label(NL("服务器地址"), size: 13)
+  private let mountedTitle = label(NL("已连接的共享"), size: 14)
+  private let discoveredTitle = label(NL("附近的共享电脑"), size: 14)
+  private let emptyIcon = NSImageView()
   private let networkStatus = label("", color: ExplorerPalette.secondary)
   private var discovery = NetServiceBrowser()
   private var services: [NetService] = []
   private var volumes: [ExplorerVolume] = []
   private var cards: [DriveCard] = []
-  private var serviceRows: [ExplorerButton] = []
+  private var serviceRows: [NetworkDeviceRow] = []
+  private var mountedRows: [NetworkDeviceRow] = []
   private let dropArea = AirDropTarget()
 
   override init(frame: NSRect) {
     super.init(frame: frame)
     scroll.documentView = document; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = false; scroll.automaticallyAdjustsContentInsets = false
     addSubview(scroll)
-    [heading, dropArea, choose, server, connect, refresh, networkStatus].forEach(document.addSubview)
+    [heading, dropArea, choose, server, connect, refresh, networkStatus, serverTitle, mountedTitle, discoveredTitle, emptyIcon].forEach(document.addSubview)
     heading.font = .systemFont(ofSize: 20, weight: .medium)
     server.font = .systemFont(ofSize: 13); server.placeholderString = NL("smb://服务器/共享"); server.bezelStyle = .roundedBezel
+    server.delegate = self; refresh.iconName = "refresh"
+    emptyIcon.image = ExplorerIcons.image("network", size: 32, color: ExplorerPalette.accent); emptyIcon.isHidden = true
     server.target = self; server.action = #selector(connectServer)
     choose.onPress = { [weak self] in self?.chooseFiles() }; connect.onPress = { [weak self] in self?.connectServer() }
     refresh.onPress = { [weak self] in self?.discover() }
@@ -41,12 +49,12 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   }
   required init?(coder: NSCoder) { fatalError() }
   func show(_ name: String) {
-    mode = name; revision += 1; let token = revision
+    mode = name; query = ""; revision += 1; let token = revision
     connectionTask?.cancel(); connectionTask = nil; setConnecting(false)
-    stopDiscovery(); cards.forEach { $0.removeFromSuperview() }; cards.removeAll(); serviceRows.forEach { $0.removeFromSuperview() }; serviceRows.removeAll()
+    stopDiscovery(); cards.forEach { $0.removeFromSuperview() }; cards.removeAll(); serviceRows.forEach { $0.removeFromSuperview() }; serviceRows.removeAll(); mountedRows.forEach { $0.removeFromSuperview() }; mountedRows.removeAll()
     heading.stringValue = name == "computer" ? NL("设备和驱动器") : name == "airdrop" ? NL("隔空投送") : NL("网络")
     dropArea.isHidden = name != "airdrop"; choose.isHidden = name != "airdrop"
-    for control in [server, connect, refresh] { control.isHidden = name != "network" }
+    for control in [server, connect, refresh, serverTitle, mountedTitle, discoveredTitle] { control.isHidden = name != "network" }
     networkStatus.isHidden = name == "airdrop"; networkStatus.stringValue = ""
     if name == "network" { discover() }
     if name == "computer" || name == "network" { loadVolumes(token: token) }
@@ -94,20 +102,37 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   }
   private func updateVolumes() {
     cards.forEach { $0.removeFromSuperview() }; cards.removeAll()
-    let visible = mode == "computer" ? volumes : volumes.filter { !$0.local }
+    mountedRows.forEach { $0.removeFromSuperview() }; mountedRows.removeAll()
+    let visible = volumes.filter { (mode == "computer" || !$0.local) && matches($0.name, $0.path) }
+    if mode == "network" {
+      for volume in visible {
+        let row = NetworkDeviceRow(name: volume.name, address: volume.path, icon: "folder", actionTitle: NL("打开")) { [weak self] in self?.onNavigate?(volume.url) }
+        document.addSubview(row); mountedRows.append(row)
+      }
+      mountedTitle.isHidden = visible.isEmpty
+      return
+    }
     if mode == "computer" { heading.stringValue = NL("设备和驱动器（{0}）", visible.count) }
     for volume in visible {
       let card = DriveCard(volume: volume); card.open = { [weak self] in self?.onNavigate?(volume.url) }; card.eject = { [weak self] in self?.eject(volume) }; card.isEjecting = ejecting.contains(volume.path); document.addSubview(card); cards.append(card)
     }
   }
+  private func matches(_ name: String, _ address: String) -> Bool { query.isEmpty || name.localizedCaseInsensitiveContains(query) || address.localizedCaseInsensitiveContains(query) }
+  func filter(_ value: String) {
+    query = value
+    updateVolumes()
+    if mode == "network" { updateServices() }
+    needsLayout = true
+  }
   override func layout() {
     super.layout(); scroll.frame = bounds
+    if mode != "network" { emptyIcon.isHidden = true }
     let width = scroll.contentSize.width
-    heading.frame = NSRect(x: 30, y: 26, width: width - 60, height: 28)
+    heading.frame = NSRect(x: 32, y: 28, width: width - 60, height: 28)
     var bottom: CGFloat = 80
     if mode == "airdrop" {
       dropArea.frame = NSRect(x: 32, y: 80, width: max(0, width - 64), height: 270)
-      choose.frame = NSRect(x: (width - 110) / 2, y: 270, width: 110, height: 34); bottom = 380
+      choose.frame = NSRect(x: (width - 110) / 2, y: 252, width: 110, height: 34); bottom = 380
     } else if mode == "computer" {
       let columns = max(1, Int((width - 60 + 16) / 376))
       let cardWidth = min(436, (width - 60 - CGFloat(columns - 1) * 16) / CGFloat(columns))
@@ -115,13 +140,24 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
       bottom = 90 + CGFloat((cards.count + columns - 1) / columns) * 128
       networkStatus.frame = NSRect(x: 32, y: bottom, width: max(0, width - 64), height: 24); bottom += 32
     } else {
-      server.frame = NSRect(x: 32, y: 88, width: max(100, min(width - 170, 560)), height: 34)
-      connect.frame = NSRect(x: server.frame.maxX + 12, y: 88, width: 80, height: 34)
-      refresh.frame = NSRect(x: width - 136, y: 150, width: 104, height: 34)
-      networkStatus.frame = NSRect(x: 32, y: 160, width: width - 185, height: 20)
-      var y: CGFloat = 202
-      for button in serviceRows { button.frame = NSRect(x: 32, y: y, width: width - 64, height: 46); y += 54 }
-      for card in cards { card.frame = NSRect(x: 32, y: y, width: min(436, width - 64), height: 112); y += 128 }
+      server.frame = NSRect(x: 32, y: 108, width: max(100, min(width - 170, 582)), height: 34)
+      connect.frame = NSRect(x: server.frame.maxX + 10, y: 108, width: 80, height: 34)
+      serverTitle.frame = NSRect(x: 32, y: 82, width: width - 64, height: 22)
+      var y: CGFloat = 172
+      if !mountedRows.isEmpty {
+        mountedTitle.frame = NSRect(x: 32, y: y, width: width - 64, height: 24); y += 36
+        for row in mountedRows { row.frame = NSRect(x: 32, y: y, width: width - 64, height: 64); y += 72 }
+        y += 20
+      }
+      discoveredTitle.frame = NSRect(x: 32, y: y + 6, width: width - 190, height: 24)
+      refresh.frame = NSRect(x: width - 136, y: y, width: 104, height: 34); y += 48
+      let empty = serviceRows.isEmpty && [NL("未发现共享设备"), NL("没有找到匹配的项目")].contains(networkStatus.stringValue)
+      emptyIcon.isHidden = !empty
+      emptyIcon.frame = NSRect(x: 32, y: y + 20, width: 32, height: 32)
+      networkStatus.textColor = empty ? ExplorerPalette.text : ExplorerPalette.secondary
+      networkStatus.frame = NSRect(x: 32, y: y + (empty ? 66 : 0), width: width - 64, height: 24)
+      if serviceRows.isEmpty { y += empty ? 110 : 44 }
+      for row in serviceRows { row.frame = NSRect(x: 32, y: y, width: width - 64, height: 64); y += 72 }
       bottom = y + 32
     }
     document.frame = NSRect(x: 0, y: 0, width: width, height: max(bounds.height, bottom))
@@ -135,9 +171,14 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
     service.perform(withItems: urls)
   }
   private func setConnecting(_ busy: Bool) {
-    connect.title = busy ? NL("取消") : NL("连接"); connect.isEnabled = true; server.isEnabled = !busy; refresh.isEnabled = !busy
-    for (row, service) in zip(serviceRows, services) { row.isEnabled = !busy && service.hostName != nil && service.port > 0 }
+    connect.title = busy ? NL("取消") : NL("连接"); connect.isEnabled = busy || canConnect; server.isEnabled = !busy; refresh.isEnabled = !busy
+    for row in serviceRows { row.button.isEnabled = !busy && row.available }
   }
+  private var canConnect: Bool {
+    let address = server.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    return !address.isEmpty && address != "smb://"
+  }
+  func controlTextDidChange(_ notification: Notification) { connect.isEnabled = connectionTask != nil || canConnect }
   @objc private func connectServer() {
     if let task = connectionTask { task.cancel(); connect.isEnabled = false; networkStatus.stringValue = NL("正在取消…"); return }
     let input = server.stringValue
@@ -161,7 +202,7 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
     let token = revision, browser = discovery
     DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak browser] in
       guard let self, self.revision == token, self.discovery === browser, self.connectionTask == nil else { return }
-      self.networkStatus.stringValue = self.services.isEmpty ? NL("未发现共享电脑") : NL("共享电脑（{0}）", self.services.count)
+      self.updateServices()
     }
   }
   func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
@@ -176,17 +217,20 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
 
   private func updateServices() {
     serviceRows.forEach { $0.removeFromSuperview() }; serviceRows.removeAll()
-    for service in services {
-      let row = ExplorerButton(title: service.name, icon: "computer") { [weak self, weak service] in
-        guard let self, let service, let host = service.hostName, service.port > 0 else { return }
-        var address = URLComponents(); address.scheme = "smb"; address.host = host; if service.port != 445 { address.port = service.port }
-        guard let value = address.url?.absoluteString else { return }; self.server.stringValue = value; self.connectServer()
+    for service in services where matches(service.name, service.hostName ?? "") {
+      var components = URLComponents(); components.scheme = "smb"; components.host = service.hostName
+      if service.port > 0 && service.port != 445 { components.port = service.port }
+      let address = components.url?.absoluteString ?? ""
+      let row = NetworkDeviceRow(name: service.name, address: address, icon: "computer", actionTitle: NL("连接")) { [weak self, weak service] in
+        guard let self, let service, service.hostName != nil, service.port > 0 else { return }
+        self.server.stringValue = address; self.connectServer()
       }
-      row.isEnabled = connectionTask == nil && service.hostName != nil && service.port > 0
-      row.alignment = .left
-      row.toolTip = service.hostName; document.addSubview(row); serviceRows.append(row)
+      row.available = service.hostName != nil && service.port > 0
+      row.button.isEnabled = connectionTask == nil && row.available
+      row.button.setAccessibilityLabel(NL("连接“{0}”", service.name))
+      document.addSubview(row); serviceRows.append(row)
     }
-    if connectionTask == nil { networkStatus.stringValue = services.isEmpty ? NL("未发现共享电脑") : NL("共享电脑（{0}）", services.count) }; needsLayout = true
+    if connectionTask == nil { networkStatus.stringValue = serviceRows.isEmpty ? (query.isEmpty ? NL("未发现共享设备") : NL("没有找到匹配的项目")) : "" }; needsLayout = true
   }
   deinit { discovery.delegate = nil; discovery.stop(); services.forEach { $0.delegate = nil; $0.stop() }; connectionTask?.cancel() }
 }
@@ -216,6 +260,12 @@ private final class DriveCard: SurfaceView {
   override func mouseDown(with event: NSEvent) { window?.makeFirstResponder(self); if event.clickCount == 2 { open?() } }
   override func becomeFirstResponder() -> Bool { selected = true; needsDisplay = true; return true }
   override func resignFirstResponder() -> Bool { selected = false; needsDisplay = true; return true }
+  override func rightMouseDown(with event: NSEvent) {
+    guard let window else { return }
+    var items = [ExplorerMenuItem(title: NL("打开"), action: { [weak self] in self?.open?() })]
+    if volume.canEject { items.append(ExplorerMenuItem(title: NL("推出“{0}”", volume.name), icon: "eject", enabled: !isEjecting, action: { [weak self] in self?.eject?() })) }
+    ExplorerMenu.show(items, at: window.convertPoint(toScreen: event.locationInWindow), owner: window)
+  }
   override func accessibilityPerformPress() -> Bool { open?(); return true }
   override var acceptsFirstResponder: Bool { true }
   override func keyDown(with event: NSEvent) { if event.keyCode == 36 { open?() } else { super.keyDown(with: event) } }
@@ -239,8 +289,35 @@ private final class AirDropTarget: SurfaceView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4); path.setLineDash([4, 4], count: 2, phase: 0); ExplorerPalette.border.setStroke(); path.stroke()
-    ExplorerIcons.image("airdrop", size: 48, color: ExplorerPalette.accent).draw(in: NSRect(x: bounds.midX - 24, y: 54, width: 48, height: 48), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-    let title = NL("拖放文件到此处") as NSString, attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: ExplorerPalette.text]
-    title.draw(at: NSPoint(x: bounds.midX - title.size(withAttributes: attrs).width / 2, y: 120), withAttributes: attrs)
+    ExplorerIcons.image("airdrop", size: 56, color: ExplorerPalette.accent).draw(in: NSRect(x: bounds.midX - 28, y: 64, width: 56, height: 56), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    let title = NL("拖入要发送的文件") as NSString, attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: ExplorerPalette.text]
+    title.draw(at: NSPoint(x: bounds.midX - title.size(withAttributes: attrs).width / 2, y: 136), withAttributes: attrs)
+  }
+}
+
+private final class NetworkDeviceRow: SurfaceView {
+  let button: EDButton
+  var available = true
+  private let image = NSImageView()
+  private let name: NSTextField
+  private let address: NSTextField
+  init(name: String, address: String, icon: String, actionTitle: String, action: @escaping () -> Void) {
+    self.name = label(name, size: 13); self.name.font = .systemFont(ofSize: 13, weight: .semibold)
+    self.address = label(address, size: 11, color: ExplorerPalette.secondary)
+    button = EDButton(title: actionTitle, style: .secondary); button.onPress = action
+    super.init(frame: .zero)
+    image.image = ExplorerIcons.image(icon, size: 28); image.imageScaling = .scaleProportionallyUpOrDown
+    [image, self.name, self.address, button].forEach(addSubview)
+  }
+  required init?(coder: NSCoder) { fatalError() }
+  override func layout() {
+    super.layout(); image.frame = NSRect(x: 12, y: 18, width: 28, height: 28)
+    name.frame = NSRect(x: 54, y: 12, width: max(0, bounds.width - 150), height: 20)
+    address.frame = NSRect(x: 54, y: 35, width: max(0, bounds.width - 150), height: 18)
+    button.frame = NSRect(x: bounds.width - 84, y: 17, width: 72, height: 30)
+  }
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect); ExplorerPalette.border.setStroke()
+    let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: bounds.height - 0.5)); line.line(to: NSPoint(x: bounds.width, y: bounds.height - 0.5)); line.stroke()
   }
 }

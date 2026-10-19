@@ -123,7 +123,7 @@ final class FileIconView: NSImageView {
   private var vcsMark: String?
   func show(_ entry: FileEntry, pixels: Int = 64) {
     cancel?(); contentTintColor = nil; vcsMark = entry.vcsMark; needsDisplay = true
-    if entry.isDirectory && !entry.isPackage { image = ExplorerIcons.folder(size: 128); cancel = nil; return }
+    if entry.isDirectory && !entry.isPackage { image = ExplorerIcons.folder(size: 128, url: entry.url); cancel = nil; return }
     image = ExplorerIcons.image("document", size: 64, color: ExplorerPalette.secondary)
     cancel = IconLoader.shared.request(entry, pixels: pixels) { [weak self] image in self?.image = image }
   }
@@ -142,10 +142,14 @@ final class FileIconView: NSImageView {
 }
 
 final class ExplorerCheckbox: NSButton {
+  var available = false { didSet { updateVisibility() } }
+  var hovered = false { didSet { updateVisibility() } }
+  override var state: NSControl.StateValue { didSet { updateVisibility() } }
+  private func updateVisibility() { isHidden = !available || (!hovered && state != .on) }
   var changed: ((Bool) -> Void)?
   override init(frame: NSRect) { super.init(frame: frame); setButtonType(.toggle); isBordered = false; title = ""; target = self; action = #selector(toggle) }
   required init?(coder: NSCoder) { fatalError() }
-  @objc private func toggle() { changed?(state == .on); needsDisplay = true }
+  @objc private func toggle() { changed?(state == .on); updateVisibility(); needsDisplay = true }
   override func draw(_ dirtyRect: NSRect) {
     let rect = bounds.insetBy(dx: 1, dy: 1), path = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
     (state == .on ? ExplorerPalette.accent : ExplorerPalette.surface).setFill(); path.fill()
@@ -164,12 +168,13 @@ final class NameCell: NSTableCellView {
   }
   required init?(coder: NSCoder) { fatalError() }
   override func layout() {
-    super.layout(); checkbox.isHidden = !checkboxes
+    super.layout(); checkbox.available = checkboxes
+    checkbox.hovered = (superview as? FileRowView)?.hovered ?? false
     checkbox.frame = NSRect(x: 7, y: (bounds.height - 14) / 2, width: 14, height: 14)
     let left: CGFloat = checkboxes ? 30 : 12
     icon.frame = NSRect(x: left, y: (bounds.height - 22) / 2, width: 22, height: 22)
     let height: CGFloat = nameLabel.isEditable ? 24 : 17
-    nameLabel.frame = NSRect(x: left + 31, y: (bounds.height - height) / 2, width: max(0, min(nameLabel.isEditable ? 240 : bounds.width, bounds.width - left - 43)), height: height)
+    nameLabel.frame = NSRect(x: left + 31 - (nameLabel.isEditable ? 2 : 0), y: (bounds.height - height) / 2, width: max(0, min(nameLabel.isEditable ? 240 : bounds.width, bounds.width - left - 43)), height: height)
   }
   func configure(_ entry: FileEntry, name: String? = nil) {
     nameLabel.identifier = NSUserInterfaceItemIdentifier(entry.id)
@@ -207,13 +212,13 @@ final class ExplorerHeaderCell: NSTableHeaderCell {
   override func drawSortIndicator(withFrame cellFrame: NSRect, in controlView: NSView, ascending: Bool, priority: Int) {}
 }
 final class FileRowView: NSTableRowView {
-  private var hovered = false
+  var hovered = false { didSet { (view(atColumn: 0) as? NameCell)?.checkbox.hovered = hovered; needsDisplay = true } }
   override func updateTrackingAreas() {
     super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
     addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
   }
-  override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
-  override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+  override func mouseEntered(with event: NSEvent) { hovered = true }
+  override func mouseExited(with event: NSEvent) { hovered = false }
   override func drawBackground(in dirtyRect: NSRect) {
     (hovered && !isSelected ? ExplorerPalette.rowHover : ExplorerPalette.surface).setFill()
     NSBezierPath(roundedRect: bounds, xRadius: 3, yRadius: 3).fill()
@@ -394,7 +399,7 @@ final class ExplorerCollectionLayout: NSCollectionViewLayout {
   }
 }
 final class ItemSurface: SurfaceView {
-  var selected = false { didSet { needsDisplay = true; needsLayout = true } }; var hovered = false { didSet { needsDisplay = true } }
+  var selected = false { didSet { needsDisplay = true; needsLayout = true } }; var hovered = false { didSet { subviews.compactMap { $0 as? ExplorerCheckbox }.forEach { $0.hovered = hovered }; needsDisplay = true } }
   var bottomLine = false
   private var expandedName: NativeExpandedNameView?
   private var scrollObserver: NSObjectProtocol?
@@ -440,7 +445,7 @@ final class IconItem: NSCollectionViewItem {
     let horizontal = mode != .icons || iconSize == 32
     let size: CGFloat = mode == .list ? 22 : mode == .tiles ? 48 : mode == .content ? 56 : iconSize
     let leading: CGFloat = checkboxes && horizontal ? 30 : 12
-    checkbox.isHidden = !checkboxes; checkbox.frame = NSRect(x: 7, y: horizontal ? (height - 14) / 2 : 8, width: 14, height: 14)
+    checkbox.available = checkboxes; checkbox.hovered = surface.hovered; checkbox.frame = NSRect(x: 7, y: horizontal ? (height - 14) / 2 : 8, width: 14, height: 14)
     nameLabel.alignment = horizontal ? .left : .center; nameLabel.maximumNumberOfLines = horizontal ? 1 : 2
     kindLabel.isHidden = mode != .tiles && mode != .content; dateLabel.isHidden = mode != .content; pathLabel.isHidden = mode != .content
     surface.bottomLine = mode == .content

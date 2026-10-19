@@ -16,6 +16,25 @@ public struct NativeUpdateState: Sendable {
   public var total: Int64 = 0
   public var error = ""
 }
+public enum NativeUpdateFrequency: String, CaseIterable {
+  case launch, daily, weekly, never
+  public static let preferenceKey = "automaticUpdateFrequency"
+  public static let lastCheckKey = "lastUpdateCheck"
+  public static func saved(in defaults: UserDefaults) -> Self {
+    Self(rawValue: defaults.string(forKey: preferenceKey) ?? "") ?? .daily
+  }
+  public func isDue(lastCheck: Date?, now: Date, launching: Bool) -> Bool {
+    switch self {
+    case .never: return false
+    case .launch: return launching
+    case .daily, .weekly:
+      guard let lastCheck else { return true }
+      let elapsed = now.timeIntervalSince(lastCheck)
+      return elapsed < 0 || elapsed >= (self == .daily ? 86_400 : 604_800)
+    }
+  }
+}
+
 public enum NativeUpdateValidation {
   public static let bundleID = "local.macexplorer.native-prototype"
   public static let appName = "Mac Explorer.app"
@@ -35,7 +54,7 @@ public enum NativeUpdateValidation {
     let base = "https://github.com/qixiaoyu27/Mac-Explorer/releases/download/v\(version)"
     for name in [archive, checksumName] {
       let matches = assets.filter { $0["name"] as? String == name }
-      guard matches.count == 1, matches[0]["browser_download_url"] as? String == "\(base)/\(name)" else { throw failure("尚无可用的原生版本更新。") }
+      guard matches.count == 1, matches[0]["browser_download_url"] as? String == "\(base)/\(name)" else { throw failure("暂时没有可用更新。") }
     }
     let size = assets.first { $0["name"] as? String == archive }?["size"] as? NSNumber
     guard let size, CFGetTypeID(size) != CFBooleanGetTypeID(), size.doubleValue == Double(size.int64Value), size.int64Value > 0, size.int64Value <= 2 * 1024 * 1024 * 1024 else { throw failure("更新包大小无效。") }
@@ -107,13 +126,13 @@ public actor NativeUpdates {
   }
   public func check() async {
     guard !busy, state.status != "ready", state.status != "installing" else { return }
-    busy = true; defer { busy = false }; state.status = "checking"; state.error = ""; selected = nil
+    busy = true; defer { busy = false }; state.status = "checking"; state.error = ""; selected = nil; state.latestVersion = nil; state.downloaded = 0; state.total = 0
     do {
       // The latest release may still contain only Electron assets; select a stable Native release explicitly.
       let response = try await request("https://api.github.com/repos/qixiaoyu27/Mac-Explorer/releases?per_page=100", maximum: 4 * 1024 * 1024)
       guard let releases = try JSONSerialization.jsonObject(with: response) as? [[String: Any]] else { throw NativeUpdateValidation.failure("最新发布信息不完整，请稍后重试。") }
       let compatible = releases.compactMap { value -> NativeRelease? in guard let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }; return try? NativeUpdateValidation.release(data) }
-      guard let latest = compatible.max(by: { (try? NativeUpdateValidation.compare($0.version, $1.version)) == -1 }) else { throw NativeUpdateValidation.failure("尚无可用的原生版本更新。") }
+      guard let latest = compatible.max(by: { (try? NativeUpdateValidation.compare($0.version, $1.version)) == -1 }) else { throw NativeUpdateValidation.failure("暂时没有可用更新。") }
       selected = latest; state.latestVersion = latest.version; state.total = latest.bytes; state.downloaded = 0
       state.status = try NativeUpdateValidation.compare(latest.version, state.currentVersion) > 0 ? "available" : "current"
       if let last = try? String(contentsOf: cache.appendingPathComponent("last-install-result"), encoding: .utf8), last.trimmingCharacters(in: .whitespacesAndNewlines) != "0" { state.error = NL("上次更新未完成，请重试。") }

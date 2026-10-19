@@ -21,12 +21,13 @@ struct NativeNavigationStroke {
     if mode == .pending && horizontalScroll { mode = .ignored; return (false, nil) }
     x += deltaX; y += abs(deltaY)
     if mode == .pending {
-      if max(abs(x), y) < 10 { return (false, nil) }
+      // Keep a horizontal start out of NSScrollView tracking while distance accumulates.
+      if max(abs(x), y) < 10 { return (abs(x) > y * 1.25, nil) }
       if y > abs(x) * 1.5 { mode = .ignored; return (false, nil) }
       if abs(x) <= y * 1.25 { return (false, nil) }
       mode = .horizontal
     }
-    guard abs(x) >= 48 else { return (true, nil) }
+    guard abs(x) >= 36 else { return (true, nil) }
     mode = .done
     return (true, x < 0 ? -1 : 1)
   }
@@ -91,21 +92,54 @@ final class NativeInputNavigation {
 
 @MainActor
 enum NativeInputNavigationChecks {
+  static func runBrowser(browser: BrowserController, window: NSWindow) async throws -> [String] {
+    func check(_ condition: Bool, _ message: String) throws {
+      guard condition else { throw NSError(domain: "NativeInputNavigationChecks", code: 2, userInfo: [NSLocalizedDescriptionKey: message]) }
+    }
+    guard let navigation = browser.inputNavigation else { throw NSError(domain: "NativeInputNavigationChecks", code: 2, userInfo: [NSLocalizedDescriptionKey: "Main browser must bind input navigation when its window appears"]) }
+    let root = browser.directory, originalMode = browser.mode
+    defer { browser.setView(originalMode, size: 64) }
+    var checks: [String] = []
+    for mode in [ExplorerLayoutMode.details, .icons] {
+      browser.navigate(to: root.appendingPathComponent("Folder 2"))
+      try await NativeSmoke.until { !browser.loading }
+      browser.setView(mode, size: 64)
+      window.contentView?.layoutSubtreeIfNeeded()
+      let event = NavigationFixtureEvent(); event.fixtureWindow = window; event.fixtureType = .scrollWheel
+      event.fixturePoint = browser.content.convert(NSPoint(x: browser.content.bounds.midX, y: browser.content.bounds.midY), to: nil)
+      event.fixtureDelta = 60; event.fixturePhase = .began
+      _ = navigation.handle(event)
+      try check(browser.directory == root, "Main browser double-finger back works in \(mode)")
+      try await NativeSmoke.until { !browser.loading }
+      event.fixtureDelta = -60; event.fixtureTimestamp = 2
+      _ = navigation.handle(event)
+      try check(browser.directory == root.appendingPathComponent("Folder 2"), "Main browser double-finger forward works in \(mode)")
+      try await NativeSmoke.until { !browser.loading }
+      browser.back()
+      try await NativeSmoke.until { !browser.loading }
+      checks.append("Main browser trackpad back and forward work in \(mode)")
+    }
+    return checks
+  }
   static func run(window: NSWindow, content: NSView) throws -> [String] {
     var checks: [String] = []
     func check(_ condition: Bool, _ text: String) throws {
       guard condition else { throw NSError(domain: "NativeInputNavigationChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }; checks.append(text)
     }
     var stroke = NativeNavigationStroke()
-    let first = stroke.consume(x: -24, y: 0, timestamp: 1, began: true, blocked: false, horizontalScroll: false, context: "a")
-    let second = stroke.consume(x: -25, y: 0, timestamp: 1.02, began: false, blocked: false, horizontalScroll: false, context: "a")
-    try check(first.consume && first.direction == nil && second.direction == -1, "Horizontal navigation requires the 48 point threshold")
+    let first = stroke.consume(x: -18, y: 0, timestamp: 1, began: true, blocked: false, horizontalScroll: false, context: "a")
+    let second = stroke.consume(x: -18, y: 0, timestamp: 1.02, began: false, blocked: false, horizontalScroll: false, context: "a")
+    try check(first.consume && first.direction == nil && second.direction == -1, "Horizontal navigation requires the 36 point threshold")
     try check(stroke.consume(x: -120, y: 0, timestamp: 1.05, began: false, blocked: false, horizontalScroll: false, context: "b").direction == nil, "Momentum cannot repeat navigation after directory change")
     try check(stroke.consume(x: 60, y: 0, timestamp: 1.07, began: true, blocked: false, horizontalScroll: false, context: "b").direction == 1, "Fresh native phase rearms a gesture during old momentum")
     try check(!stroke.consume(x: 60, y: 0, timestamp: 2, began: true, blocked: false, horizontalScroll: true, context: "a").consume, "Horizontal file lists keep their own scroll gesture")
     try check(stroke.consume(x: 60, y: 0, timestamp: 2.02, began: false, blocked: false, horizontalScroll: false, context: "a").direction == nil, "Scrollable lists own the entire stroke even at the edge")
     try check(!stroke.consume(x: 1, y: 20, timestamp: 3, began: true, blocked: false, horizontalScroll: false, context: "a").consume, "Vertical scrolling stays vertical")
     try check(stroke.consume(x: 60, y: 0, timestamp: 3.02, began: false, blocked: false, horizontalScroll: false, context: "a").direction == nil, "A vertical start cannot later trigger history navigation")
+    let smallStart = stroke.consume(x: -2, y: 0, timestamp: 4, began: true, blocked: false, horizontalScroll: false, context: "a")
+    try check(smallStart.consume && smallStart.direction == nil, "Small horizontal starts stay out of scroll-view tracking without navigating")
+    try check(stroke.consume(x: -34, y: 0, timestamp: 4.02, began: false, blocked: false, horizontalScroll: false, context: "a").direction == -1, "A gentle horizontal stroke navigates after 36 accumulated points")
+    try check(!stroke.consume(x: 0, y: 2, timestamp: 5, began: true, blocked: false, horizontalScroll: false, context: "a").consume, "Small vertical starts remain normal scrolling")
     var directions: [Int] = [], blocked = false
     let navigation = NativeInputNavigation.bind(to: content, blocked: { blocked }, context: { "fixture" }, navigate: { directions.append($0) })
     defer { navigation.close() }

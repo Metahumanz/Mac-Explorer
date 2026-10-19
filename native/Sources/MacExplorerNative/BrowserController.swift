@@ -70,6 +70,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private var savedFolderViews: [String: [String: Any]] = [:]
   private var expanded = Set<String>()
   private var folderChildren: [String: [FileEntry]] = [:]
+  private var folderErrors: [String: String] = [:]
   private var sidebarRows: [(URL, ExplorerSidebarRow)] = []
   private var places: QuickAccessState
   private var placeRows: [(URL, ExplorerSidebarRow, CGFloat)] = []
@@ -79,7 +80,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private var preferencesObserver: NSObjectProtocol?
   private var preferencesWork: DispatchWorkItem?
   private var preferenceSnapshot: NSDictionary = [:]
-  private var inputNavigation: NativeInputNavigation?
+  private(set) var inputNavigation: NativeInputNavigation?
   private static let placesChanged = Notification.Name("NativeExplorerPlacesChanged")
   private var stopped = false
   private let directoryWatcher = DirectoryWatcher()
@@ -120,6 +121,8 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private let firstDivider = SurfaceView(), secondDivider = SurfaceView()
   private let byteFormatter = ByteCountFormatter(), dateFormatter = DateFormatter()
   private var detailsPreview: QLPreviewView?
+  private let paneScroll = NSScrollView(), paneBody = SurfaceView()
+  private var paneRequest = UUID()
 
   init(initial: URL, defaults: UserDefaults) {
     self.defaults = defaults; places = QuickAccessState(defaults: defaults); tabs = [BrowserTab(history: [initial])]
@@ -443,8 +446,17 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       item.onDragExit = { [weak self] in self?.placeMarker.isHidden = true }
       item.tint = ExplorerPalette.place(icon); item.frame = NSRect(x: 8, y: y, width: max(0, sidebar.bounds.width - 16), height: 36); y += 36
       item.toolTip = url.path; sidebarDocument.addSubview(item); sidebarRows.append((url, item))
-      if expanded.contains(url.path), let children = folderChildren[url.path], level < 6 {
-        for child in children.prefix(150) { row(child.name, child.url, "folder", level: level + 1) }
+      if expanded.contains(url.path) {
+        if let error = folderErrors[url.path] {
+          let note = label(NL("无法访问"), size: 11, color: ExplorerPalette.secondary); note.toolTip = error
+          note.frame = NSRect(x: 32 + CGFloat(min(level, 6)) * 12, y: y, width: max(0, sidebar.bounds.width - 44), height: 24); sidebarDocument.addSubview(note); y += 24
+        } else if let children = folderChildren[url.path] {
+          if children.isEmpty {
+            let note = label(NL("没有子文件夹"), size: 11, color: ExplorerPalette.secondary)
+            note.frame = NSRect(x: 32 + CGFloat(min(level, 6)) * 12, y: y, width: max(0, sidebar.bounds.width - 44), height: 24); sidebarDocument.addSubview(note); y += 24
+          }
+          for child in children { row(child.name, child.url, "folder", level: min(level + 1, 6)) }
+        }
       }
       if pinned { placeRows.append((url, item, y)) }
     }
@@ -454,7 +466,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     divider()
     row(NL("此电脑"), URL(string: "explorer://computer")!, "computer")
     sidebarRows.last?.1.expanded = true; sidebarRows.last?.1.onExpand = nil
-    row("Macintosh HD", URL(fileURLWithPath: "/"), "drive", level: 1)
+    row((try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? "Macintosh HD", URL(fileURLWithPath: "/"), "drive", level: 1)
     for volume in FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) ?? [] where volume.path.hasPrefix("/Volumes/") { row(volume.lastPathComponent, volume, "drive", level: 1) }
     if let cloudDrive { row("iCloud Drive", cloudDrive, "cloud") }
     row(NL("回收站"), URL(string: "explorer://trash")!, "trash")
@@ -525,11 +537,18 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private func layoutSidebarRows() { for item in sidebarDocument.subviews { item.frame.size.width = max(0, sidebar.bounds.width - (item.identifier?.rawValue == "divider" ? 40 : 16)) } }
   private func toggleFolder(_ url: URL) {
     if expanded.contains(url.path) { expanded.remove(url.path); rebuildSidebar(); return }
-    expanded.insert(url.path); rebuildSidebar()
+    expanded.insert(url.path); readFolderChildren(url)
+  }
+  private func readFolderChildren(_ url: URL) {
+    folderChildren[url.path] = nil; folderErrors[url.path] = nil; rebuildSidebar()
     let hidden = showHidden
     Task { @MainActor [weak self] in
-      let children = try? await Task.detached { EntryQuery.apply(try DirectoryReader.read(url).entries, showHidden: hidden, query: "", sort: .name, ascending: true).filter { $0.isDirectory && !$0.isPackage && !$0.isSymbolicLink } }.value
-      guard let self else { return }; self.folderChildren[url.path] = children ?? []; self.rebuildSidebar()
+      do {
+        let children = try await Task.detached { EntryQuery.apply(try DirectoryReader.read(url).entries, showHidden: hidden, query: "", sort: .name, ascending: true).filter { $0.isDirectory && !$0.isPackage && !$0.isSymbolicLink } }.value
+        guard let self, self.showHidden == hidden else { return }; self.folderChildren[url.path] = children; self.rebuildSidebar()
+      } catch {
+        guard let self, self.showHidden == hidden else { return }; self.folderErrors[url.path] = error.localizedDescription; self.rebuildSidebar()
+      }
     }
   }
 
@@ -770,7 +789,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) { syncCollectionSelection() }
   private func syncCollectionSelection() { guard !syncingSelection, mode != .details else { return }; selectedPaths = Set(collection.selectionIndexPaths.compactMap { entries.indices.contains($0.item) ? entries[$0.item].id : nil }); updateStatus(); updatePane() }
   private func toggleSelection(_ path: String, selected: Bool) { if selected { selectedPaths.insert(path) } else { selectedPaths.remove(path) }; render() }
-  func controlTextDidChange(_ obj: Notification) { guard (obj.object as? NSTextField) === search else { return }; searchBox.update(); if search.stringValue.isEmpty { if searchActive { searchActive = false; reload() } else { recompute() } } }
+  func controlTextDidChange(_ obj: Notification) { guard (obj.object as? NSTextField) === search else { return }; searchBox.update(); if !directory.isFileURL { specialView.filter(search.stringValue); return }; if search.stringValue.isEmpty { if searchActive { searchActive = false; reload() } else { recompute() } } }
 
   var canDetachTab: Bool {
     !stopped && !busy && renamingEntry == nil && view.window.map { !ExplorerDialogs.isPresenting(in: $0) && $0.attachedSheet == nil } == true
@@ -828,7 +847,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     }
   }
 
-  @objc func toggleHidden() { showHidden.toggle(); defaults.set(showHidden, forKey: "showHidden"); addressBar.showHidden = showHidden; recompute(); rebuildSidebar() }
+  @objc func toggleHidden() { showHidden.toggle(); defaults.set(showHidden, forKey: "showHidden"); addressBar.showHidden = showHidden; recompute(); for path in expanded { readFolderChildren(URL(fileURLWithPath: path)) }; rebuildSidebar() }
   @objc func selectAllFiles() { selectedPaths = Set(entries.map(\.id)); render() }
   @objc func openSelected() {
     guard let entry = selectedEntries().first, selectedPaths.count == 1 else { return }
@@ -846,12 +865,15 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! { previewURLs[index] }
 
   private func performSearch() {
+    if !directory.isFileURL { specialView.filter(search.stringValue); return }
     let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else { searchActive = false; reload(); return }
     directoryWatcher.stop(); automaticRead?.cancel(); automaticRead = nil; refreshWork?.cancel(); refreshWork = nil; refreshPending = false
     generation += 1; queryGeneration += 1; loadTask?.cancel(); queryTask?.cancel(); searchTask?.cancel()
-    let token = generation, target = directory, hidden = showHidden; loading = true; searchActive = true; selectedPaths = []; render()
-    let task = Task.detached(priority: .userInitiated) { try FileSearch.search(in: target, query: query, showHidden: hidden) }; searchTask = task
+    let token = generation, target = directory, hidden = showHidden
+    let mode = FileSearchMode(rawValue: defaults.string(forKey: "searchMode") ?? "") ?? .text
+    loading = true; lastError = nil; snapshot = nil; entries = []; searchActive = true; selectedPaths = []; render()
+    let task = Task.detached(priority: .userInitiated) { try FileSearch.search(in: target, query: query, showHidden: hidden, mode: mode) }; searchTask = task
     Task { @MainActor [weak self] in
       do { let result = try await task.value; guard let self, self.generation == token else { return }; self.snapshot = DirectorySnapshot(directory: target, entries: result.entries, skippedCount: result.skipped, elapsedMilliseconds: 0); self.message = result.truncated ? NL("已达到搜索上限") : ""; self.recompute() }
       catch { guard let self, self.generation == token else { return }; self.loading = false; self.lastError = self.errorMessage(error); self.render() }
@@ -863,8 +885,8 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     items += [ExplorerMenuItem(title: NL("递增"), checked: ascending, divider: true, action: { [weak self] in self?.ascending = true; self?.saveView(group: "sort"); self?.recompute() }), ExplorerMenuItem(title: NL("递减"), checked: !ascending, action: { [weak self] in self?.ascending = false; self?.saveView(group: "sort"); self?.recompute() })]; return items
   }
   func viewMenu() -> [ExplorerMenuItem] {
-    var items = [(NL("超大图标"), CGFloat(128)), (NL("大图标"), 64), (NL("中图标"), 48), (NL("小图标"), 32)].enumerated().map { index, option in ExplorerMenuItem(title: option.0, icon: ["viewExtra", "viewLarge", "viewMedium", "viewSmall"][index], checked: mode == .icons && iconSize == option.1, radio: true, shortcut: "⌃⇧\(index + 1)", action: { [weak self] in self?.setView(.icons, size: option.1) }) }
-    for (index, option) in [(NL("列表"), ExplorerLayoutMode.list), (NL("详细信息"), .details), (NL("平铺"), .tiles), (NL("内容"), .content)].enumerated() { items.append(ExplorerMenuItem(title: option.0, icon: ["viewList", "viewDetails", "viewTiles", "viewContent"][index], checked: mode == option.1, radio: true, shortcut: "⌃⇧\(index + 5)", action: { [weak self] in self?.setView(option.1) })) }
+    var items = [(NL("超大图标"), CGFloat(128)), (NL("大图标"), 64), (NL("中图标"), 48), (NL("小图标"), 32)].enumerated().map { index, option in ExplorerMenuItem(title: option.0, icon: ["viewExtra", "viewLarge", "viewMedium", "viewSmall"][index], checked: mode == .icons && iconSize == option.1, radio: true, shortcut: shortcutHint(["extra-large-icons", "icons", "medium-icons", "small-icons"][index]), action: { [weak self] in self?.setView(.icons, size: option.1) }) }
+    for (index, option) in [(NL("列表"), ExplorerLayoutMode.list), (NL("详细信息"), .details), (NL("平铺"), .tiles), (NL("内容"), .content)].enumerated() { items.append(ExplorerMenuItem(title: option.0, icon: ["viewList", "viewDetails", "viewTiles", "viewContent"][index], checked: mode == option.1, radio: true, shortcut: shortcutHint(["list", "details", "tiles", "content"][index]), action: { [weak self] in self?.setView(option.1) })) }
     items += [ExplorerMenuItem(title: NL("详细信息窗格"), icon: "panelRight", checked: paneMode == "details", divider: true, action: { [weak self] in self?.togglePane("details") }), ExplorerMenuItem(title: NL("预览窗格"), icon: "panelRight", checked: paneMode == "preview", action: { [weak self] in self?.togglePane("preview") }), ExplorerMenuItem(title: NL("显示"), divider: true, children: [
       ExplorerMenuItem(title: NL("导航窗格"), icon: "panelLeft", checked: navigationPane, action: { [weak self] in guard let self else { return }; self.navigationPane.toggle(); self.defaults.set(self.navigationPane, forKey: "navigationPane"); self.view.needsLayout = true }),
       ExplorerMenuItem(title: NL("紧凑视图"), icon: "list", checked: compact, divider: true, action: { [weak self] in guard let self else { return }; self.compact.toggle(); self.defaults.set(self.compact, forKey: "compact"); self.updateMode(persist: false) }),
@@ -880,77 +902,163 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   }
   private func moreMenu() -> [ExplorerMenuItem] {
     let target = pinTarget(), pinned = target.map { pinnedPaths.contains($0.path) } ?? false
-    return [ExplorerMenuItem(title: NL("打开文件夹…"), icon: "folder", action: { [weak self] in self?.chooseDirectory() }), ExplorerMenuItem(title: pinned ? NL("从快速访问取消固定") : NL("固定到快速访问"), icon: "pin", enabled: target != nil, action: { [weak self] in if let target { self?.togglePin(target) } }), ExplorerMenuItem(title: NL("全选"), shortcut: "⌘A", action: { [weak self] in self?.selectAllFiles() }), ExplorerMenuItem(title: NL("取消选择"), action: { [weak self] in self?.selectedPaths = []; self?.render() }), ExplorerMenuItem(title: NL("撤销"), icon: "undo", enabled: !undoChanges.isEmpty && !busy, divider: true, shortcut: "⌘Z", action: { [weak self] in self?.undoFiles() }), ExplorerMenuItem(title: NL("设置…"), icon: "settings", divider: true, action: { [weak self] in self?.showSettings() })]
+    return [ExplorerMenuItem(title: NL("打开文件夹…"), icon: "folder", action: { [weak self] in self?.chooseDirectory() }), ExplorerMenuItem(title: pinned ? NL("从快速访问取消固定") : NL("固定到快速访问"), icon: "pin", enabled: target != nil, action: { [weak self] in if let target { self?.togglePin(target) } }), ExplorerMenuItem(title: NL("全选"), shortcut: shortcutHint("select-all"), action: { [weak self] in self?.selectAllFiles() }), ExplorerMenuItem(title: NL("取消选择"), action: { [weak self] in self?.selectedPaths = []; self?.render() }), ExplorerMenuItem(title: NL("撤销"), icon: "undo", enabled: !undoChanges.isEmpty && !busy, divider: true, shortcut: shortcutHint("undo"), action: { [weak self] in self?.undoFiles() }), ExplorerMenuItem(title: NL("设置…"), icon: "settings", divider: true, action: { [weak self] in self?.showSettings() })]
+  }
+  func contextItems() -> [ExplorerMenuItem] {
+    let chosen = selectedEntries(), first = selectedEntries().first
+    let canPaste = !busy && writable && (!clipboard.isEmpty || filePasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]))
+    let refresh = ExplorerMenuItem(title: NL("刷新"), icon: "refresh", shortcut: shortcutHint("refresh"), action: { [weak self] in self?.executeAction("refresh") })
+    let hidden = ExplorerMenuItem(title: showHidden ? NL("不显示隐藏项目") : NL("显示隐藏的项目"), checked: showHidden, action: { [weak self] in self?.toggleHidden() })
+    if viewingTrash {
+      var items: [ExplorerMenuItem] = []
+      if !chosen.isEmpty {
+        items += [ExplorerMenuItem(title: NL("还原"), icon: "undo", enabled: !busy, action: { [weak self] in self?.restoreFromTrash(choose: false) }), ExplorerMenuItem(title: NL("还原到…"), icon: "folder", enabled: !busy, action: { [weak self] in self?.restoreFromTrash(choose: true) })]
+      }
+      items.append(ExplorerMenuItem(title: NL("清空回收站…"), icon: "trash", enabled: !busy, action: { [weak self] in self?.emptySystemTrash() }))
+      if let first {
+        items += [ExplorerMenuItem(title: first.isDirectory ? NL("打开") : NL("快速查看"), icon: "folder", action: { [weak self] in if first.isDirectory { self?.openSelected() } else { self?.previewSelected() } }), ExplorerMenuItem(title: NL("复制"), icon: "copy", shortcut: shortcutHint("copy"), action: { [weak self] in self?.copySelection(cut: false) })]
+      }
+      return items + [refresh, hidden]
+    }
+    var items: [ExplorerMenuItem] = []
+    if let first {
+      items = [ExplorerMenuItem(title: NL("打开"), icon: "folder", shortcut: shortcutHint("open"), action: { [weak self] in self?.openSelected() }), openWithMenu(chosen.map(\.url))]
+      if !first.isDirectory {
+        items.append(ExplorerMenuItem(title: NL("使用文本编辑"), icon: "document", enabled: chosen.allSatisfy { !$0.isDirectory }, action: { [weak self] in self?.openAsText(chosen.map(\.url)) }))
+        if NativeArchives.isArchive(first.url) {
+          for (mode, title) in [("choose", NL("解压到…")), ("here", NL("解压到当前目录")), ("folder", NL("解压到“{0}/”", NativeArchives.folderName(first.url)))] {
+            items.append(ExplorerMenuItem(title: title, icon: "download", enabled: chosen.count == 1 && !busy, action: { [weak self] in self?.extract(first.url, mode: mode) }))
+          }
+        }
+        items.append(ExplorerMenuItem(title: NL("快速查看"), icon: "eye", shortcut: shortcutHint("quick-look"), action: { [weak self] in self?.previewSelected() }))
+      } else {
+        items += [ExplorerMenuItem(title: NL("在新标签页中打开"), icon: "plus", action: { [weak self] in self?.openTab(at: first.url) }), ExplorerMenuItem(title: NL("在终端中打开"), icon: "terminal", action: { [weak self] in self?.openTerminal(at: first.url) })]
+      }
+      items += [
+        ExplorerMenuItem(title: NL("压缩为 ZIP"), icon: "archive", enabled: !busy, action: { [weak self] in self?.compressSelection() }),
+        ExplorerMenuItem(title: NL("剪切"), icon: "scissors", enabled: !busy, shortcut: shortcutHint("cut"), action: { [weak self] in self?.copySelection(cut: true) }),
+        ExplorerMenuItem(title: NL("复制"), icon: "copy", shortcut: shortcutHint("copy"), action: { [weak self] in self?.copySelection(cut: false) }),
+        ExplorerMenuItem(title: NL("复制文件地址"), icon: "copy", action: { [weak self] in self?.copyPaths() }),
+        ExplorerMenuItem(title: NL("重命名"), icon: "rename", enabled: chosen.count == 1 && !busy, shortcut: shortcutHint("rename"), action: { [weak self] in self?.renameSelected() }),
+        ExplorerMenuItem(title: NL("共享"), icon: "share", action: { [weak self] in self?.shareSelected() }),
+        ExplorerMenuItem(title: NL("移到回收站"), icon: "trash", enabled: !busy, shortcut: shortcutHint("trash"), action: { [weak self] in self?.trashSelected() })]
+      if first.isDirectory, first.url != cloudDrive {
+        items.append(ExplorerMenuItem(title: pinnedPaths.contains(first.url.path) ? NL("从快速访问取消固定") : NL("固定到快速访问"), icon: "pin", divider: true, action: { [weak self] in self?.togglePin(first.url) }))
+      }
+      items.append(ExplorerMenuItem(title: NL("属性"), icon: "document", divider: true, action: { [weak self] in self?.showProperties() }))
+    } else {
+      items = [ExplorerMenuItem(title: NL("新建"), icon: "plus", enabled: writable && !busy, children: newMenu()),
+        ExplorerMenuItem(title: NL("粘贴"), icon: "paste", enabled: canPaste, divider: true, shortcut: shortcutHint("paste"), action: { [weak self] in self?.pasteFiles() }),
+        ExplorerMenuItem(title: NL("将项目移到这里"), enabled: canPaste, shortcut: shortcutHint("move-here"), action: { [weak self] in self?.executeAction("move-here") }),
+        ExplorerMenuItem(title: NL("撤销"), icon: "undo", enabled: !undoChanges.isEmpty && !busy, shortcut: shortcutHint("undo"), action: { [weak self] in self?.undoFiles() }), refresh, hidden,
+        ExplorerMenuItem(title: NL("打开文件夹…"), icon: "folder", action: { [weak self] in self?.chooseDirectory() })]
+      if directory.isFileURL { items.append(ExplorerMenuItem(title: NL("在终端中打开"), icon: "terminal", action: { [weak self] in self?.openTerminal() })) }
+    }
+    if let vcsStatus {
+      var actions = [NativeVCSAction.diff, .add, .commit, .update, .revert].map { action in ExplorerMenuItem(title: action.title, enabled: vcsStatus.error == nil && !busy, action: { [weak self] in self?.showVCS(action) }) }
+      actions.append(ExplorerMenuItem(title: NL("刷新版本状态"), action: { [weak self] in self?.refreshVCS(force: true) }))
+      items.append(ExplorerMenuItem(title: vcsStatus.kind == .git ? "Git" : "SVN", icon: "terminal", divider: true, children: actions))
+    }
+    return items
   }
   private func showContext(_ event: NSEvent) {
     guard let window = view.window else { return }
-    let chosen = selectedEntries()
-    var items: [ExplorerMenuItem] = chosen.isEmpty ? [ExplorerMenuItem(title: NL("查看"), icon: "grid", children: viewMenu()), ExplorerMenuItem(title: NL("排序方式"), icon: "sort", children: sortMenu()), ExplorerMenuItem(title: NL("刷新"), icon: "refresh", action: { [weak self] in self?.reload() }), ExplorerMenuItem(title: NL("粘贴"), icon: "paste", enabled: !busy && writable && (!clipboard.isEmpty || filePasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])), divider: true, action: { [weak self] in self?.pasteFiles() }), ExplorerMenuItem(title: NL("新建"), icon: "plus", divider: true, children: newMenu())] : [
-      ExplorerMenuItem(title: NL("打开"), icon: "folder", enabled: chosen.count == 1, action: { [weak self] in self?.openSelected() }),
-      ExplorerMenuItem(title: NL("在新标签页中打开"), icon: "plus", enabled: chosen.count == 1 && chosen[0].isDirectory, action: { [weak self] in guard let self, let entry = self.selectedEntries().first else { return }; self.openTab(at: entry.url) }),
-      ExplorerMenuItem(title: NL("剪切"), icon: "scissors", enabled: !viewingTrash, divider: true, shortcut: "⌘X", action: { [weak self] in self?.copySelection(cut: true) }),
-      ExplorerMenuItem(title: NL("复制"), icon: "copy", shortcut: "⌘C", action: { [weak self] in self?.copySelection(cut: false) }),
-      ExplorerMenuItem(title: NL("重命名"), icon: "rename", enabled: chosen.count == 1 && !viewingTrash, shortcut: "F2", action: { [weak self] in self?.renameSelected() }),
-      ExplorerMenuItem(title: NL("共享"), icon: "share", action: { [weak self] in self?.shareSelected() }),
-      ExplorerMenuItem(title: NL("移到回收站"), icon: "trash", enabled: !viewingTrash, shortcut: "⌘⌫", action: { [weak self] in self?.trashSelected() }),
-      ExplorerMenuItem(title: NL("快速查看"), icon: "eye", divider: true, shortcut: "Space", action: { [weak self] in self?.previewSelected() }),
-      ExplorerMenuItem(title: NL("复制路径"), icon: "copy", action: { [weak self] in self?.copyPaths() }),
-      openWithMenu(chosen.map(\.url)),
-      ExplorerMenuItem(title: NL("使用文本编辑"), icon: "document", enabled: chosen.allSatisfy { !$0.isDirectory }, action: { [weak self] in self?.openAsText(chosen.map(\.url)) }),
-      ExplorerMenuItem(title: NL("属性"), icon: "document", divider: true, action: { [weak self] in self?.showProperties() }),
-    ]
-    if !viewingTrash, !chosen.isEmpty {
-      items.append(ExplorerMenuItem(title: NL("压缩为 ZIP"), icon: "archive", divider: true, action: { [weak self] in self?.compressSelection() }))
-      if chosen.count == 1, NativeArchives.isArchive(chosen[0].url) {
-        for (mode, title) in [("choose", NL("解压到…")), ("here", NL("解压到当前目录")), ("folder", NL("解压到“{0}/”", NativeArchives.folderName(chosen[0].url)))] {
-          items.append(ExplorerMenuItem(title: title, icon: "download", action: { [weak self] in self?.extract(chosen[0].url, mode: mode) }))
-        }
-      }
-    }
-    if !viewingTrash, let vcsStatus, vcsStatus.error == nil {
-      items.append(ExplorerMenuItem(title: vcsStatus.kind == .git ? "Git" : "SVN", icon: "terminal", divider: true, children: [.diff, .add, .commit, .update, .revert].map { action in ExplorerMenuItem(title: action.title, action: { [weak self] in self?.showVCS(action) }) }))
-    }
-    if viewingTrash {
-      items = [ExplorerMenuItem(title: NL("还原"), icon: "undo", enabled: !chosen.isEmpty, action: { [weak self] in self?.restoreFromTrash(choose: false) }), ExplorerMenuItem(title: NL("还原到…"), icon: "folder", enabled: !chosen.isEmpty, action: { [weak self] in self?.restoreFromTrash(choose: true) }), ExplorerMenuItem(title: NL("清空回收站…"), icon: "trash", divider: true, action: { [weak self] in self?.emptySystemTrash() })]
-    }
-    let quickNames = [NL("剪切"), NL("复制"), NL("重命名"), NL("移到回收站")]
-    let quick = chosen.isEmpty ? [] : quickNames.compactMap { name in items.first { $0.title == name } }
-    ExplorerMenu.show(chosen.isEmpty ? items : items.filter { !quickNames.contains($0.title) }, at: window.convertPoint(toScreen: event.locationInWindow), owner: window, quickActions: quick)
+    let items = contextItems()
+    let quickNames = viewingTrash || selectedPaths.isEmpty ? [] : [NL("剪切"), NL("复制"), NL("重命名"), NL("移到回收站")]
+    let quick = quickNames.compactMap { name in items.first { $0.title == name } }
+    ExplorerMenu.show(items.filter { !quickNames.contains($0.title) }, at: window.convertPoint(toScreen: event.locationInWindow), owner: window, quickActions: quick)
   }
 
   private func togglePane(_ name: String) { paneMode = paneMode == name ? "" : name; defaults.set(paneMode, forKey: "paneMode"); updatePane(); updateStatus(); view.needsLayout = true }
   private func updatePane() {
-    detailsPreview?.previewItem = nil; detailsPreview?.removeFromSuperview(); detailsPreview = nil; pane.subviews.forEach { $0.removeFromSuperview() }
+    paneRequest = UUID(); let request = paneRequest
+    detailsPreview?.previewItem = nil; detailsPreview?.removeFromSuperview(); detailsPreview = nil
+    pane.subviews.forEach { $0.removeFromSuperview() }; paneBody.subviews.forEach { $0.removeFromSuperview() }
     guard !paneMode.isEmpty else { return }
     let title = label(paneMode == "details" ? NL("详细信息") : NL("预览"), size: 14); title.identifier = NSUserInterfaceItemIdentifier("title"); pane.addSubview(title)
     let close = ExplorerButton(icon: "close") { [weak self] in self?.paneMode = ""; self?.defaults.set("", forKey: "paneMode"); self?.updatePane(); self?.updateStatus(); self?.view.needsLayout = true }; close.identifier = NSUserInterfaceItemIdentifier("close"); pane.addSubview(close)
+    paneScroll.documentView = paneBody; paneScroll.hasVerticalScroller = true; paneScroll.autohidesScrollers = true; paneScroll.drawsBackground = false
+    pane.addSubview(paneScroll)
     let selected = selectedEntries()
     if selected.count == 1, let entry = selected.first {
-      let name = label(entry.name, size: 15); name.font = .systemFont(ofSize: 15, weight: .semibold); name.identifier = NSUserInterfaceItemIdentifier("name"); pane.addSubview(name)
-      if paneMode == "preview", !entry.isDirectory, let preview = QLPreviewView(frame: .zero, style: .normal) { preview.previewItem = entry.url as NSURL; pane.addSubview(preview); detailsPreview = preview }
-      else {
-        let icon = FileIconView(); icon.show(entry); icon.imageScaling = .scaleProportionallyUpOrDown; icon.identifier = NSUserInterfaceItemIdentifier("icon"); pane.addSubview(icon)
-        let values = [entry.kind, NL("位置"), entry.url.deletingLastPathComponent().path, NL("大小"), entry.isDirectory ? NL("文件夹") : ExplorerFormat.size(entry.size), NL("修改日期"), entry.modified.map(dateFormatter.string) ?? "—"]
-        for (i, text) in values.enumerated() { let value = label(text, size: i == 0 ? 12 : 11, color: i % 2 == 1 ? ExplorerPalette.secondary : ExplorerPalette.text); value.identifier = NSUserInterfaceItemIdentifier("value-\(i)"); pane.addSubview(value) }
+      let name = label(entry.name, size: 15); name.font = .systemFont(ofSize: 15, weight: .semibold); name.identifier = NSUserInterfaceItemIdentifier("name"); paneBody.addSubview(name)
+      if paneMode == "preview", !entry.isDirectory, let preview = QLPreviewView(frame: .zero, style: .normal) {
+        preview.previewItem = entry.url as NSURL; paneBody.addSubview(preview); detailsPreview = preview
+      } else {
+        let backdrop = SurfaceView(); backdrop.color = ExplorerPalette.surface; backdrop.identifier = NSUserInterfaceItemIdentifier("preview-background"); paneBody.addSubview(backdrop)
+        let icon = FileIconView(); icon.show(entry); icon.imageScaling = .scaleProportionallyUpOrDown; icon.identifier = NSUserInterfaceItemIdentifier("icon"); paneBody.addSubview(icon)
+        var values = [entry.kind, NL("位置"), entry.url.deletingLastPathComponent().path, NL("大小"), entry.isDirectory ? NL("文件夹") : NL("{0}（{1} 字节）", ExplorerFormat.size(entry.size), entry.size.formatted(.number.locale(NativeLanguage.formatLocale))), NL("修改日期"), entry.modified.map(dateFormatter.string) ?? "—", NL("创建日期"), entry.created.map(dateFormatter.string) ?? "—"]
+        if entry.isSymbolicLink { values += [NL("链接"), NL("符号链接")] }
+        for (i, text) in values.enumerated() { let value = label(text, size: i == 0 ? 12 : 11, color: i % 2 == 1 ? ExplorerPalette.secondary : ExplorerPalette.text); value.toolTip = text; value.identifier = NSUserInterfaceItemIdentifier("value-\(i)"); paneBody.addSubview(value) }
+        if paneMode == "details" {
+          Task { @MainActor [weak self, weak icon] in
+            let result = try? await Task.detached(priority: .utility) { try NativeFilePreview.read(entry) }.value
+            guard let self, self.paneRequest == request else { return }
+            if let data = result?.image { icon?.image = NSImage(data: data) }
+            if let text = result?.text {
+              let preview = NSTextView(); preview.string = text; preview.isEditable = false; preview.font = .monospacedSystemFont(ofSize: 11, weight: .regular); preview.textColor = ExplorerPalette.text; preview.backgroundColor = ExplorerPalette.surface
+              let scroll = NSScrollView(); scroll.documentView = preview; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.identifier = NSUserInterfaceItemIdentifier("text-preview"); self.paneBody.addSubview(scroll)
+              let heading = label(NL("内容预览"), size: 12); heading.identifier = NSUserInterfaceItemIdentifier("text-heading"); self.paneBody.addSubview(heading)
+              if result?.truncated == true { let note = label(NL("仅显示前 16 KB"), size: 11, color: ExplorerPalette.secondary); note.identifier = NSUserInterfaceItemIdentifier("text-limit"); self.paneBody.addSubview(note) }
+              self.layoutPane()
+            }
+          }
+        }
       }
-    } else { let name = label(selected.isEmpty ? locationLabel(directory) : NL("已选择 {0} 个项目", selected.count), size: 15); name.identifier = NSUserInterfaceItemIdentifier("empty"); pane.addSubview(name) }
+      let quick = ExplorerButton(title: NL("快速查看")) { [weak self] in self?.previewSelected() }
+      quick.identifier = NSUserInterfaceItemIdentifier("quick-look"); paneBody.addSubview(quick)
+    } else {
+      let text = selected.isEmpty ? (paneMode == "preview" ? NL("未选择项目") : locationLabel(directory)) : NL("已选择 {0} 个项目", selected.count)
+      let name = label(text, size: 15); name.identifier = NSUserInterfaceItemIdentifier("empty"); paneBody.addSubview(name)
+      if selected.count > 1, paneMode == "details" {
+        let size = selected.filter { !$0.isDirectory }.reduce(Int64(0)) { $0 + $1.size }
+        let total = label(NL("文件大小合计 {0}", ExplorerFormat.size(size)), size: 12, color: ExplorerPalette.secondary)
+        total.identifier = NSUserInterfaceItemIdentifier("total"); paneBody.addSubview(total)
+      }
+    }
     layoutPane()
   }
   private func layoutPane() {
     let width = pane.bounds.width
-    for child in pane.subviews {
-      let id = child.identifier?.rawValue ?? ""
-      switch id {
-      case "title": child.frame = NSRect(x: 22, y: 20, width: width - 70, height: 20)
-      case "close": child.frame = NSRect(x: width - 50, y: 14, width: 28, height: 28)
-      case "name": child.frame = NSRect(x: 22, y: paneMode == "preview" ? 65 : 224, width: width - 44, height: 25)
-      case "icon": child.frame = NSRect(x: (width - 70) / 2, y: 95, width: 70, height: 70)
-      case "empty": child.frame = NSRect(x: 22, y: 130, width: width - 44, height: 25)
-      default:
-        if id.hasPrefix("value-"), let index = Int(id.dropFirst(6)) { child.frame = NSRect(x: 22, y: 260 + CGFloat(index) * 29, width: width - 44, height: 22) }
+    pane.subviews.first { $0.identifier?.rawValue == "title" }?.frame = NSRect(x: 22, y: 20, width: width - 70, height: 20)
+    pane.subviews.first { $0.identifier?.rawValue == "close" }?.frame = NSRect(x: width - 50, y: 14, width: 28, height: 28)
+    paneScroll.frame = NSRect(x: 1, y: 54, width: max(0, width - 1), height: max(0, pane.bounds.height - 54))
+    let metadata = paneBody.subviews.compactMap { child -> (Int, NSTextField)? in
+      guard let id = child.identifier?.rawValue, id.hasPrefix("value-"), let index = Int(id.dropFirst(6)), let label = child as? NSTextField else { return nil }
+      return (index, label)
+    }.sorted { $0.0 < $1.0 }
+    var contentY: CGFloat = 206
+    for (index, value) in metadata {
+      value.maximumNumberOfLines = 0; value.lineBreakMode = .byWordWrapping
+      let textWidth = max(1, width - 44)
+      let measured = (value.stringValue as NSString).boundingRect(with: NSSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: value.font ?? NSFont.systemFont(ofSize: 11)]).height
+      let height = max(22, ceil(measured))
+      value.frame = NSRect(x: 22, y: contentY, width: textWidth, height: height)
+      contentY += height + (index == 0 || index % 2 == 0 ? 18 : 0)
+    }
+    let hasText = paneBody.subviews.contains { $0.identifier?.rawValue == "text-preview" }
+    let quickY = paneMode == "preview" ? max(240, paneScroll.bounds.height - 46) : contentY + (hasText ? 260 : 12)
+    for child in paneBody.subviews {
+      switch child.identifier?.rawValue ?? "" {
+      case "name": child.frame = NSRect(x: 22, y: paneMode == "preview" ? 11 : 170, width: width - 44, height: 25)
+      case "preview-background": child.frame = NSRect(x: 22, y: 0, width: width - 44, height: 148)
+      case "icon": child.frame = NSRect(x: (width - 70) / 2, y: 41, width: 70, height: 70)
+      case "empty": child.frame = NSRect(x: 22, y: 76, width: width - 44, height: 25)
+      case "total": child.frame = NSRect(x: 22, y: 113, width: width - 44, height: 22)
+      case "quick-look": child.frame = NSRect(x: 22, y: quickY, width: width - 44, height: 30)
+      case "text-heading": child.frame = NSRect(x: 22, y: contentY, width: width - 44, height: 22)
+      case "text-preview":
+        child.frame = NSRect(x: 22, y: contentY + 28, width: width - 44, height: 200)
+        if let scroll = child as? NSScrollView, let text = scroll.documentView as? NSTextView {
+          text.frame.size.width = scroll.contentSize.width; text.textContainer?.containerSize = NSSize(width: scroll.contentSize.width, height: .greatestFiniteMagnitude); text.textContainer?.widthTracksTextView = true
+          text.isVerticallyResizable = true; text.minSize = NSSize(width: 0, height: 200); text.sizeToFit()
+        }
+      case "text-limit": child.frame = NSRect(x: 22, y: contentY + 232, width: width - 44, height: 20)
+      default: break
       }
     }
-    detailsPreview?.frame = NSRect(x: 22, y: 100, width: max(0, width - 44), height: max(0, pane.bounds.height - 122))
+    detailsPreview?.frame = NSRect(x: 22, y: 46, width: max(0, width - 44), height: max(180, quickY - 58))
+    paneBody.frame = NSRect(x: 0, y: 0, width: width, height: max(paneScroll.bounds.height, paneBody.subviews.map { $0.frame.maxY + 16 }.max() ?? 0))
   }
   private func chooseDirectory() { guard let window = view.window else { return }; let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.beginSheetModal(for: window) { [weak self] result in if result == .OK, let url = panel.url { self?.navigate(to: url) } } }
   private func askName(title: String, value: String, completion: @escaping (String) -> Void) {
@@ -987,7 +1095,17 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     field.superview?.needsLayout = true; field.superview?.layoutSubtreeIfNeeded()
     view.window?.makeFirstResponder(field)
     let stem = entry.isDirectory || entry.url.pathExtension.isEmpty ? entry.name : entry.url.deletingPathExtension().lastPathComponent
-    (field.currentEditor() as? NSTextView)?.setSelectedRange(NSRange(location: 0, length: (stem as NSString).length))
+    if let editor = field.currentEditor() as? NSTextView {
+      if mode == .details, let font = field.font {
+        let height = NSLayoutManager().defaultLineHeight(for: font)
+        let centered = NSRect(x: 2, y: (field.bounds.height - height) / 2, width: editor.bounds.width, height: height)
+        if let clip = editor.superview as? NSClipView {
+          clip.frame = field.convert(centered, to: clip.superview)
+          editor.frame = NSRect(origin: .zero, size: centered.size)
+        }
+      }
+      editor.setSelectedRange(NSRange(location: 0, length: (stem as NSString).length))
+    }
   }
   private func cancelInlineRename() {
     guard let field = renameField else { renamingEntry = nil; return }
@@ -1151,7 +1269,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
         return values
       })
     }
-    if entry.isDirectory || chosen.count > 1 { present(ExplorerIcons.folder(size: 42)) } else { _ = IconLoader.shared.request(entry, pixels: 128, completion: present) }
+    if entry.isDirectory || chosen.count > 1 { present(ExplorerIcons.folder(size: 42, url: chosen.count == 1 ? entry.url : nil)) } else { _ = IconLoader.shared.request(entry, pixels: 128, completion: present) }
   }
   private func showSettings(initialTab: Int = 0) {
     guard let window = view.window else { return }

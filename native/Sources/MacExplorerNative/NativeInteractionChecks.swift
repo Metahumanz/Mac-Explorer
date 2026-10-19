@@ -48,6 +48,37 @@ enum NativeInteractionChecks {
     browser.setView(.details); window.makeKeyAndOrderFront(nil)
     var checks: [String] = []
     func check(_ condition: Bool, _ label: String) throws { guard condition else { throw NativeSmoke.Failure(description: label) }; checks.append(label); print("PASS interaction: \(label)") }
+    func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+    for titles in [["剪切", "复制", "重命名", "移到回收站"], ["Cut", "Copy", "Rename", "Move to Trash"]] {
+      ExplorerMenu.show([ExplorerMenuItem(title: "Open")], at: NSPoint(x: window.frame.minX + 50, y: window.frame.maxY - 100), owner: window, quickActions: titles.map { ExplorerMenuItem(title: $0) })
+      guard let menu = window.childWindows?.last, let body = menu.contentView else { throw NativeSmoke.Failure(description: "Quick-action menu is visible") }
+      let buttons = descendants(body).compactMap { $0 as? NSButton }.filter { titles.contains($0.title) }
+      try check(buttons.count == titles.count, "All quick-action buttons are present")
+      for button in buttons {
+        let textWidth = (button.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 10)]).width
+        try check(button.bounds.width >= textWidth + 12, "Quick-action hover background contains \(button.title) with padding")
+      }
+      ExplorerMenu.dismiss()
+    }
+    for title in ["项目复选框", "文件扩展名", "隐藏的项目"] {
+      let before = browser.viewMenu().flatMap(\.children).first { $0.title == title }!.checked
+      ExplorerMenu.present(browser.viewMenu(), below: browser.viewButton)
+      guard let parentPanel = window.childWindows?.last, let parentBody = parentPanel.contentView,
+            let show = descendants(parentBody).first(where: { $0.accessibilityLabel() == "显示" }) else { throw NativeSmoke.Failure(description: "Show submenu row is present") }
+      let hover = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: parentPanel.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+      show.mouseEntered(with: hover)
+      guard let submenu = window.childWindows?.last, submenu !== parentPanel, let body = submenu.contentView,
+            let row = descendants(body).first(where: { $0.accessibilityLabel() == title }) else { throw NativeSmoke.Failure(description: "Show submenu target is present") }
+      try check(!submenu.isKeyWindow, "Hover opens a non-key submenu for \(title)")
+      let point = row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
+      let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: submenu.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+      try check(row.acceptsFirstMouse(for: down), "Submenu accepts the first click on \(title)")
+      submenu.sendEvent(down)
+      submenu.sendEvent(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0.01, windowNumber: submenu.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 0)!)
+      try check(browser.viewMenu().flatMap(\.children).first { $0.title == title }!.checked != before, "One submenu click toggles \(title)")
+      browser.viewMenu().flatMap(\.children).first { $0.title == title }!.action?()
+      try await until { !browser.loading }
+    }
     func place(_ path: String) throws -> ExplorerSidebarRow {
       guard let row = browser.sidebarDocument.subviews.compactMap({ $0 as? ExplorerSidebarRow }).first(where: { $0.placePath == path }) else { throw NativeSmoke.Failure(description: "Missing quick access row \(path)") }; return row
     }
@@ -88,6 +119,16 @@ enum NativeInteractionChecks {
     let renaming = browser.entries.firstIndex { $0.id == selection.first }!
     browser.table.scrollRowToVisible(renaming); browser.executeAction("rename")
     guard let field = (browser.table.view(atColumn: 0, row: renaming, makeIfNecessary: false) as? NameCell)?.nameLabel, let editor = field.currentEditor() as? NSTextView else { throw NativeSmoke.Failure(description: "No rename editor") }
+    let editorRect = field.convert(editor.bounds, from: editor)
+    try check(abs(editorRect.midY - field.bounds.midY) < 0.5, "Rename text selection is vertically centered in its input")
+    let nameCell = field.superview as! NameCell
+    try check(abs(field.frame.minX + editorRect.minX - (nameCell.icon.frame.maxX + 9)) < 0.5, "Rename text keeps the filename leading alignment")
+    let previousAppearance = window.appearance
+    for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+      window.appearance = NSAppearance(named: appearance)
+      try capture(window, to: output.appendingPathComponent("native-rename-\(name).png"))
+    }
+    window.appearance = previousAppearance
     editor.string = "Unsubmitted draft.txt"; field.stringValue = "Unsubmitted draft.txt"
     try Data("during rename".utf8).write(to: docs.appendingPathComponent("zz-during-edit.txt"))
     try await Task.sleep(nanoseconds: 700_000_000)

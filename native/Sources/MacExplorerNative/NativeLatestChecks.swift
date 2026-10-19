@@ -125,15 +125,53 @@ enum NativeLatestChecks {
     try expect(true, "Hidden files, extensions, checkboxes and default view synchronize across same-suite windows")
     firstWindow.contentView?.layoutSubtreeIfNeeded(); secondWindow.contentView?.layoutSubtreeIfNeeded()
     try await until { !first.collection.visibleItems().isEmpty && !second.collection.visibleItems().isEmpty }
+    func checkHover(_ resolve: () -> (NSView, ExplorerCheckbox)) throws {
+      var (view, checkbox) = resolve()
+      guard let event = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil) else { throw NativeSmoke.Failure(description: "Cannot create checkbox hover event") }
+      view.mouseExited(with: event)
+      try expect(checkbox.isHidden == (checkbox.state != .on), "Only selected item checkboxes remain visible without hover")
+      let frame = checkbox.frame
+      view.mouseEntered(with: event)
+      try expect(!checkbox.isHidden && checkbox.frame == frame, "Hover reveals the item checkbox without shifting layout")
+      if checkbox.state == .on { checkbox.performClick(nil); (view, checkbox) = resolve() }
+      checkbox.performClick(nil)
+      (view, checkbox) = resolve()
+      try expect(checkbox.state == .on, "Hovered checkbox still selects the item")
+      view.mouseExited(with: event)
+      try expect(!checkbox.isHidden && checkbox.state == .on, "Leaving keeps a checked checkbox visible and preserves selection")
+      checkbox.state = .off
+      try expect(checkbox.isHidden && checkbox.state == .off, "Programmatic deselection without hover hides the checkbox immediately")
+      checkbox.state = .on
+      try expect(!checkbox.isHidden, "Programmatic selection reveals the checkbox without hover")
+      checkbox.available = false; view.mouseEntered(with: event)
+      try expect(checkbox.isHidden, "Disabled item checkboxes stay hidden during hover")
+      view.mouseExited(with: event)
+    }
     for browser in [first, second] {
       let items = browser.collection.visibleItems().compactMap { $0 as? IconItem }
-      try expect(items.contains(where: { $0.nameLabel.stringValue == "document" }) && items.allSatisfy { !$0.checkbox.isHidden }, "Synchronized preferences update real collection labels and checkboxes")
+      try expect(items.contains(where: { $0.nameLabel.stringValue == "document" }) && items.allSatisfy { $0.checkbox.available }, "Synchronized preferences update real collection labels and checkboxes")
+      if let path = items.first?.view.toolTip {
+        try checkHover {
+          let item = browser.collection.visibleItems().compactMap { $0 as? IconItem }.first { $0.view.toolTip == path }!
+          return (item.view, item.checkbox)
+        }
+      }
     }
     defaults.set(false, forKey: "showHidden"); defaults.set(true, forKey: "extensions"); defaults.set(false, forKey: "checkboxes")
     defaults.set(["view": "details", "iconSize": 64, "sort": "name", "ascending": true], forKey: "defaultFolderView")
     NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
     try await until { [first, second].allSatisfy { !$0.showHidden && $0.extensions && !$0.checkboxes && $0.mode == .details && $0.entries.count == 1 } }
     try expect(true, "Reverting shared preferences refreshes both existing windows")
+    first.checkboxes = true; first.table.reloadData(); firstWindow.contentView?.layoutSubtreeIfNeeded()
+    guard first.table.rowView(atRow: 0, makeIfNecessary: true) != nil, let cell = first.table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NameCell else { throw NativeSmoke.Failure(description: "Missing checkbox row") }
+    cell.layoutSubtreeIfNeeded()
+    try checkHover {
+      let currentRow = first.table.rowView(atRow: 0, makeIfNecessary: true)!
+      let currentCell = first.table.view(atColumn: 0, row: 0, makeIfNecessary: true) as! NameCell
+      currentCell.layoutSubtreeIfNeeded()
+      return (currentRow, currentCell.checkbox)
+    }
+    first.checkboxes = false; first.table.reloadData()
     firstWindow.makeKeyAndOrderFront(nil); first.table.selectRowIndexes([0], byExtendingSelection: false); first.focusSearch()
     guard let editor = first.search.currentEditor() as? NSTextView else { throw NativeSmoke.Failure(description: "Search field has a native text editor") }
     editor.string = "unsubmitted search draft"; first.search.stringValue = editor.string

@@ -1,315 +1,152 @@
-> `main` 维护 Swift/AppKit 原生版，构建、运行与功能说明见 [native/README.md](native/README.md)。Electron 版保留在 [`electron`](https://github.com/qixiaoyu27/Mac-Explorer/tree/electron) 分支。以下历史发行说明对应 Electron 版；原生版尚未发布。
-
 <div align="center">
   <img src="design/icon-selected-mirrored.png" width="112" alt="Mac Explorer 图标">
   <h1>Mac Explorer</h1>
-  <p><strong>换了 Mac，文件管理习惯不用换。</strong></p>
-  <p>A Windows-style file manager for macOS.</p>
+  <p><strong>熟悉的 Windows 文件管理方式，原生的 Mac 应用。</strong></p>
+  <p>A native macOS file manager with Windows Explorer workflows.</p>
   <p>
-    <a href="https://github.com/qixiaoyu27/Mac-Explorer/releases/latest"><img src="https://img.shields.io/github/v/release/qixiaoyu27/Mac-Explorer?style=flat-square&color=0078D4" alt="最新版本"></a>
-    <img src="https://img.shields.io/badge/macOS-13%2B-333333?style=flat-square&logo=apple" alt="macOS 13 及以上">
-    <img src="https://img.shields.io/badge/Apple%20Silicon-arm64-333333?style=flat-square" alt="Apple Silicon arm64">
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/qixiaoyu27/Mac-Explorer?style=flat-square" alt="GPL-3.0 许可证"></a>
-  </p>
-  <p>
-    <a href="https://github.com/qixiaoyu27/Mac-Explorer/releases/latest"><strong>下载 Mac 版</strong></a> ·
-    <a href="#熟悉的操作真正的-mac-文件">功能</a> ·
-    <a href="#从源码运行">开发</a> ·
+    <a href="https://github.com/qixiaoyu27/Mac-Explorer/releases/latest">下载最新版本</a> ·
+    <a href="#下载与安装">安装与升级</a> ·
     <a href="https://github.com/qixiaoyu27/Mac-Explorer/issues">反馈问题</a>
   </p>
 </div>
 
-![Mac Explorer v0.1.53 浅色界面](docs/images/explorer-light-0.1.53.png)
+Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户，提供多标签、路径栏、导航树、文件操作、压缩包浏览和 Git / SVN 集成。应用直接管理本机文件，与 Finder 共存，不替换 Finder。
 
-Mac Explorer 面向习惯 Windows 文件资源管理器的 Mac 用户：熟悉的标签页、路径栏、右键菜单和快捷键，加上压缩包浏览与选择解压，让日常文件操作按你习惯的方式完成。
-
-这是独立开发的 macOS 应用，直接管理本机文件，使用系统权限、默认应用和回收站。由于系统限制，应用与 Finder 共存，不能完全替代 Finder；可在设置中自愿启用实验性的系统文件查看器接入，具体限制见下文。
+**1.1.0 是原生架构更新：由 Electron 迁移至 Swift + AppKit，运行时不再依赖 Electron、Node.js 或 WebView。** `main` 维护原生版，旧 Electron 实现保留在 [`electron` 分支](https://github.com/qixiaoyu27/Mac-Explorer/tree/electron)。
 
 ## 下载与安装
 
-### 应用内在线更新
+支持 **Apple Silicon（M 系列）· macOS 13 及以上**。暂不提供 Intel、Windows 或 Linux 安装包；macOS 13 最低版本尚未完成实机回归。
 
-在「设置 → 关于」查看版本、开发者、开源许可和项目链接。点击「检查更新」读取 GitHub Releases 的正式版本，更新说明请前往「GitHub 发布页」查看；有新版时可下载，校验完成后点击「重启并安装」。关闭设置窗口不会中断下载。
+### 一键安装或升级
 
-安装器等待应用退出后才替换应用，保留偏好设置；旧应用仅在替换过程中临时保留，安装成功后直接清理，不留下旧版备份。替换失败会尝试还原并重新打开旧版；若还原失败，会保留临时旧应用供恢复。安装失败的日志保存在应用用户数据目录的 `updates/download-*/install.log`，「关于」仅显示简短失败提示，不展示日志内容。
-
-在线安装适用于已安装、位于可写目录的 Apple Silicon 版本；开发模式可以检查更新。当前发布使用临时签名、未经 Apple 公证，更新不会自动移除系统隔离标记，安装后可能仍需 macOS 确认。
-
-若旧版在校验更新后报错，请先退出应用，再执行下方安装命令直接更新；偏好设置保留。
-
-### 一行命令安装或更新（推荐）
-
-打开 macOS 的「终端」，复制并执行：
+先退出 Mac Explorer，在终端执行：
 
 ```sh
-MAC_EXPLORER_INSTALL_DIR=/Applications /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.0.0/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.1.0/scripts/install.sh)"
 ```
 
-如果 Mac Explorer 让你用 Mac 更顺手，欢迎到 [GitHub 点个 ⭐ Star](https://github.com/qixiaoyu27/Mac-Explorer)，支持项目持续更新！
+默认安装到 `/Applications/Mac Explorer.app`，不需要 npm、Homebrew 或 `sudo`。此命令固定安装脚本版本，应用包从最新正式 Release 下载。
 
-命令固定使用已验证的安装脚本版本，应用仍会下载最新 Release。
+安装器会校验 SHA-256、应用标识、Apple Silicon 架构和签名，再替换应用；不会覆盖不同标识的其他应用，不会降级较新的本地版本。下载或校验失败保留原应用，替换失败尝试恢复原应用。
 
-无需安装 npm、Node.js 或 Homebrew，也不需要 `sudo`。命令会下载并运行[本仓库的安装脚本](scripts/install.sh)，自动获取最新版本、校验 SHA-256 和应用签名，安装后启动应用。
+**旧版升级：** 同一命令支持从官方 Electron 版升级到原生版。若系统应用目录尚无安装，但旧版位于 `~/Applications/Mac Explorer.app`，会将其升级至系统应用目录。原生版使用独立偏好设置；旧版配置文件保留，但外观、自定义快捷键、窗口会话等不会自动导入，需要在原生版重新设置。快速访问可通过「设置 → 常规 → 从 Finder 导入收藏夹」重新导入。个人文件不会因安装或升级被修改。
 
-- 默认安装到系统「应用程序」目录 `/Applications/Mac Explorer.app`，已有该目录版本则原位更新。需要目录可写；无写入权限时会明确报错，不会自动改装到个人目录。
-- 再次执行同一命令会检查更新：已是最新版则跳过下载，发现新版才安装，不会降级较新的本地版本。需要更新时请先退出 Mac Explorer。安装成功后不保留旧版应用备份，已有偏好设置保留。
-- 下载时显示 `【已下载 MiB】/【总大小 MiB】 【进度百分比】`；网络尚未返回总大小时显示待确认，下载失败不会替换已有应用。
-- 默认保留下载隔离标记。如被系统拦截，请参考下方首次打开说明或选择下面的可选命令。
-- GitHub 连接失败时可重试，或使用下面的手动下载安装方式。
+历史版本中固定到旧 tag 的安装命令及 Electron 应用内更新器不会自动切换原生安装协议。**跨架构升级请使用上面的新命令，或手动安装 DMG。** 已有原生版可继续使用「设置 → 关于」中的检查、下载和重启安装。
 
-#### 安装并允许未公证版本（可选）
+### 首次打开与系统安全提示
 
-如果你信任本项目，并同意移除 **Mac Explorer 这一个应用**的下载隔离标记，可以直接使用这一行：
+应用和 DMG 使用 **ad-hoc 临时签名，未经 Apple 公证**。如果系统拦截，可在「系统设置 → 隐私与安全性」中确认允许打开。默认安装命令不会关闭 Gatekeeper，也不会移除下载隔离标记。
+
+如果你信任本项目，并明确同意仅移除本次安装应用的下载隔离标记，可使用：
 
 ```sh
-MAC_EXPLORER_INSTALL_DIR=/Applications MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.0.0/scripts/install.sh)"
+MAC_EXPLORER_ALLOW_UNNOTARIZED=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/tags/v1.1.0/scripts/install.sh)"
 ```
 
-它将下载、校验、移除该应用的隔离标记、安装和启动合并执行。SHA-256 和应用签名校验仍然保留，校验失败就停止；不需要 `sudo`，不关闭系统 Gatekeeper，也不修改其他应用。这不是 Apple 公证或安全背书，系统其他安全检查仍可能拦截。若系统明确提示恶意软件，请勿使用此方式继续运行。
+该选项仍执行签名和校验检查，不代表 Apple 公证；如果系统提示恶意软件，请不要继续运行。
 
-### 手动下载安装
+### 手动安装与校验
 
-1. 前往 **[Releases](https://github.com/qixiaoyu27/Mac-Explorer/releases/latest)**，下载 `Mac-Explorer-版本号-mac-arm64.dmg`。
-2. 打开 DMG，将 **Mac Explorer** 拖入 **Applications**。
-3. 启动应用，按需允许访问桌面、文档或下载文件夹。
+1. 打开 [GitHub Releases](https://github.com/qixiaoyu27/Mac-Explorer/releases/latest)，下载 `Mac-Explorer-Native-版本号-mac-arm64.dmg`。
+2. 退出旧应用，打开 DMG，将 **Mac Explorer** 拖入 **Applications**，按系统提示替换。
+3. 启动应用，按需授予桌面、文稿或下载文件夹的访问权限。
 
-| 平台 | 支持情况 |
+附件同时提供 ZIP、`SHA256SUMS-native.txt` 和安装脚本。将 ZIP、DMG 与校验文件下载到同一目录后执行：
+
+```sh
+shasum -a 256 -c SHA256SUMS-native.txt
+```
+
+需要安装到其他可写目录时，可在一键安装命令前设置 `MAC_EXPLORER_INSTALL_DIR=/完整路径`。原有 `MAC_EXPLORER_NO_OPEN=1` 参数仍可用于安装后不自动启动。
+
+## 日常文件管理
+
+- **多标签与导航：** 独立前进/后退历史、面包屑与地址编辑、目录树、标签拖出独立窗口、会话恢复。
+- **八种布局：** 超大、大、中、小图标，以及列表、详细信息、平铺、内容；支持排序、隐藏项目、扩展名、紧凑视图和选择复选框。
+- **清晰的选择状态：** 已选项目的复选框常显，未选项目悬停时显示；桌面、文稿、下载、音乐等特殊目录具有对应图标。
+- **文件操作：** 新建文件夹、文本及 Office 模板，复制、剪切、粘贴、移动、重命名、拖放、撤销和系统回收站。
+- **搜索：** 按名称递归搜索，支持普通文本、通配符和正则表达式；跳过符号链接与应用包内部，并限制搜索规模。
+- **预览与属性：** Quick Look、预览/详细信息窗格、文本和图片预览，以及大小、占用空间、日期、文件数量等属性。
+- **打开方式：** 使用系统默认应用，选择其他可用应用，或用文本编辑打开文件；重复应用合并显示。
+
+## 快速访问与系统位置
+
+快速访问支持固定、取消固定和拖动排序，并在窗口间同步。Finder 收藏夹导入只读取并合并条目，不修改 Finder 配置。此电脑显示实际挂载卷、容量及 iCloud Drive；网络页面提供 SMB 地址连接、Bonjour 发现及名称/地址筛选。AirDrop 使用 macOS 共享能力。
+
+## 压缩包与版本控制
+
+压缩包支持内部目录浏览、选择文件、临时打开、解压到指定位置及创建 ZIP。解压拒绝路径越界、危险链接和覆盖已有目标。
+
+Git / SVN 集成提供状态角标、差异、暂存/添加、提交、更新及丢弃操作。写入前展示操作内容，拒绝过期的操作计划，丢弃前备份；可在设置中关闭检测。
+
+## 设置与快捷键
+
+通过「更多 → 设置」或 **⌘,** 打开设置：
+
+- **常规：** 浅色、深色、跟随系统；简体中文、繁体中文、英文；快速访问、可选系统文件查看器、版本控制和默认文件夹视图。
+- **自定义工具栏：** 选择常用操作并调整顺序。
+- **键盘快捷键：** 自定义操作键及全局唤醒键，保存前检测冲突；清除唤醒键后需保存才生效。
+- **关于：** 项目信息、手动检查更新，以及启动时、每天、每周或从不自动检查更新。
+
+每个文件夹可分别记忆布局与排序，未覆盖的项目跟随全局默认设置。设置变化会同步到其他窗口。
+
+| 操作 | 默认快捷键 |
 | --- | --- |
-| Apple Silicon（M 系列芯片） | 提供 DMG 安装包与 ZIP 应用包 |
-| 系统版本 | 构建目标为 macOS 13+；最低版本尚未在实机回归 |
-| Intel Mac / Windows / Linux | 暂未提供构建 |
-
-当前下载包使用 **临时签名（ad-hoc）**，不包含 Developer ID 开发者证书，**未经 Apple 公证**。macOS 首次打开时可能拦截，需要由你确认是否允许运行。
-
-### 首次打开被 macOS 拦截
-
-1. 先把应用复制到 **Applications**，再尝试打开一次。
-2. 如果提示“无法验证开发者”或“Apple 无法检查是否包含恶意软件”，关闭提示，进入 **系统设置 → 隐私与安全性**。
-3. 找到 Mac Explorer 的拦截提示，点击 **仍要打开**，按系统要求验证身份并确认打开。该选项通常在尝试启动后出现。
-
-这是 Apple 提供的单个应用例外流程，详见 [Apple 安装说明](https://support.apple.com/zh-cn/102445)。无需关闭系统 Gatekeeper 或修改全局安全设置。
-
-<details>
-<summary>仍提示“应用已损坏”怎么办？</summary>
-
-先重新下载，并按下方步骤核对 SHA-256。如果校验不一致，请勿运行。如果校验一致、确认下载自本仓库，仍被下载隔离标记拦截，可在终端对这一个应用移除隔离标记：
-
-```sh
-xattr -dr com.apple.quarantine "/Applications/Mac Explorer.app"
-```
-
-这会移除该应用的下载隔离标记，不会补上 Apple 公证。若安装在个人 Applications 目录，将路径改成 `"$HOME/Applications/Mac Explorer.app"`。不要把命令用于不明来源的软件；若系统明确提示恶意软件，不要用此方法继续运行。
-
-</details>
-
-### 校验下载文件
-
-每次发布附带 `SHA256SUMS.txt`。在下载目录运行以下命令，并将输出与同一 Release 中的校验文件对照：
-
-```sh
-shasum -a 256 Mac-Explorer-1.0.0-mac-arm64.dmg
-```
-
-使用 ZIP 时，对 ZIP 文件执行相同校验即可。
-
-## 版本策略
-
-从 **1.0.0** 起遵循[语义化版本（SemVer）](https://semver.org/lang/zh-CN/)，采用 `主版本.次版本.修订版本`：
-
-- **PATCH**：兼容的缺陷修复或小幅界面修正，例如 `1.0.0 → 1.0.1`。
-- **MINOR**：兼容的新增功能，例如 `1.0.1 → 1.1.0`，修订版本归零。
-- **MAJOR**：不兼容变更，例如 `1.1.0 → 2.0.0`，次版本和修订版本归零。
-
-兼容性以公开约定的文件操作、系统打开集成、安装与更新入口、偏好与数据格式，以及支持平台为准；内部重构或 IPC 调整本身不构成主版本升级。每次正式发布根据累计变更决定版本，不按本地构建次数递增。已发布的版本、tag 和附件不可覆盖，修正须发布新版本。
-
-## 熟悉的操作，真正的 Mac 文件
-
-| 你熟悉的习惯 | Mac Explorer 的实现 |
-| --- | --- |
-| 多窗口来回切换 | 多标签浏览，保留标签位置，支持前进、后退和上一级 |
-| 在路径栏直接输入 | 单击当前路径即可编辑；面包屑可快速跳转上级目录 |
-| 按自己的方式看文件 | 八种视图、32–128 px 图标调节、Retina 图标、排序与紧凑视图 |
-| 一次选择多个文件 | 空白处拖动框选，支持边缘滚动；⌘/Ctrl 增减选择、Shift 追加、Esc 取消。项目复选框悬停时显示，勾选后保持显示 |
-| 常用目录随手可达 | 快速访问固定与取消固定，默认目录也可取消；支持从 Finder 导入收藏夹 |
-| 右键完成日常任务 | 新建、重命名、复制、剪切、粘贴、ZIP 压缩、选择打开方式、使用文本编辑、打开终端 |
-| 从图标识别文件 | PDF 首页、图片及 Office 内容缩略图，右下角显示默认应用图标；Office 预览范围由 macOS Quick Look 决定，无法预览时回退系统文件图标。更改默认应用后刷新目录生效 |
-| 不打开文件也能看内容 | 文本和图片预览、详细信息窗格、Space 调用 macOS 快速查看 |
-| 从其他应用跳到文件 | 接收系统“打开方式”请求：进入文件夹，或定位并选中文件 |
-
-“使用文本编辑”会在独立的 TextEdit 实例中按纯文本打开文件，HTML/RTF 显示源码；不改变 TextEdit 的默认设置。
-
-### 压缩包：先看看，再解压
-
-把常用的 WinRAR 操作习惯带到 Mac：
-
-- **双击压缩包**：直接浏览目录，进入包内子文件夹。
-- **双击包内文件**：提取临时副本，交给默认应用打开。
-- **勾选部分或全部项目**：解压到指定路径、当前路径，或以压缩包实际名称创建的文件夹。
-- **右键压缩包**：直接解压到当前目录或同名文件夹。
-- **选中文件或文件夹右键**：压缩为 ZIP；多选可合并成一个包。
-
-解压保留目录结构；已有同名顶层项目会整项跳过，不合并、不覆盖。包内文件的临时副本修改后**不会写回压缩包**，请另存需要保留的内容。
-
-ZIP、TAR.GZ、7z 已通过测试；其他格式（包括 RAR）取决于 macOS 自带 libarchive。当前不支持密码、分卷包、归档内链接或特殊文件。
-
-### 浅色、深色，或跟随系统
-
-在 **更多（…）→ 设置… → 常规 → 外观** 中切换；在 **查看 → 显示** 中调整导航窗格、紧凑视图、复选框、文件扩展名和隐藏项目。设置会自动保存。
-
-<details>
-<summary>查看深色界面</summary>
-
-![Mac Explorer 深色界面](docs/images/explorer-dark-0.1.25.png)
-
-</details>
-
-*首页浅色截图来自 v0.1.53，深色截图来自 v0.1.25；均为实际应用，使用临时演示目录，不包含个人数据。*
-
-启动应用和新建标签页默认进入个人文件夹。侧栏保留快速访问固定项；启动时保留其他目录标签页，并选中个人文件夹。
-
-### Finder 收藏夹与 iCloud Drive
-
-在 **设置 → 常规 → 快速访问** 点击「从 Finder 导入收藏夹」，将可访问的收藏文件夹合并到快速访问，保留已有顺序并跳过重复项；不会修改 Finder 收藏夹。以后新增的收藏夹可再次导入。
-
-已启用的 iCloud Drive 显示在侧栏「此电脑」及磁盘列表下方。删除文件因访问权限被拒绝时，应用会请求选择允许访问的 iCloud 文件夹；取消后保留原文件。
-
-## 设置
-
-在 **常规 → 文件夹视图** 中设置默认布局、排序字段和排序方向。各文件夹分别记忆布局与排序，未单独设置的部分继续跟随默认值。点击 **重置所有文件夹** 清除单独设置；也可先调整当前文件夹，再选择 **查看 → 应用到所有文件夹**，将当前布局和排序设为全局默认值。旧版视图设置会自动迁移，多窗口同步更新，最多保留最近使用的 5000 条目录设置。
-
-在 **更多（…）→ 设置…** 或按 **⌘,** 打开设置。设置弹窗增高至 700px（小屏幕自动适配），可拖动标题栏或使用方向键移动。窗口采用标签页布局：**常规**集中管理外观与界面语言，**自定义工具栏**调整常用操作，**键盘快捷键**设置唤醒组合键与各项文件操作按键。点击按键框录入组合，可清除或恢复默认，再点击对应的保存按钮。自定义会替换该操作的全部默认组合。保存前检查操作之间（包括兼容组合）、唤醒按键和常见系统保留组合的冲突；冲突或保存失败时保留原配置。操作按键、菜单提示同步到其他窗口并在重启后保留。唤醒快捷键默认关闭，其全局占用情况也会在注册时检查；其他应用自行注册的所有全局按键无法完整枚举。
-
-在 **常规 → 系统文件查看器（实验）** 启用「使用 Mac Explorer 显示文件」，可接收兼容软件的“在访达中显示”等请求。启用前自动备份，关闭时恢复原设置；若其他软件改动了关联，会停止覆盖并提示冲突。说明默认收起，悬停或聚焦开关右侧的问号图标查看。**限制：部分软件仍调用 Finder，菜单名称可能不变；普通文件夹打开方式可能需要重新登录或重启；不会替换桌面及系统“打开／保存”窗口。** 仅打包后的应用可设置，默认关闭。
-
-在设置中切换到 **自定义工具栏** 标签页，勾选常用操作、用上下箭头调整顺序，或恢复默认布局。支持添加隔空投送、终端、撤销和刷新；更改自动保存并同步到其他窗口。详细信息视图的表头会在滚动时保持可见。
-
-## 隔空投送与网络共享
-
-侧栏的 **隔空投送** 可选择多个文件或文件夹，也可从文件列表或 Finder 拖入页面或侧栏入口，再在 macOS 窗口中选择接收设备。原文件保留在原位置；接收设备需要开启无线局域网、蓝牙并允许被发现。
-
-侧栏的 **网络** 查找局域网内通过 Bonjour 发布的 SMB 共享电脑，也支持手动输入 `smb://server/share`（路径栏同样支持）。账号、密码和共享选择由 macOS 系统窗口处理；挂载成功后在 Mac Explorer 内浏览。已连接的共享会显示在网络页和磁盘列表中。F5 或「重新查找」刷新设备列表；未发现设备时仍可手动连接。首次发现设备可能需要允许本地网络访问。不支持通过地址传入密码。
-
-## 快捷键
-
-以下是默认按键，可在设置中自定义各项文件操作；输入框内保留标准文本编辑行为。
-
-| 操作 | 快捷键 |
-| --- | --- |
-| 重命名 | Return（回车）；再次回车确认，Esc 取消 |
-| 打开 / 快速查看 | ⌘O 或 ⌘↓ / Space 或 ⌘Y |
-| 复制 / 粘贴 / 撤销 | ⌘C / ⌘V / ⌘Z |
-| 移动已复制的文件 | ⌘C 后到目标文件夹按 ⌥⌘V |
+| 复制 / 剪切 / 粘贴 | ⌘C / ⌘X / ⌘V |
+| 移动已复制项目到这里 | ⌥⌘V |
 | 创建副本 / 全选 | ⌘D / ⌘A |
 | 新建文件夹 / 移到回收站 | ⇧⌘N / ⌘⌫ |
+| 重命名 / 快速查看 | Return 或 F2 / Space |
 | 前往文件夹 / 搜索 | ⇧⌘G / ⌘F |
-| 后退 / 前进 / 上一级 | ⌘[ / ⌘] / Backspace 或 ⌘↑ |
-| 新建 / 关闭 / 切换标签页 | ⌘T / ⌘W / ⌃Tab 或 ⌃⇧Tab |
+| 后退 / 前进 / 上一级 | ⌘[ / ⌘] / ⌘↑ |
+| 新建 / 关闭标签页 | ⌘T / ⌘W |
 | 第 1–8 个 / 最后一个标签页 | ⌘1–8 / ⌘9 |
-| 超大 / 大 / 中 / 小图标 | ⌃⇧1 / ⌃⇧2 / ⌃⇧3 / ⌃⇧4 |
-| 列表 / 详细信息 / 平铺 / 内容 | ⌃⇧5 / ⌃⇧6 / ⌃⇧7 / ⌃⇧8 |
+| 切换八种布局 | ⌃⇧1–8 |
 | 预览窗格 / 详细信息窗格 | ⇧⌘P / ⌘I |
-| 隐藏项目 / 导航窗格 | ⇧⌘. / ⌥⌘S |
-| 个人文件夹 / 桌面 / 文档 / 下载 / 此电脑 | ⇧⌘H / ⇧⌘D / ⇧⌘O / ⌥⌘L / ⇧⌘C |
 
-布局快捷键中的 ⌃ 是 Control，不是 Command，以避开 macOS 截图快捷键。升级时保留已有自定义绑定及唤醒快捷键；有冲突的新增默认绑定会留空，可在设置中重新分配。⌘1–9 在地址栏和搜索框中也可切换标签页，重命名和弹窗中不触发。
+实际绑定以设置及菜单显示为准；输入框中的文本编辑快捷键保留原有语义。
 
-保留 Ctrl+C / X / V、F2 重命名、F5 刷新等兼容快捷键。文件列表中 Backspace 返回上一级，Delete 不执行删除；⌘X 可剪切选中的文件，输入框内仍剪切文字。
+## 文件安全与使用边界
 
-文件区域支持触控板双指横向滑动前进、后退：macOS 自然滚动开启时，向右滑后退、向左滑前进。一次滑动只跳转一级；可横向滚动的列表优先滚动，编辑文字或打开弹窗、菜单时不触发导航。
+复制、移动、新建和解压不会静默覆盖重名目标；普通删除进入系统回收站，清空回收站需另行确认。部分失败会显示错误，撤销前检查目标身份，避免操作已被外部替换的文件。
 
-## 与其他应用配合
+系统权限仍由 macOS 管理。可选文件查看器接入仅处理部分“在文件夹中显示”请求，需要用户主动启用，并可恢复；不会完全替代 Finder。
 
-安装后，可在支持 macOS 标准“打开方式”的应用中选择 Mac Explorer；不同应用可能会筛选显示的文件类型。也可以从终端打开：
+网络断线、跨卷操作及外部程序同时修改文件可能导致部分完成。真实 AirDrop 接收、远程 SMB 认证、物理卷推出和不同 macOS/硬件组合仍需按使用环境验证。
 
-```sh
-open -a 'Mac Explorer' '/完整的文件或文件夹路径'
-```
+## 从源码构建
 
-<details>
-<summary>在 Codex 中添加“Mac Explorer”打开方式</summary>
-
-将 [PNG 图标](design/icon-selected-mirrored.png) 保存到固定位置，然后在 `~/.codex/config.toml` 中添加以下配置。将 `icon` 改为图标的实际绝对路径；应用路径也应与你的安装位置一致。
-
-```toml
-[desktop.custom_file_handlers.mac_explorer]
-label = "Mac Explorer"
-icon = "/完整路径/mac-explorer.png"
-command = "/usr/bin/open"
-args = ["-a", "/Applications/Mac Explorer.app"]
-input = "path"
-supports_ssh = false
-```
-
-重启 Codex 后生效。参见 [Codex 自定义文件处理器文档](https://learn.chatgpt.com/docs/config-file/config-advanced#add-custom-file-handlers)。
-
-</details>
-
-## 文件安全与当前边界
-
-- Git / SVN 状态角标和右键菜单默认开启，可在「更多 → 设置 → 常规 → 版本控制」关闭。仅在仓库内异步查询，普通目录不扫描版本状态；使用本机已安装的命令行工具，应用不捆绑 Git / SVN。
-- Git 可查看暂存／未暂存差异、暂存所选更改、提交整个仓库的已暂存内容，以及仅快进拉取；SVN 可查看差异、添加、提交及更新。写入操作先预览清单；更新要求工作区干净，交互式认证需先在终端完成。
-- 丢弃修改前保存文件备份；Git 恢复至暂存区版本，保留暂存内容和未跟踪文件；SVN 同时备份属性、补丁和冲突文件。完成后可打开备份文件夹，版本控制操作不进入普通文件操作的撤销历史。超时或结果过大的仓库显示错误，不显示正常角标。
-- 同名目标不覆盖；批量操作分别报告成功项和失败项。删除进入 macOS 回收站。
-- 撤销支持本次应用会话中的新建、复制、移动和重命名；回收站恢复交给系统处理，删除会清空应用内撤销历史。
-- 访问权限由 macOS 管理。遇到权限提示，可到“系统设置 → 隐私与安全性 → 文件与文件夹”检查授权。
-- 搜索按文件名递归，最多扫描 30,000 项、返回 1,000 项；不递归跟随符号链接或进入应用包。
-- 文本预览上限 16 KB，图片 12 MB；归档目录上限 10,000 项，解压上限 20 GB / 5 分钟。
-
-尚未实现 Windows Shell 扩展、OneDrive 集成、Windows 网络发现、分组、框选、列宽拖动、重做与批量重命名。项目仍在持续完善，不宣称 Windows 资源管理器的完整功能兼容。
-
-## 从源码运行
-
-需要 **macOS、Apple Silicon、Node.js 22.12+ 和 Xcode Command Line Tools**。原生图标服务使用 Swift，归档目录服务使用 C / libarchive。
+需要 macOS、Apple Silicon 和 Xcode Command Line Tools。原生开发不需要 npm。
 
 ```sh
 git clone https://github.com/qixiaoyu27/Mac-Explorer.git
 cd Mac-Explorer
-npm ci
-npm run dev
+python3 -I native/scripts/build.py
+open 'native/output/Mac Explorer.app'
 ```
 
-| 命令 | 用途 |
-| --- | --- |
-| `npm run build` | TypeScript 检查、前端打包、原生组件编译 |
-| `npm test` | 临时目录中的文件系统回归测试 |
-| `npm run test:vcs` | 真实 Electron 中的 Git / SVN 角标、菜单、差异、提交、备份与设置持久化；SVN 测试需要本机安装 Subversion |
-| `npm run test:ui` | Electron 文件操作与键盘流程 |
-| `npm run test:toolbar` | 固定表头、工具栏配置和隔空投送调用（截获发送） |
-| `npm run test:updater-asar` | 真实 Electron 中校验含 ASAR 的签名应用、清理临时目录和已完成更新；仅使用临时夹具，不替换真实应用 |
-| `npm run test:connections` | 真实 Bonjour 发现、隔空投送页面/拖放、SMB 连接与导航；投送和挂载使用原生接口替身，不传输文件或挂载真实服务器 |
-| `npm run test:view` / `npm run test:theme` | 视图、复选框、外观与设置保存 |
-| `npm run test:folder-view` | 文件夹布局/排序、全局默认值、迁移、重置、多窗口并发和 5000 条记录淘汰同步 |
-| `npm run test:icons` | 图标分辨率、尺寸和路径编辑 |
-| `npm run test:archive` / `npm run test:compression` | 归档浏览、解压、压缩与文件保留 |
-| `npm run test:external` | 外部路径打开、文件定位与请求排队 |
-| `npm run package` | 本机体验包：ad-hoc 签名，未公证 |
-| `npm run test:office-thumbnails` | Office 内容预览与损坏文件回退 |
-| `npm run test:document-icons` | PDF 图标、多格式缩略图、方向与透明度、修改刷新回归 |
-| `npm run package:release` | 临时签名 DMG / ZIP 与 SHA-256 校验文件，无需证书 |
+开发检查：
 
-`package:release` 固定使用临时签名，禁用签名身份自动发现，不读取 Developer ID 或公证凭证，也不提交 Apple 公证。产物位于 `release/adhoc-版本号/`；构建不会自动上传 GitHub。
-
-```text
-src/          React 界面、样式与主题
-electron/     文件操作、原生服务与隔离预加载桥接
-shared/       IPC 类型与归档格式规则
-tests/        文件系统测试
-scripts/      开发、构建、签名与桌面回归测试
-docs/images/  使用演示文件拍摄的应用截图
+```sh
+python3 -I native/scripts/check-core.py
+python3 -I native/scripts/check-archives.py
+python3 -I native/scripts/check-vcs.py
+python3 -I native/scripts/check-native-install.py
+python3 -I native/scripts/check-localization.py
+python3 -I native/scripts/smoke.py --validation
 ```
+
+窗口检查会打开独立验收应用；文件操作使用临时夹具。生成目录 `native/output/`、`native/.build/` 不提交。更多架构和文件安全说明见 [native/README.md](native/README.md)。
+
+## 版本策略
+
+采用 SemVer：兼容修复更新 PATCH，兼容功能更新 MINOR，不兼容变更更新 MAJOR。版本号仅在正式发布到 GitHub 时更新，日常开发、测试和本地构建不递增；已发布版本、tag 和附件不覆盖。
 
 ## 参与贡献
 
-欢迎通过 [Issues](https://github.com/qixiaoyu27/Mac-Explorer/issues) 提交问题或建议。报告问题时请附上应用版本、macOS 版本、复现步骤和脱敏截图；涉及文件操作时，尽量提供可复现的演示文件。
-
-提交 PR 前请阅读 [贡献指南](AGENTS.md) 和 [界面设计约定](DESIGN.md)，完成构建及相关测试。界面改动请附截图，文件操作测试请使用临时目录。
+欢迎提交 [Issue](https://github.com/qixiaoyu27/Mac-Explorer/issues) 或 Pull Request。请说明复现步骤、macOS 版本和应用版本；文件操作问题请使用可分享的测试文件，勿上传私人数据。开发与发布约定见 [AGENTS.md](AGENTS.md)。
 
 ## 许可证与致谢
 
-以 [GNU GPL v3](LICENSE) 开源。基于 Electron、React、Lucide 和 macOS 原生能力构建。
-
-外观与交互受 Windows 11 File Explorer 启发，归档流程参考 WinRAR 使用习惯。Mac Explorer 与 Microsoft、Apple、WinRAR 均无隶属或官方合作关系。
-
-### 界面语言
-
-在工具栏 **更多（…）→ 设置… → 常规 → 界面语言** 中选择 **简体中文 / 繁體中文 / English / 跟随系统**。切换立即生效并在重启后保留；文件名、路径及文件内容不会翻译。跟随系统支持简中和繁中地区，其他未支持语言回退到英文。macOS 自身提供的授权及应用选择窗口仍由系统决定语言。
+项目采用 [GPL-3.0](LICENSE)。界面图标包含 Lucide artwork，其 ISC 许可见 [native/ICON-LICENSE.txt](native/ICON-LICENSE.txt)。感谢代码、测试和问题反馈的贡献者；具体贡献在各版本发布说明中署名。

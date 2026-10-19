@@ -31,7 +31,7 @@ export function AboutPanel() {
   };
   const canDownload = update?.canInstall && update.latestVersion && ['available', 'error'].includes(update.status);
   return <div className="about-content">
-    <div className="about-identity"><img src={appIcon} alt="" width={64} height={64}/><h3>Mac Explorer</h3><p>{about ? tr('版本 {0} · {1}', about.version, about.platform) : tr('正在读取…')}</p></div>
+    <div className="about-identity"><img src={appIcon} alt="" width={64} height={64}/><h3>Mac Explorer</h3><p>{about ? tr('版本 {0}', about.version) : tr('正在读取…')}</p></div>
     <section className="about-update" aria-label={tr('在线更新')}>
       <p role="status" aria-live="polite">{update ? statuses[update.status] : tr('正在读取…')}</p>
       {update && ['downloading', 'verifying'].includes(update.status) && <div className="update-progress">
@@ -44,7 +44,6 @@ export function AboutPanel() {
           : <><button className="secondary-button" disabled={working || !update} onClick={() => void run(() => api.checkUpdate())}>{tr('检查更新')}</button>
             {canDownload && <button className="primary-button" disabled={working} onClick={() => void run(() => api.downloadUpdate())}><Download size={15}/>{tr('下载更新')}</button>}</>}
       </div>
-      <p className="settings-note">{tr('临时签名 · 未公证')}</p>
     </section>
     <div className="about-links">{([{ page: 'home', label: tr('项目主页') }, { page: 'releases', label: tr('GitHub 发布页') }, { page: 'issues', label: tr('问题反馈') }, { page: 'license', label: tr('开源许可') }] as const).map(link =>
       <button key={link.page} className="about-link" onClick={() => void run(() => api.openProject(link.page))}>{link.label}<ExternalLink size={12} aria-hidden="true"/></button>)}

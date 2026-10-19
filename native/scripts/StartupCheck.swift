@@ -53,6 +53,7 @@ enum StartupCheck {
           return launched != nil
         }
         guard let app = launched else { throw StartupFailure(description: "Application disappeared") }
+        app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         var completed = false
         defer {
           if !completed {

@@ -446,7 +446,7 @@ private final class EDTitleBar: EDView {
   override func resignFirstResponder() -> Bool { lastMouse = nil; needsDisplay = true; return true }
 }
 
-private final class EDButton: NSButton {
+final class EDButton: NSButton {
   enum Style { case primary, secondary, tab, checkbox, radio }
   var style: Style { didSet { needsDisplay = true } }
   var checked = false { didSet { setAccessibilityValue(checked ? 1 : 0); needsDisplay = true } }
@@ -539,7 +539,15 @@ private final class EDButton: NSButton {
         EDColors.dialog.setFill()
         NSRect(x: 1, y: bounds.height - 4, width: bounds.width - 2, height: 4).fill()
       }
-      edDrawText(title, in: bounds.insetBy(dx: 8, dy: 0), weight: style == .tab && checked ? .semibold : .regular, color: style == .primary ? EDColors.primaryText : ExplorerPalette.text, alignment: .center)
+      let color = style == .primary ? EDColors.primaryText : ExplorerPalette.text
+      var textRect = bounds.insetBy(dx: 8, dy: 0)
+      if let iconName {
+        let textWidth = ceil((title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width)
+        let left = max(8, (bounds.width - textWidth - 22) / 2)
+        ExplorerIcons.image(iconName, size: 16, color: color).draw(in: NSRect(x: left, y: bounds.midY - 8, width: 16, height: 16), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        textRect = NSRect(x: left + 22, y: 0, width: max(0, bounds.width - left - 30), height: bounds.height)
+      }
+      edDrawText(title, in: textRect, weight: style == .tab && checked ? .semibold : .regular, color: color, alignment: iconName == nil ? .center : .left)
     }
     if window?.firstResponder === self && ExplorerFocus.keyboardVisible { edBorder(bounds.insetBy(dx: 2, dy: 2), color: ExplorerPalette.accent, width: 2) }
   }
@@ -728,15 +736,14 @@ private final class EDGroup: EDView {
   required init?(coder: NSCoder) { fatalError("Use the programmatic initializer") }
   override func layout() {
     super.layout()
-    content.frame = NSRect(x: 16, y: 25, width: max(1, bounds.width - 32), height: max(1, bounds.height - 37))
+    content.frame = NSRect(x: 0, y: 26, width: bounds.width, height: max(1, bounds.height - 26))
     arrange?(content.bounds)
   }
   override func draw(_ dirtyRect: NSRect) {
-    edBorder(NSRect(x: 0, y: 8, width: bounds.width, height: bounds.height - 8), radius: 0)
-    let width = ceil((title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width) + 12
-    EDColors.dialog.setFill()
-    NSRect(x: 10, y: 0, width: width, height: 18).fill()
-    edDrawText(title, in: NSRect(x: 16, y: 0, width: width - 12, height: 18))
+    let width = ceil((title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)]).width)
+    edDrawText(title, in: NSRect(x: 0, y: 0, width: width, height: 18), weight: .semibold)
+    ExplorerPalette.border.setFill()
+    NSRect(x: width + 12, y: 9, width: max(0, bounds.width - width - 12), height: 1).fill()
   }
 }
 
@@ -746,6 +753,7 @@ private final class EDSettingsBody: EDView {
   var didChangeTheme: ((String) -> Void)?
   private let content = EDScrollingBody()
   private var section = 0
+  private var resetScroll = true
   private var theme: String
   private var toolbar: [String]
   private let onTheme: (String) -> Void
@@ -804,10 +812,17 @@ private final class EDSettingsBody: EDView {
     }
     content.frame = NSRect(x: 0, y: 33, width: bounds.width, height: max(1, bounds.height - 33))
     content.needsLayout = true
+    if resetScroll {
+      content.layoutSubtreeIfNeeded()
+      content.scroll.contentView.scroll(to: .zero)
+      content.scroll.reflectScrolledClipView(content.scroll.contentView)
+      resetScroll = false
+    }
   }
   func openTab(_ index: Int) { select(max(0, min(3, index))) }
   private func select(_ index: Int) {
     section = index
+    resetScroll = true
     tabs.enumerated().forEach { $0.element.checked = $0.offset == index }
     content.flow.clear()
     content.flow.gap = 16
@@ -826,10 +841,6 @@ private final class EDSettingsBody: EDView {
   }
   private func general() {
     content.flow.gap = 20
-    if let browser {
-      let extra = NativeSettingsView(browser: browser); content.flow.add(extra) { _ in extra.preferredHeight }
-      if let integration = browser.systemIntegration { let system = NativeSystemSettingsView(integration: integration); content.flow.add(system) { _ in system.preferredHeight } }
-    }
     let group = EDGroup(NL("外观"))
     let options = [("light", NL("浅色")), ("dark", NL("深色")), ("system", NL("跟随系统"))]
     let buttons = options.map { mode, label -> EDButton in
@@ -847,25 +858,54 @@ private final class EDSettingsBody: EDView {
       }
       return button
     }
-    group.arrange = { rect in
+    let arrangeAppearance: (CGFloat) -> CGFloat = { width in
       var x: CGFloat = 0, y: CGFloat = 0
       for button in buttons {
-        let width = ceil((button.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width) + 46
-        if x + width > rect.width { x = 0; y += 34 }
-        button.frame = NSRect(x: x, y: y, width: width, height: 28); x += width + 18
+        let itemWidth = ceil((button.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width) + 46
+        if x > 0 && x + itemWidth > width { x = 0; y += 34 }
+        button.frame = NSRect(x: x, y: y, width: min(width, itemWidth), height: 28)
+        x += itemWidth + 18
       }
+      return y + 28
     }
-    content.flow.add(group) { width in 44 + ceil(3 / CGFloat(max(1, min(3, Int((width - 32) / 112))))) * 34 }
+    group.arrange = { _ = arrangeAppearance($0.width) }
+    content.flow.add(group) { 26 + arrangeAppearance($0) }
     let language = EDGroup(NL("语言"))
     let row = EDChoiceRow(title: NL("界面语言"), options: [(NL("跟随系统"), "system"), ("简体中文", "zh-CN"), ("繁體中文", "zh-TW"), ("English", "en")], value: browser?.defaults.string(forKey: "language") ?? "system") { [weak self] in self?.browser?.changeLanguage($0) }
     language.content.addSubview(row)
     language.arrange = { rect in row.frame = rect }
-    content.flow.add(language) { _ in 74 }
+    content.flow.add(language) { _ in 58 }
+    if let browser {
+      let search = EDGroup(NL("文件搜索"))
+      let mode = EDChoiceRow(title: NL("搜索模式"), options: [(NL("普通文本"), "text"), (NL("通配符"), "wildcard"), (NL("正则表达式"), "regex")], value: FileSearchMode(rawValue: browser.defaults.string(forKey: "searchMode") ?? "")?.rawValue ?? "text") { [weak browser] in browser?.defaults.set($0, forKey: "searchMode") }
+      search.content.addSubview(mode); search.arrange = { mode.frame = $0 }
+      content.flow.add(search) { _ in 58 }
+      let favorites = EDGroup(NL("快速访问")), extra = NativeSettingsView(browser: browser)
+      favorites.content.addSubview(extra); favorites.arrange = { extra.frame = $0 }
+      extra.onHeightChange = { [weak self] in self?.content.needsLayout = true }
+      content.flow.add(favorites) { _ in extra.preferredHeight + 26 }
+      if let integration = browser.systemIntegration {
+        let group = EDGroup(NL("系统文件查看器（实验）")), system = NativeSystemSettingsView(integration: integration)
+        group.content.addSubview(system); group.arrange = { system.frame = $0 }
+        system.onHeightChange = { [weak self] in self?.content.needsLayout = true }
+        content.flow.add(group) { _ in system.preferredHeight + 26 }
+      }
+      let vcs = EDGroup(NL("版本控制"))
+      let toggle = EDButton(title: NL("启用 Git / SVN 状态角标和右键菜单"), style: .checkbox)
+      toggle.checked = browser.defaults.object(forKey: "versionControl") as? Bool ?? true
+      toggle.onPress = { [weak toggle, weak browser] in if let toggle { toggle.checked.toggle(); browser?.setVersionControl(toggle.checked) } }
+      let help = NativeHelpButton(text: NL("仅在仓库内启用。关闭后停止状态检测与刷新；需要已安装 Git 或 SVN 命令行工具。"), accessibilityLabel: NL("版本控制说明"))
+      vcs.content.addSubview(toggle); vcs.content.addSubview(help)
+      vcs.arrange = { rect in toggle.frame = NSRect(x: 0, y: 0, width: rect.width - 30, height: 28); help.frame = NSRect(x: rect.width - 24, y: 0, width: 24, height: 28) }
+      content.flow.add(vcs) { _ in 54 }
+    }
     if onFolderDefaults != nil {
       let group = EDGroup(NL("文件夹视图"))
-      let layouts = [(NL("超大图标"), "icons:128"), (NL("大图标"), "icons:64"), (NL("中图标"), "icons:48"), (NL("小图标"), "icons:32"), (NL("列表"), "list"), (NL("详细信息"), "details"), (NL("平铺"), "tiles"), (NL("内容"), "content")]
+      var layouts = [(NL("超大图标"), "icons:128"), (NL("大图标"), "icons:64"), (NL("中图标"), "icons:48"), (NL("小图标"), "icons:32"), (NL("列表"), "list"), (NL("详细信息"), "details"), (NL("平铺"), "tiles"), (NL("内容"), "content")]
       let current = folderDefaults["view"] ?? "icons"
-      let layout = EDChoiceRow(title: NL("默认布局"), options: layouts, value: current == "icons" ? "icons:" + (folderDefaults["iconSize"] ?? "64") : current) { [weak self] value in
+      let selectedLayout = current == "icons" ? "icons:" + (folderDefaults["iconSize"] ?? "64") : current
+      if !layouts.contains(where: { $0.1 == selectedLayout }) { layouts.insert((NL("图标（{0} 像素）", folderDefaults["iconSize"] ?? "64"), selectedLayout), at: 4) }
+      let layout = EDChoiceRow(title: NL("默认布局"), options: layouts, value: selectedLayout) { [weak self] value in
         guard let self else { return }; let parts = value.split(separator: ":"); self.folderDefaults["view"] = String(parts[0]); if parts.count == 2 { self.folderDefaults["iconSize"] = String(parts[1]) }; self.onFolderDefaults?(self.folderDefaults)
       }
       let sort = EDChoiceRow(title: NL("默认排序"), options: [(NL("名称"), "name"), (NL("修改日期"), "modified"), (NL("类型"), "kind"), (NL("大小"), "size")], value: folderDefaults["sort"] ?? "name") { [weak self] value in guard let self else { return }; self.folderDefaults["sort"] = value; self.onFolderDefaults?(self.folderDefaults) }
@@ -874,9 +914,9 @@ private final class EDSettingsBody: EDView {
       [layout, sort, direction, reset].forEach(group.content.addSubview)
       group.arrange = { rect in
         for (index, row) in [layout, sort, direction].enumerated() { row.frame = NSRect(x: 0, y: CGFloat(index) * 44, width: rect.width, height: 32) }
-        reset.frame = NSRect(x: 0, y: 140, width: 140, height: 34)
+        reset.frame = NSRect(x: 0, y: 132, width: 140, height: 34)
       }
-      content.flow.add(group) { _ in 214 }
+      content.flow.add(group) { _ in 192 }
     }
   }
   private func toolbarContent() {
@@ -983,6 +1023,11 @@ private final class EDSettingsBody: EDView {
       }
       updateShortcutSave()
     }
+    if let integration = browser?.systemIntegration {
+      let group = EDGroup(NL("唤醒快捷键")), wake = NativeWakeSettingsView(integration: integration)
+      group.content.addSubview(wake); group.arrange = { wake.frame = $0 }
+      content.flow.add(group) { _ in wake.preferredHeight + 26 }
+    }
   }
   private func showShortcutError(_ message: String) {
     shortcutError?.stringValue = message
@@ -996,24 +1041,51 @@ private final class EDSettingsBody: EDView {
     shortcutReset?.isEnabled = shortcutRows.enumerated().contains { shortcutDefaults[$0.element.0] != nil && shortcutValues[$0.offset] != shortcutDefaults[$0.element.0] }
   }
   private func about() {
-    let updates = NativeUpdateView(); content.flow.add(updates) { _ in updates.preferredHeight }
+    content.flow.gap = 8
+    let iconRow = EDView(), icon = NSImageView()
+    icon.image = NSImage(named: NSImage.Name("AppIcon")) ?? NSApp.applicationIconImage
+    icon.imageScaling = .scaleProportionallyUpOrDown
+    iconRow.addSubview(icon)
+    content.flow.add(iconRow) { width in
+      icon.frame = NSRect(x: (width - 64) / 2, y: 0, width: 64, height: 64)
+      return 76
+    }
     let info = Bundle.main.infoDictionary ?? [:]
     let name = info["CFBundleDisplayName"] as? String ?? info["CFBundleName"] as? String ?? "Mac Explorer"
     let nameLabel = edLabel(name, size: 18, weight: .semibold)
     nameLabel.alignment = .center
     content.flow.add(nameLabel) { _ in 28 }
-    if let version = info["CFBundleShortVersionString"] as? String {
-      let label = edLabel(NL("版本 {0}", version))
-      label.textColor = ExplorerPalette.secondary
-      label.alignment = .center
-      content.flow.add(label) { _ in 20 }
+    let version = info["CFBundleShortVersionString"] as? String ?? "—"
+    let versionLabel = edLabel(NL("版本 {0}", version))
+    versionLabel.textColor = ExplorerPalette.secondary; versionLabel.alignment = .center
+    content.flow.add(versionLabel) { _ in 28 }
+    let separator = SurfaceView(); separator.color = ExplorerPalette.border
+    content.flow.add(separator) { _ in 1 }
+    let updateDefaults = browser?.defaults ?? .standard
+    let frequency = EDChoiceRow(title: NL("自动检查更新"), options: [
+      (NL("每次打开"), "launch"), (NL("每天"), "daily"), (NL("每周"), "weekly"), (NL("从不"), "never")
+    ], value: NativeUpdateFrequency.saved(in: updateDefaults).rawValue) { value in
+      updateDefaults.set(value, forKey: NativeUpdateFrequency.preferenceKey)
     }
-    if let build = info["CFBundleVersion"] as? String {
-      let label = edLabel(NL("构建 {0}", build))
-      label.textColor = ExplorerPalette.secondary
-      label.alignment = .center
-      content.flow.add(label) { _ in 20 }
+    content.flow.add(frequency) { _ in 34 }
+    let updates = NativeUpdateView(); content.flow.add(updates) { _ in updates.preferredHeight }
+    let linksRow = EDView()
+    let links = [("项目主页", ""), ("GitHub 发布页", "/releases"), ("问题反馈", "/issues"), ("开源许可", "/blob/main/LICENSE")].map { title, path in
+      let button = EDButton(title: NL(title), style: .secondary)
+      button.onPress = { NSWorkspace.shared.open(URL(string: "https://github.com/qixiaoyu27/Mac-Explorer" + path)!) }
+      linksRow.addSubview(button)
+      return button
     }
+    content.flow.add(linksRow) { width in
+      let gap: CGFloat = 8, buttonWidth = (width - gap * 3) / 4
+      for (index, button) in links.enumerated() {
+        button.frame = NSRect(x: CGFloat(index) * (buttonWidth + gap), y: 0, width: buttonWidth, height: 30)
+      }
+      return 30
+    }
+    let copyright = edLabel("© 2026 qixiaoyu27 · GPL-3.0-only", size: 12)
+    copyright.textColor = ExplorerPalette.secondary; copyright.alignment = .center
+    content.flow.add(copyright) { _ in 24 }
   }
 }
 
@@ -1047,7 +1119,7 @@ private final class EDChoiceRow: EDView {
     super.init(frame: .zero); addSubview(label); addSubview(choice); choice.setAccessibilityLabel(title)
   }
   required init?(coder: NSCoder) { fatalError() }
-  override func layout() { super.layout(); let width = min(150, max(52, label.intrinsicContentSize.width)); label.frame = NSRect(x: 0, y: 7, width: width, height: 18); choice.frame = NSRect(x: width + 20, y: 0, width: min(250, max(0, bounds.width - width - 20)), height: 32) }
+  override func layout() { super.layout(); let width = min(132, bounds.width * 0.36); label.frame = NSRect(x: 0, y: 7, width: width, height: 18); choice.frame = NSRect(x: width + 20, y: 0, width: min(250, max(0, bounds.width - width - 20)), height: 32) }
 }
 
 private final class EDToolbarRow: EDView {

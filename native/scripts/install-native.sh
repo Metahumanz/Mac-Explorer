@@ -1,23 +1,29 @@
 #!/bin/bash
-# Install the Swift application; refuse an existing application with a different identity.
+# Install the native application, including upgrades from the official Electron application.
 set -euo pipefail
 export LC_ALL=C
 fail() { printf '安装失败：%s\n' "$*" >&2; exit 1; }
 [[ "$(uname -s)" == Darwin && "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]] || fail '需要 Apple Silicon Mac。'
 [[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 && "$EUID" -ne 0 ]] || fail '需要 macOS 13 或更高版本，请勿使用 sudo。'
 repo='https://github.com/qixiaoyu27/Mac-Explorer'
-install_dir="${MAC_EXPLORER_NATIVE_INSTALL_DIR:-/Applications}"
-prepared="${MAC_EXPLORER_NATIVE_PREPARED:-}"
+install_dir="${MAC_EXPLORER_NATIVE_INSTALL_DIR:-${MAC_EXPLORER_INSTALL_DIR:-/Applications}}"
+prepared="${MAC_EXPLORER_NATIVE_PREPARED:-${MAC_EXPLORER_PREPARED_UPDATE:-}}"
 [[ "$install_dir" == /* ]] || fail '安装目录必须是绝对路径。'
 mkdir -p "$install_dir"
 install_dir=$(cd "$install_dir" && pwd -P)
 destination="$install_dir/Mac Explorer.app"
 [[ -w "$install_dir" && ! -L "$destination" ]] || fail '安装位置不可写或目标是符号链接。'
+existing="$destination"
+legacy_app="$HOME/Applications/Mac Explorer.app"
+if [[ "$install_dir" == /Applications && ! -e "$destination" && ( -e "$legacy_app" || -L "$legacy_app" ) ]]; then existing="$legacy_app"; fi
+[[ ! -L "$existing" ]] || fail '已有应用是符号链接，请先自行检查。'
+allow_unnotarized="${MAC_EXPLORER_ALLOW_UNNOTARIZED:-0}"
+[[ "$allow_unnotarized" == 0 || "$allow_unnotarized" == 1 ]] || fail 'MAC_EXPLORER_ALLOW_UNNOTARIZED 只能是 0 或 1。'
 work=$(mktemp -d "${TMPDIR:-/tmp}/mac-explorer-native.XXXXXX")
 stage=''; backup=''; installed=0
 cleanup() {
   status=$?
-  if [[ "$installed" == 0 && -n "$backup" && -d "$backup" && ! -e "$destination" && ! -L "$destination" ]]; then mv "$backup" "$destination" || printf '旧版本保留在：%s\n' "$backup" >&2; fi
+  if [[ "$installed" == 0 && -n "$backup" && -d "$backup" && ! -e "$existing" && ! -L "$existing" ]]; then mv "$backup" "$existing" || printf '旧版本保留在：%s\n' "$backup" >&2; fi
   if [[ "$installed" == 0 && -n "$backup" && -d "$backup" ]]; then printf '旧版本保留在：%s\n' "$backup" >&2; fi
   if [[ -n "$stage" && ( "$installed" == 1 || -z "$backup" || ! -e "$backup" ) ]]; then rm -rf "$stage"; fi
   rm -rf "$work"; exit "$status"
@@ -37,26 +43,29 @@ entry=$(awk 'length($1)==64 && $1 !~ /[^[:xdigit:]]/ && $2 ~ /^Mac-Explorer-Nati
 expected=${entry%% *}; archive=${entry#* }; version=${archive#Mac-Explorer-Native-}; version=${version%-mac-arm64.zip}
 [[ "$version" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || fail '无效的版本号。'
 validate_app() {
-  local app="$1" target_version="${2:-}" identity executable actual
+  local app="$1" target_version="${2:-}" identity executable actual expected_executable=MacExplorerNative
   [[ -d "$app" && ! -L "$app" && ! -L "$app/Contents" && ! -L "$app/Contents/Info.plist" && ! -L "$app/Contents/MacOS" && ! -L "$app/Contents/MacOS/MacExplorerNative" ]] || fail '原生应用路径无效。'
   identity=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist")
   executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")
   actual=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")
-  [[ "$identity" == local.macexplorer.native-prototype && "$executable" == MacExplorerNative && "$actual" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ && -x "$app/Contents/MacOS/MacExplorerNative" ]] || fail '应用标识或执行文件不匹配；未替换任何应用。'
+  if [[ -z "$target_version" && "$identity" == local.macexplorer.desktop ]]; then expected_executable='Mac Explorer';
+  else [[ "$identity" == local.macexplorer.native-prototype ]] || fail '应用标识不匹配；未替换任何应用。'; fi
+  [[ "$executable" == "$expected_executable" && ! -L "$app/Contents/MacOS/$executable" && "$actual" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ && -x "$app/Contents/MacOS/$executable" ]] || fail '应用标识或执行文件不匹配；未替换任何应用。'
   [[ -z "$target_version" || "$actual" == "$target_version" ]] || fail '应用版本不匹配。'
-  /usr/bin/lipo "$app/Contents/MacOS/MacExplorerNative" -verify_arch arm64 || fail '原生应用架构无效。'
+  /usr/bin/lipo "$app/Contents/MacOS/$executable" -verify_arch arm64 || fail '原生应用架构无效。'
   /usr/bin/codesign --verify --deep --strict "$app" || fail '应用签名无效。'
 }
-if [[ -e "$destination" ]]; then
-  validate_app "$destination"
-  current=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$destination/Contents/Info.plist")
+if [[ -e "$existing" ]]; then
+  validate_app "$existing"
+  current=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$existing/Contents/Info.plist")
+  current_identity=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$existing/Contents/Info.plist")
   comparison=$(awk -v a="$current" -v b="$version" 'BEGIN{split(a,x,".");split(b,y,".");for(i=1;i<=3;i++){if(x[i]+0>y[i]+0){print 1;exit}if(x[i]+0<y[i]+0){print -1;exit}}print 0}')
-  if [[ "$comparison" != -1 ]]; then printf '保留当前原生版本 v%s。\n' "$current"; exit 0; fi
+  if [[ "$comparison" == 1 || ( "$comparison" == 0 && "$current_identity" == local.macexplorer.native-prototype ) ]]; then printf '保留当前版本 v%s。\n' "$current"; exit 0; fi
 fi
 app_running() {
-  /bin/ps -axo command= | /usr/bin/awk -v binary="$destination/Contents/MacOS/MacExplorerNative" '$0==binary || index($0,binary " ")==1 {found=1} END{exit !found}'
+  /bin/ps -axo command= | /usr/bin/awk -v prefix="$existing/Contents/MacOS/" 'index($0,prefix)==1 {found=1} END{exit !found}'
 }
-app_running && fail '请先退出该原生应用后重试。'
+app_running && fail '请先退出 Mac Explorer 后重试。'
 if [[ -n "$prepared" ]]; then cp "$prepared/$archive" "$work/$archive"; else fetch "$repo/releases/download/v$version/$archive" "$work/$archive"; fi
 [[ "$(/usr/bin/stat -f%z "$work/$archive")" -le 2147483648 ]] || fail '更新包大小无效。'
 actual=$(/usr/bin/shasum -a 256 "$work/$archive" | awk '{print $1}')
@@ -78,10 +87,12 @@ validate_app "$source_app" "$version"
 stage=$(mktemp -d "$install_dir/.mac-explorer-native.XXXXXX")
 /usr/bin/ditto "$source_app" "$stage/Mac Explorer.app"
 validate_app "$stage/Mac Explorer.app" "$version"
+if [[ "$allow_unnotarized" == 1 ]]; then /usr/bin/xattr -dr com.apple.quarantine "$stage/Mac Explorer.app" || fail '无法移除下载隔离标记；原安装未作修改。'; fi
+validate_app "$stage/Mac Explorer.app" "$version"
 app_running && fail '应用已被打开，请先退出后重试。'
-if [[ -e "$destination" ]]; then validate_app "$destination"; backup="$stage/previous.app"; mv "$destination" "$backup"; fi
+if [[ -e "$existing" ]]; then validate_app "$existing"; backup="$stage/previous.app"; mv "$existing" "$backup"; fi
 [[ ! -e "$destination" && ! -L "$destination" ]] || fail '目标位置已出现其他应用，已停止安装。'
 mv "$stage/Mac Explorer.app" "$destination"
 installed=1
 printf '已安装原生版本 v%s：%s\n' "$version" "$destination"
-if [[ "${MAC_EXPLORER_NATIVE_NO_OPEN:-0}" != 1 ]]; then /usr/bin/open "$destination" || printf '请手动打开应用。\n'; fi
+if [[ "${MAC_EXPLORER_NATIVE_NO_OPEN:-${MAC_EXPLORER_NO_OPEN:-0}}" != 1 ]]; then /usr/bin/open "$destination" || printf '请手动打开应用。\n'; fi

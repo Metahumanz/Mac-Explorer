@@ -15,6 +15,28 @@ enum LatestCoreChecks {
     try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
     try Data("preserved".utf8).write(to: file)
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: folder)
+    func searchNames(_ query: String, _ mode: FileSearchMode = .text, hidden: Bool = false) throws -> [String] {
+      try FileSearch.search(in: root, query: query, showHidden: hidden, mode: mode).entries.map(\.name).sorted()
+    }
+    try Data().write(to: folder.appendingPathComponent("Report.PDF"))
+    try Data().write(to: app.appendingPathComponent("private.pdf"))
+    try Data().write(to: root.appendingPathComponent(".hidden.pdf"))
+    try Data().write(to: root.appendingPathComponent("a[1].txt"))
+    try expect(try searchNames("FILE") == ["file.txt"], "Default search remains case insensitive plain text")
+    try expect(try searchNames("*.pdf").isEmpty, "Plain text does not interpret wildcards")
+    try expect(try searchNames("*.pdf", .wildcard) == ["Report.PDF"], "Wildcards recurse without following links or packages and hide hidden files")
+    try expect(try searchNames("*.pdf", .wildcard, hidden: true) == [".hidden.pdf", "Report.PDF"], "Wildcard search honors hidden files")
+    try expect(try searchNames("a[?].txt", .wildcard) == ["a[1].txt"], "Question mark matches one character and regex punctuation stays literal")
+    try expect(try searchNames("file", .wildcard).isEmpty, "Wildcards match the whole filename")
+    try expect(try searchNames(#"^report.*\.(pdf|docx)$"#, .regex) == ["Report.PDF"], "Regex supports anchors, groups and alternatives")
+    try expect(try searchNames("port", .regex) == ["Report.PDF"], "Regex can match part of a filename")
+    do { _ = try searchNames("[", .regex); throw CocoaError(.validationMissingMandatoryProperty) }
+    catch { try expect((error as NSError).domain == "FileSearch", "Invalid regex returns a search error") }
+    let expensive = root.appendingPathComponent(String(repeating: "a", count: 100) + "!")
+    try Data().write(to: expensive)
+    do { _ = try searchNames("^(a+)+$", .regex); throw CocoaError(.validationMissingMandatoryProperty) }
+    catch { try expect((error as NSError).domain == "FileSearch" && (error as NSError).code == 2, "Pathological regex is interrupted") }
+    try FileManager.default.removeItem(at: expensive)
     let candidates = [FinderFavorite(path: folder.path, name: "收藏名称"), FinderFavorite(path: alias.path, name: "Alias duplicate"), FinderFavorite(path: file.path, name: "File"), FinderFavorite(path: app.path, name: "App"), FinderFavorite(path: "relative", name: "Invalid"), FinderFavorite(path: root.appendingPathComponent("missing").path, name: "Missing")]
     let result = FinderFavoritesReader.filter(candidates)
     try expect(result.places.count == 1 && result.places[0].name == "收藏名称", "Finder deduplicates aliases and retains the first display name")

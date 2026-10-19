@@ -84,6 +84,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
       (NSApp.keyWindow?.firstResponder as? NSView)?.needsDisplay = true
       return event
     }
+    if smoke == nil && comparison == nil { NativeUpdateCoordinator.current().startAutomaticChecks() }
     makeMenus()
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)

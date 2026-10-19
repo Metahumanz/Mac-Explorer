@@ -35,10 +35,11 @@ with tempfile.TemporaryDirectory(prefix='explorer-native-install-checks-') as te
         app = directory / 'Mac Explorer.app'
         (app / 'Contents/MacOS').mkdir(parents=True)
         (app / 'Contents/Resources').mkdir()
-        shutil.copyfile(fixture_binary, app / 'Contents/MacOS/MacExplorerNative')
-        (app / 'Contents/MacOS/MacExplorerNative').chmod(0o755)
+        executable = 'Mac Explorer' if identity == 'local.macexplorer.desktop' else 'MacExplorerNative'
+        shutil.copyfile(fixture_binary, app / 'Contents/MacOS' / executable)
+        (app / 'Contents/MacOS' / executable).chmod(0o755)
         with (app / 'Contents/Info.plist').open('wb') as handle:
-            plistlib.dump({'CFBundleIdentifier': identity, 'CFBundleExecutable':'MacExplorerNative', 'CFBundleShortVersionString':version, 'CFBundlePackageType':'APPL'}, handle)
+            plistlib.dump({'CFBundleIdentifier': identity, 'CFBundleExecutable':executable, 'CFBundleShortVersionString':version, 'CFBundlePackageType':'APPL'}, handle)
         run(['/usr/bin/codesign', '--force', '--sign', '-', str(app)])
         return app
 
@@ -120,4 +121,30 @@ with tempfile.TemporaryDirectory(prefix='explorer-native-install-checks-') as te
     assert plistlib.loads((destination / 'Contents/Info.plist').read_bytes())['CFBundleShortVersionString'] == '1.2.4'
     assert (electron / 'untouched').read_bytes() == original
     checks += 2
+    # Upgrade an authentic legacy identity at the same version, preserving its data.
+    shutil.rmtree(destination)
+    legacy_source = make_app('1.1.0', identity='local.macexplorer.desktop')
+    shutil.copytree(legacy_source, destination)
+    preferences = folder / 'Electron preferences.json'
+    preferences.write_text('{"pins":["/example"],"theme":"dark"}')
+    saved_preferences = preferences.read_bytes()
+    same_version = prepared('1.1.0')
+    # A failed final rename must restore the legacy bundle.
+    commands = folder / 'commands'; commands.mkdir()
+    fail_move = commands / 'mv'
+    fail_move.write_text('#!/bin/bash\nif [[ "$1" == */.mac-explorer-native.*/"Mac Explorer.app" ]]; then exit 1; fi\nexec /bin/mv "$@"\n')
+    fail_move.chmod(0o755)
+    failed_env = dict(os.environ, PATH=str(commands) + ':' + os.environ['PATH'], MAC_EXPLORER_NATIVE_PREPARED=str(same_version), MAC_EXPLORER_NATIVE_INSTALL_DIR=str(install), MAC_EXPLORER_NATIVE_NO_OPEN='1')
+    result = subprocess.run(['/bin/bash', str(installer)], env=failed_env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert plistlib.loads((destination / 'Contents/Info.plist').read_bytes())['CFBundleIdentifier'] == 'local.macexplorer.desktop'
+    run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(destination)])
+    install_package(same_version)
+    assert plistlib.loads((destination / 'Contents/Info.plist').read_bytes())['CFBundleIdentifier'] == 'local.macexplorer.native-prototype'
+    assert preferences.read_bytes() == saved_preferences
+    # Existing public environment variable names still work.
+    compat_env = dict(os.environ, MAC_EXPLORER_PREPARED_UPDATE=str(prepared('1.1.1')), MAC_EXPLORER_INSTALL_DIR=str(install), MAC_EXPLORER_NO_OPEN='1', MAC_EXPLORER_ALLOW_UNNOTARIZED='1')
+    run(['/bin/bash', str(installer)], env=compat_env)
+    assert plistlib.loads((destination / 'Contents/Info.plist').read_bytes())['CFBundleShortVersionString'] == '1.1.1'
+    checks += 3
     print(f'Native package/install checks passed: {checks}; signed fixture bundles, temporary destinations only.')
