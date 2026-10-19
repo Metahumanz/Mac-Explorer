@@ -1,4 +1,4 @@
-# Mac Explorer Native
+# Mac Explorer
 
 Swift + AppKit 的独立实现，最低 macOS 13，不依赖 Electron、Node.js 或 WebView。原生控件复现 Windows 11 文件资源管理器的工作流，并复用现有 Swift 文件图标服务、文档模板和图标资源。
 
@@ -10,20 +10,20 @@ Swift + AppKit 的独立实现，最低 macOS 13，不依赖 Electron、Node.js 
 
 ```sh
 python3 -I native/scripts/build.py
-open 'native/output/Mac Explorer Native.app'
+open 'native/output/Mac Explorer.app'
 ```
 
 指定文件夹：
 
 ```sh
-open -n 'native/output/Mac Explorer Native.app' --args --path "$HOME/Documents"
+open -n 'native/output/Mac Explorer.app' --args --path "$HOME/Documents"
 ```
 
 已有原型正在运行时使用独立测试构建：
 
 ```sh
 python3 -I native/scripts/build.py --validation
-open 'native/output/validation/Mac Explorer Native.app'
+open 'native/output/validation/Mac Explorer.app'
 ```
 
 普通构建 Bundle ID 为 `local.macexplorer.native-prototype`；测试构建为 `local.macexplorer.native-validation`。构建只写入忽略提交的 `native/output/` 与 `native/.build/`，不安装应用。产物是本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证。
@@ -91,7 +91,7 @@ python3 -I native/scripts/smoke.py --validation
 python3 -I native/scripts/package-release.py
 ```
 
-产物使用 `Mac-Explorer-Native-{version}-mac-arm64` 名称和 `SHA256SUMS-native.txt`，不会冒充或覆盖 Electron 发布附件。`scripts/install-native.sh` 与 `update-native.sh` 是原生安装/更新入口，校验版本、校验和、Bundle ID、可执行文件和签名。本轮没有向 GitHub 发布原生附件，也没有将开发产物安装到用户的 Applications。
+产物使用 `Mac-Explorer-Native-{version}-mac-arm64` 名称和 `SHA256SUMS-native.txt`，不会冒充或覆盖 Electron 发布附件。`scripts/install-native.sh` 与 `update-native.sh` 是原生安装/更新入口，校验版本、校验和、Bundle ID、可执行文件和签名。本轮没有向 GitHub 发布原生附件，本机安装使用同一原生安装入口。
 
 ## 视觉对照
 

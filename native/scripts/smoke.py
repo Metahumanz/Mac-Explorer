@@ -22,7 +22,7 @@ report = output / "report.json"
 for previous_report in [report, output / "startup-report.json"]:
     if previous_report.exists():
         previous_report.unlink()
-app = app_directory / "Mac Explorer Native.app" / "Contents" / "MacOS" / "MacExplorerNative"
+app = app_directory / "Mac Explorer.app" / "Contents" / "MacOS" / "MacExplorerNative"
 with tempfile.TemporaryDirectory(prefix="mac-explorer-native-") as temporary:
     fixture = pathlib.Path(temporary)
     for i in range(10_000):

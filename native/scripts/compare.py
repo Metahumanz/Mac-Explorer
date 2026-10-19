@@ -28,7 +28,7 @@ before = files()
 report = output / "native-report.json"
 if report.exists():
     report.unlink()
-subprocess.run([str(app_directory / "Mac Explorer Native.app/Contents/MacOS/MacExplorerNative"), "--compare", str(fixture), "--report", str(report)], check=True, timeout=120)
+subprocess.run([str(app_directory / "Mac Explorer.app/Contents/MacOS/MacExplorerNative"), "--compare", str(fixture), "--report", str(report)], check=True, timeout=120)
 data = json.loads(report.read_text())
 reference = json.loads((output / "geometry.json").read_text())
 geometry = data["geometry"]

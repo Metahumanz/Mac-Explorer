@@ -11,11 +11,11 @@ import tempfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument('--app', type=pathlib.Path, default=root / 'output' / 'Mac Explorer Native.app')
+parser.add_argument('--app', type=pathlib.Path, default=root / 'output' / 'Mac Explorer.app')
 parser.add_argument('--output', type=pathlib.Path)
 args = parser.parse_args()
 app = args.app.resolve(strict=True)
-if app.name != 'Mac Explorer Native.app' or args.app.is_symlink():
+if app.name != 'Mac Explorer.app' or args.app.is_symlink():
     raise SystemExit('Invalid Native application path.')
 with (app / 'Contents/Info.plist').open('rb') as handle:
     info = plistlib.load(handle)
@@ -44,7 +44,7 @@ try:
         subprocess.run(['/usr/bin/ditto', '-c', '-k', '--norsrc', '--keepParent', str(staged), str(archive)], check=True)
         (folder / 'Applications').symlink_to('/Applications')
         image = output / f'{stem}.dmg'
-        subprocess.run(['/usr/bin/hdiutil', 'create', '-volname', f'Mac Explorer Native {version}', '-srcfolder', str(folder), '-format', 'UDZO', '-ov', str(image)], check=True)
+        subprocess.run(['/usr/bin/hdiutil', 'create', '-volname', f'Mac Explorer {version}', '-srcfolder', str(folder), '-format', 'UDZO', '-ov', str(image)], check=True)
         subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(image)], check=True)
         subprocess.run(['/usr/bin/hdiutil', 'verify', str(image)], check=True)
         sums = []

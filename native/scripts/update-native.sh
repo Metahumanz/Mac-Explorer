@@ -4,7 +4,7 @@ set -euo pipefail
 prepared="${MAC_EXPLORER_NATIVE_PREPARED:?}"
 wait_pid="${MAC_EXPLORER_NATIVE_WAIT_PID:?}"
 result="${MAC_EXPLORER_NATIVE_RESULT:?}"
-destination="${MAC_EXPLORER_NATIVE_INSTALL_DIR:?}/Mac Explorer Native.app"
+destination="${MAC_EXPLORER_NATIVE_INSTALL_DIR:?}/Mac Explorer.app"
 [[ "$prepared" == /* && -d "$prepared" && ! -L "$prepared" && "$result" == /* && ! -L "$result" && "$wait_pid" =~ ^[1-9][0-9]*$ ]] || exit 1
 exited=0
 finish() {

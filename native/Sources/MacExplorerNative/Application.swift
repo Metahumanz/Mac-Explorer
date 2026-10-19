@@ -68,7 +68,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     }
     window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
     window.titleVisibility = .hidden
-    window.title = "Mac Explorer Native"
+    window.title = "Mac Explorer"
     window.minSize = NSSize(width: 800, height: 530)
     window.setFrame(NSRect(x: 0, y: 0, width: 1260, height: 820), display: false)
     window.titlebarAppearsTransparent = true
@@ -281,13 +281,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
   private func makeMenus() {
     let main = NSMenu()
     let app = NSMenu()
-    app.addItem(withTitle: NL("关于 Mac Explorer Native"), action: #selector(about), keyEquivalent: "").target = self
+    app.addItem(withTitle: NL("关于 Mac Explorer"), action: #selector(about), keyEquivalent: "").target = self
     app.addItem(withTitle: NL("设置…"), action: #selector(showSettings), keyEquivalent: ",").target = self
     app.addItem(.separator())
-    app.addItem(withTitle: NL("隐藏 Mac Explorer Native"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-    app.addItem(withTitle: NL("退出 Mac Explorer Native"), action: #selector(quitWithoutWindows), keyEquivalent: "q").target = self
+    app.addItem(withTitle: NL("隐藏 Mac Explorer"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+    app.addItem(withTitle: NL("退出 Mac Explorer"), action: #selector(quitWithoutWindows), keyEquivalent: "q").target = self
     app.addItem(withTitle: NL("退出并保留窗口"), action: #selector(quitKeepingWindows), keyEquivalent: "").target = self
-    addMenu("Mac Explorer Native", submenu: app, to: main)
+    addMenu("Mac Explorer", submenu: app, to: main)
     let file = NSMenu(title: NL("文件"))
     file.addItem(withTitle: NL("新建窗口"), action: #selector(newWindow), keyEquivalent: "n").target = self
     item(NL("新建标签页"), #selector(BrowserController.newTab), "t", in: file)

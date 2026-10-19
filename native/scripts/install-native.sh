@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install only the separate Swift application; never replace the Electron application.
+# Install the Swift application; refuse an existing application with a different identity.
 set -euo pipefail
 export LC_ALL=C
 fail() { printf '安装失败：%s\n' "$*" >&2; exit 1; }
@@ -11,7 +11,7 @@ prepared="${MAC_EXPLORER_NATIVE_PREPARED:-}"
 [[ "$install_dir" == /* ]] || fail '安装目录必须是绝对路径。'
 mkdir -p "$install_dir"
 install_dir=$(cd "$install_dir" && pwd -P)
-destination="$install_dir/Mac Explorer Native.app"
+destination="$install_dir/Mac Explorer.app"
 [[ -w "$install_dir" && ! -L "$destination" ]] || fail '安装位置不可写或目标是符号链接。'
 work=$(mktemp -d "${TMPDIR:-/tmp}/mac-explorer-native.XXXXXX")
 stage=''; backup=''; installed=0
@@ -66,22 +66,22 @@ actual=$(/usr/bin/shasum -a 256 "$work/$archive" | awk '{print $1}')
 count=0
 while IFS= read -r name; do
   count=$((count+1)); [[ "$count" -le 100000 ]] || fail '更新包项目过多。'
-  [[ "$name" == 'Mac Explorer Native.app/'* && "$name" != *'\'* && "$name" != *$'\r'* && "/$name/" != *'/../'* && "/$name/" != *'/./'* ]] || fail '更新包路径无效。'
+  [[ "$name" == 'Mac Explorer.app/'* && "$name" != *'\'* && "$name" != *$'\r'* && "/$name/" != *'/../'* && "/$name/" != *'/./'* ]] || fail '更新包路径无效。'
 done < "$work/entries"
 uncompressed=$(/usr/bin/unzip -Z -t "$work/$archive" | /usr/bin/awk '$4=="bytes" && $5=="uncompressed," {print $3}')
 [[ "$uncompressed" =~ ^[0-9]+$ && "$uncompressed" -le 2147483648 ]] || fail '更新压缩包展开大小无效。'
 /usr/bin/unzip -Z -l "$work/$archive" > "$work/attributes"
 if /usr/bin/awk '/^l/{found=1} END{exit !found}' "$work/attributes"; then fail '更新包包含符号链接。'; fi
 /usr/bin/ditto -x -k "$work/$archive" "$work/unpacked"
-source_app="$work/unpacked/Mac Explorer Native.app"
+source_app="$work/unpacked/Mac Explorer.app"
 validate_app "$source_app" "$version"
 stage=$(mktemp -d "$install_dir/.mac-explorer-native.XXXXXX")
-/usr/bin/ditto "$source_app" "$stage/Mac Explorer Native.app"
-validate_app "$stage/Mac Explorer Native.app" "$version"
+/usr/bin/ditto "$source_app" "$stage/Mac Explorer.app"
+validate_app "$stage/Mac Explorer.app" "$version"
 app_running && fail '应用已被打开，请先退出后重试。'
 if [[ -e "$destination" ]]; then validate_app "$destination"; backup="$stage/previous.app"; mv "$destination" "$backup"; fi
 [[ ! -e "$destination" && ! -L "$destination" ]] || fail '目标位置已出现其他应用，已停止安装。'
-mv "$stage/Mac Explorer Native.app" "$destination"
+mv "$stage/Mac Explorer.app" "$destination"
 installed=1
 printf '已安装原生版本 v%s：%s\n' "$version" "$destination"
 if [[ "${MAC_EXPLORER_NATIVE_NO_OPEN:-0}" != 1 ]]; then /usr/bin/open "$destination" || printf '请手动打开应用。\n'; fi

@@ -17,7 +17,7 @@ bin_dir = pathlib.Path(subprocess.check_output(
     ["swift", "build", "--package-path", str(root), "-c", "release", "--show-bin-path"], text=True
 ).strip())
 output_directory = root / "output" / "validation" if args.validation else root / "output"
-app = output_directory / "Mac Explorer Native.app"
+app = output_directory / "Mac Explorer.app"
 contents = app / "Contents"
 binary_path = str(contents / "MacOS" / "MacExplorerNative")
 processes = subprocess.run(["/bin/ps", "-axo", "command="], capture_output=True, text=True, check=True).stdout.splitlines()
@@ -46,8 +46,8 @@ subprocess.run(["codesign", "--force", "--sign", "-", str(icon_binary)], check=T
 info = {
     "CFBundleExecutable": "MacExplorerNative",
     "CFBundleIdentifier": "local.macexplorer.native-validation" if args.validation else "local.macexplorer.native-prototype",
-    "CFBundleName": "Mac Explorer Native",
-    "CFBundleDisplayName": "Mac Explorer Native",
+    "CFBundleName": "Mac Explorer",
+    "CFBundleDisplayName": "Mac Explorer",
     "CFBundlePackageType": "APPL",
     "CFBundleIconFile": "AppIcon.icns",
     "CFBundleShortVersionString": (root / "VERSION").read_text().strip(),

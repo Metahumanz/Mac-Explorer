@@ -676,7 +676,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       self.pendingRename = nil
       DispatchQueue.main.async { [weak self] in guard let self, self.selectedPaths == [pendingRename] else { return }; self.renameSelected() }
     }
-    view.window?.title = "\(locationLabel(directory)) — Mac Explorer Native"
+    view.window?.title = "\(locationLabel(directory)) — Mac Explorer"
   }
   private func updateStatus() {
     let chosen = selectedEntries(), total = chosen.filter { !$0.isDirectory }.reduce(Int64(0)) { $0 + $1.size }

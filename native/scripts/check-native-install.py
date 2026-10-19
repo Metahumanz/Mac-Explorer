@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='explorer-native-install-checks-') as te
 
     def make_app(version, identity='local.macexplorer.native-prototype'):
         directory = folder / ('source-' + version + '-' + str(len(list(folder.iterdir()))))
-        app = directory / 'Mac Explorer Native.app'
+        app = directory / 'Mac Explorer.app'
         (app / 'Contents/MacOS').mkdir(parents=True)
         (app / 'Contents/Resources').mkdir()
         shutil.copyfile(fixture_binary, app / 'Contents/MacOS/MacExplorerNative')
@@ -65,8 +65,12 @@ with tempfile.TemporaryDirectory(prefix='explorer-native-install-checks-') as te
         checks += 1
 
     first = prepared('1.0.0')
+    install_package(first, success=False)
+    legacy = folder / 'legacy Electron'
+    legacy.mkdir()
+    electron = electron.rename(legacy / electron.name)
     install_package(first)
-    destination = install / 'Mac Explorer Native.app'
+    destination = install / 'Mac Explorer.app'
     run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(destination)])
     before = (destination / 'Contents/Info.plist').read_bytes()
     install_package(prepared('0.9.0'))

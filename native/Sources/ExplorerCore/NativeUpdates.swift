@@ -18,7 +18,7 @@ public struct NativeUpdateState: Sendable {
 }
 public enum NativeUpdateValidation {
   public static let bundleID = "local.macexplorer.native-prototype"
-  public static let appName = "Mac Explorer Native.app"
+  public static let appName = "Mac Explorer.app"
   public static let checksumName = "SHA256SUMS-native.txt"
   public static func failure(_ message: String) -> NSError { NSError(domain: "MacExplorer.NativeUpdate", code: 1, userInfo: [NSLocalizedDescriptionKey: NL(message)]) }
   public static func compare(_ left: String, _ right: String) throws -> Int {
