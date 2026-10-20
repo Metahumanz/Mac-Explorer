@@ -46,6 +46,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private var loadTask: Task<DirectorySnapshot, Error>?
   private var queryTask: Task<[FileEntry], Never>?
   private var searchTask: Task<FileSearchResult, Error>?
+  private var syncingSortDescriptors = false
   private var syncingSelection = false
   private var previewURLs: [NSURL] = []
   private var searchActive = false
@@ -275,7 +276,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     table.columnAutoresizingStyle = .noColumnAutoresizing; table.target = self; table.doubleAction = #selector(openSelected)
     table.setAccessibilityLabel(NL("文件列表"))
     table.headerView = NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 900, height: 41))
-    for (id, title, width) in [("name", NL("名称"), 450.0), ("modified", NL("修改日期"), 165.0), ("kind", NL("类型"), 132.0), ("size", NL("大小"), 100.0)] {
+    for (id, title, width) in [("name", NL("名称"), 450.0), ("modified", NL("修改日期"), 165.0), ("created", NL("创建日期"), 165.0), ("kind", NL("类型"), 132.0), ("size", NL("大小"), 100.0)] {
       let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); column.headerCell = ExplorerHeaderCell(textCell: title)
       column.width = width; column.minWidth = 50; column.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true); table.addTableColumn(column)
     }
@@ -347,14 +348,21 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     collectionScroll.frame = content.bounds
     collection.frame.size.width = collectionScroll.contentView.bounds.width; collectionLayout.invalidateLayout()
     let available = max(0, tableScroll.contentView.bounds.width)
-    let metadata: [CGFloat] = width <= 900 ? [150, 0, 80] : width <= 1100 ? [153, 110, 85] : [165, 132, 100]
-    for (i, column) in table.tableColumns.enumerated() {
-      let hidden = i == 2 && width <= 900 || (paneWidth > 0 && width <= 1100 && i >= 2) || (paneWidth > 0 && width <= 900 && i == 1)
-      column.isHidden = hidden
+    let dateWidth: CGFloat = width <= 900 ? 150 : width <= 1100 ? 153 : 165
+    let metadata: [String: CGFloat] = ["modified": dateWidth, "created": dateWidth, "kind": width <= 1100 ? 110 : 132, "size": width <= 900 ? 80 : width <= 1100 ? 85 : 100]
+    var hidden = Set<String>()
+    if width <= 900 { hidden.insert("kind") }
+    if paneWidth > 0 && width <= 1100 { hidden.formUnion(["kind", "size"]) }
+    if paneWidth > 0 && width <= 900 { hidden.insert("modified") }
+    let existingWidth = metadata.filter { $0.key != "created" && !hidden.contains($0.key) }.values.reduce(0, +)
+    // Keep the established columns and a readable filename before adding a second date.
+    if hidden.contains("modified") || available - existingWidth - dateWidth < 250 { hidden.insert("created") }
+    let used = metadata.filter { !hidden.contains($0.key) }.values.reduce(0, +)
+    for column in table.tableColumns {
+      let id = column.identifier.rawValue
+      column.isHidden = hidden.contains(id)
+      column.width = id == "name" ? max(150, available - used) : metadata[id] ?? 100
     }
-    let used = (1..<4).filter { !table.tableColumns[$0].isHidden }.reduce(CGFloat(0)) { $0 + metadata[$1 - 1] }
-    table.tableColumns[0].width = max(150, available - used)
-    for i in 1..<4 where !table.tableColumns[i].isHidden { table.tableColumns[i].width = metadata[i - 1] }
     emptyIcon.frame = NSRect(x: (content.bounds.width - 68) / 2, y: max(40, content.bounds.height * 0.35 - 60), width: 68, height: 68)
     emptyLabel.frame = NSRect(x: 20, y: emptyIcon.frame.maxY + 18, width: content.bounds.width - 40, height: 24)
     spinner.frame = NSRect(x: (content.bounds.width - 16) / 2, y: emptyIcon.frame.minY, width: 16, height: 16)
@@ -652,6 +660,12 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   }
 
   func recompute() {
+    let descriptor = table.sortDescriptors.first
+    if descriptor?.key != sort.rawValue || descriptor?.ascending != ascending {
+      syncingSortDescriptors = true
+      table.sortDescriptors = [NSSortDescriptor(key: sort.rawValue, ascending: ascending)]
+      syncingSortDescriptors = false
+    }
     for column in table.tableColumns { (column.headerCell as? ExplorerHeaderCell)?.ascending = column.identifier.rawValue == sort.rawValue ? ascending : nil }; table.headerView?.needsDisplay = true
     guard let snapshot else { return }; queryGeneration += 1; queryTask?.cancel()
     let token = queryGeneration, navigation = generation, hidden = showHidden, query = searchActive ? "" : search.stringValue, order = sort, direction = ascending
@@ -774,10 +788,11 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       cell.alphaValue = isCut && clipboard.contains(entry.url) ? 0.44 : entry.isHidden ? 0.6 : 1; return cell
     }
     let cell = (table.makeView(withIdentifier: id, owner: self) as? MetadataCell) ?? MetadataCell(); cell.identifier = id
-    switch id.rawValue { case "modified": cell.value.stringValue = entry.modified.map(dateFormatter.string) ?? ""; case "size": cell.value.stringValue = entry.isDirectory ? "" : ExplorerFormat.size(entry.size); cell.value.alignment = .right; default: cell.value.stringValue = entry.kind }; return cell
+    cell.value.alignment = .left
+    switch id.rawValue { case "modified": cell.value.stringValue = entry.modified.map(dateFormatter.string) ?? ""; case "created": cell.value.stringValue = entry.created.map(dateFormatter.string) ?? ""; case "size": cell.value.stringValue = entry.isDirectory ? "" : ExplorerFormat.size(entry.size); cell.value.alignment = .right; default: cell.value.stringValue = entry.kind }; return cell
   }
   func tableViewSelectionDidChange(_ notification: Notification) { guard !syncingSelection, mode == .details else { return }; selectedPaths = Set(table.selectedRowIndexes.compactMap { entries.indices.contains($0) ? entries[$0].id : nil }); updateStatus(); updatePane() }
-  func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) { guard let descriptor = tableView.sortDescriptors.first, let key = descriptor.key, let order = EntrySort(rawValue: key) else { return }; sort = order; ascending = descriptor.ascending; saveView(group: "sort"); recompute() }
+  func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) { guard !syncingSortDescriptors, let descriptor = tableView.sortDescriptors.first, let key = descriptor.key, let order = EntrySort(rawValue: key) else { return }; sort = order; ascending = descriptor.ascending; saveView(group: "sort"); recompute() }
   func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int { mode == .details || loading ? 0 : entries.count }
   func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
     let item = collection.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("file"), for: indexPath) as! IconItem
@@ -882,7 +897,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   }
 
   func sortMenu() -> [ExplorerMenuItem] {
-    var items = [(NL("名称"), EntrySort.name), (NL("修改日期"), .modified), (NL("类型"), .kind), (NL("大小"), .size)].map { name, key in ExplorerMenuItem(title: name, checked: sort == key, action: { [weak self] in self?.sort = key; self?.saveView(group: "sort"); self?.recompute() }) }
+    var items = [(NL("名称"), EntrySort.name), (NL("修改日期"), .modified), (NL("创建日期"), .created), (NL("类型"), .kind), (NL("大小"), .size)].map { name, key in ExplorerMenuItem(title: name, checked: sort == key, action: { [weak self] in self?.sort = key; self?.saveView(group: "sort"); self?.recompute() }) }
     items += [ExplorerMenuItem(title: NL("递增"), checked: ascending, divider: true, action: { [weak self] in self?.ascending = true; self?.saveView(group: "sort"); self?.recompute() }), ExplorerMenuItem(title: NL("递减"), checked: !ascending, action: { [weak self] in self?.ascending = false; self?.saveView(group: "sort"); self?.recompute() })]; return items
   }
   func viewMenu() -> [ExplorerMenuItem] {

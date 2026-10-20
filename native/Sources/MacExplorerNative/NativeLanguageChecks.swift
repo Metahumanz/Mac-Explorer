@@ -30,6 +30,9 @@ enum NativeLanguageChecks {
         a.tabs.count == count, a.directory.path == root.path, defaults.string(forKey: "language") == language,
         ExplorerDialogs.isPresenting(in: first) else { throw NativeSmoke.Failure(description: "Language rebuild did not preserve windows, tabs or settings: \(language)") }
       checks.append("Language \(language) rebuilds both windows and retains tabs, location, preference and settings")
+      guard a.table.tableColumns.first(where: { $0.identifier.rawValue == "created" })?.title == NL("创建日期"),
+        b.sortMenu().contains(where: { $0.title == NL("创建日期") }) else { throw NativeSmoke.Failure(description: "Created-date localization missing: \(language)") }
+      checks.append("Language \(language) localizes the Created column and sort menu")
     }
     return checks
   }
