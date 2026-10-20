@@ -737,6 +737,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     commands["cut"]?.isEnabled = !chosen.isEmpty && !busy && !viewingTrash; commands["copy"]?.isEnabled = !chosen.isEmpty && !busy
     commands["paste"]?.isEnabled = (!clipboard.isEmpty || filePasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])) && !busy && writable
     commands["rename"]?.isEnabled = chosen.count == 1 && !busy && !viewingTrash; commands["share"]?.isEnabled = !chosen.isEmpty && !busy; commands["trash"]?.isEnabled = !chosen.isEmpty && !busy && !viewingTrash
+    commands["trash"]?.toolTip = deletionTitle + " ⌘⌫"
     commands["airdrop"]?.isEnabled = !chosen.isEmpty && !busy; commands["terminal"]?.isEnabled = directory.isFileURL && !busy
     commands["undo"]?.isEnabled = !undoChanges.isEmpty && !busy; commands["refresh"]?.isEnabled = !busy
     if let vcsStatus, vcsStatus.error == nil { status.stringValue += "     \(vcsStatus.kind == .git ? "Git" : "SVN") · \(vcsStatus.branch)" }
@@ -1007,7 +1008,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
         ExplorerMenuItem(title: NL("复制文件地址"), icon: "copy", action: { [weak self] in self?.copyPaths() }),
         ExplorerMenuItem(title: NL("重命名"), icon: "rename", enabled: chosen.count == 1 && !busy, shortcut: shortcutHint("rename"), action: { [weak self] in self?.renameSelected() }),
         ExplorerMenuItem(title: NL("共享"), icon: "share", action: { [weak self] in self?.shareSelected() }),
-        ExplorerMenuItem(title: NL("移到回收站"), icon: "trash", enabled: !busy, shortcut: shortcutHint("trash"), action: { [weak self] in self?.trashSelected() })]
+        ExplorerMenuItem(title: deletionTitle, icon: "trash", enabled: !busy, shortcut: shortcutHint("trash"), action: { [weak self] in self?.trashSelected() })]
       if first.isDirectory, first.url != cloudDrive {
         items.append(ExplorerMenuItem(title: pinnedPaths.contains(first.url.path) ? NL("从快速访问取消固定") : NL("固定到快速访问"), icon: "pin", divider: true, action: { [weak self] in self?.togglePin(first.url) }))
       }
@@ -1030,7 +1031,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private func showContext(_ event: NSEvent) {
     guard let window = view.window else { return }
     let items = contextItems()
-    let quickNames = viewingTrash || selectedPaths.isEmpty ? [] : [NL("剪切"), NL("复制"), NL("重命名"), NL("移到回收站")]
+    let quickNames = viewingTrash || selectedPaths.isEmpty ? [] : [NL("剪切"), NL("复制"), NL("重命名"), deletionTitle]
     let quick = quickNames.compactMap { name in items.first { $0.title == name } }
     ExplorerMenu.show(items.filter { !quickNames.contains($0.title) }, at: window.convertPoint(toScreen: event.locationInWindow), owner: window, quickActions: quick)
   }
@@ -1226,21 +1227,55 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       if self.filePasteboard.changeCount == version { self.writeClipboard() }
     }) { control in FileActions.transfer(sources, to: target, move: move, control: control) }
   }
+  // Cached mount classification keeps menu/selection updates free of network I/O.
+  var deletionNetworkLocation: (URL) -> Bool? = NativeFileFailure.networkLocation
+  var prepareNetworkDeletion: @Sendable (URL) throws -> NetworkDeletion = { try NetworkDeletion($0) }
+  private var deletionTitle: String {
+    selectedEntries().contains { deletionNetworkLocation($0.url) == true } ? NL("删除") : NL("移到回收站")
+  }
   private func trashSelected() {
-    let sources = selectedEntries().map(\.url); guard !sources.isEmpty, !viewingTrash, let window = view.window else { return }
-    let perform: () -> Void = { [weak self, weak window] in
+    let sources = selectedEntries().map(\.url)
+    guard !busy, !sources.isEmpty, !viewingTrash, let window = view.window else { return }
+    let networkSources = Set(sources.filter { deletionNetworkLocation($0) == true })
+    let perform: ([URL: NetworkDeletion]) -> Void = { [weak self, weak window] prepared in
       guard let self, let window else { return }
-      if let testTrash = self.testTrashDirectory { self.runOperation { FileActions.trash(sources, testTrash: testTrash) }; return }
-      let store = self.trashStore, cloud = self.cloudDrive
-      self.runAsyncOperation {
+      self.readClipboard(); let version = self.clipboardChange
+      let store = self.trashStore, cloud = self.cloudDrive, testTrash = self.testTrashDirectory
+      let origin = self.tabs[self.activeTab].id, originDirectory = self.directory
+      var removed = Set<String>()
+      self.runAsyncOperation(selectResults: false, completion: { [weak self] result in
+        guard let self else { return }
+        if self.clipboardChange == version, self.filePasteboard.changeCount == version {
+          self.clipboard.removeAll { removed.contains($0.path) }
+          if self.clipboard.isEmpty { self.isCut = false }
+          if !removed.isEmpty { self.writeClipboard() }
+        }
+        // A successful irreversible deletion has no destination to select.
+        if let index = self.tabs.firstIndex(where: { $0.id == origin }), self.tabs[index].directory == originDirectory {
+          self.tabs[index].selectedPaths = Set(sources.filter { !removed.contains($0.path) && !result.changes.compactMap(\.source).contains($0) }.map(\.path))
+        }
+      }) {
         var succeeded: [URL] = [], errors: [String] = [], changes: [FileActionChange] = []
         for source in sources {
           do {
-            let trashed = try await self.recycleItem(source, cloud, window)
-            changes.append(FileActionChange(source: source, destination: trashed, kind: .trash)); succeeded.append(trashed)
-            do { try store.remember(trashed, original: source) } catch { errors.append(NL("文件已移入回收站，但无法保存原位置。请使用“还原到…”恢复。")) }
+            if let deletion = prepared[source] {
+              try await Task.detached { try deletion.remove() }.value
+              removed.insert(source.path)
+            } else {
+              // A local item becoming remote requires a fresh destructive confirmation.
+              guard self.deletionNetworkLocation(source) != true else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ESTALE), userInfo: [NSFilePathErrorKey: source.path]) }
+              let trashed: URL
+              if let testTrash {
+                let result = await Task.detached { FileActions.trash([source], testTrash: testTrash) }.value
+                guard let change = result.changes.first else { throw NSError(domain: "NativeRecycle", code: 1, userInfo: [NSLocalizedDescriptionKey: result.errors.joined(separator: "\n")]) }
+                trashed = change.destination
+              } else { trashed = try await self.recycleItem(source, cloud, window) }
+              changes.append(FileActionChange(source: source, destination: trashed, kind: .trash)); succeeded.append(trashed); removed.insert(source.path)
+              do { try store.remember(trashed, original: source) } catch { errors.append(NL("文件已移入回收站，但无法保存原位置。请使用“还原到…”恢复。")) }
+            }
           } catch {
-            let message = (error as NSError).code == NSUserCancelledError ? NL("已取消") : self.errorMessage(error, at: source)
+            var message = (error as NSError).code == NSUserCancelledError ? NL("已取消") : self.errorMessage(error, at: source)
+            if prepared[source] != nil { message = NL("删除未完成，部分内容可能已删除。") + " " + message }
             errors.append(message.contains(source.lastPathComponent) ? message : message + "：" + source.lastPathComponent)
             if (error as NSError).code == NSUserCancelledError { break }
           }
@@ -1248,8 +1283,25 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
         return FileActionResult(succeeded: succeeded, errors: errors, changes: changes)
       }
     }
-    if defaults.bool(forKey: "skipTrashConfirmation") { perform() }
-    else { ExplorerDialogs.confirm(in: window, title: NL("移到回收站"), detail: NL("将 {0} 个项目移到回收站？", sources.count), confirmTitle: NL("移到回收站"), remember: { [weak self] in self?.defaults.set($0, forKey: "skipTrashConfirmation") }, action: perform) }
+    if !networkSources.isEmpty {
+      // Bind the confirmation to metadata captured off the UI thread, before deletion.
+      let prepare = prepareNetworkDeletion, origin = tabs[activeTab].id, originDirectory = directory
+      busy = true; operationError = nil; offersPrivacySettings = false; updateStatus()
+      Task { @MainActor [weak self, weak window] in
+        do {
+          let prepared = try await Task.detached { try Dictionary(uniqueKeysWithValues: networkSources.map { ($0, try prepare($0)) }) }.value
+          guard let self else { return }; self.busy = false
+          guard let window, !self.stopped else { self.updateStatus(); return }
+          guard self.tabs[self.activeTab].id == origin, self.directory == originDirectory else { self.updateStatus(); return }
+          self.updateStatus()
+          let detail = sources.count == networkSources.count
+            ? NL("永久删除网络驱动器上的 {0} 个项目？这些项目不会进入回收站，此操作无法撤销。", networkSources.count)
+            : NL("永久删除 {0} 个网络项目，并将 {1} 个本地项目移到回收站？网络项目无法撤销删除。", networkSources.count, sources.count - networkSources.count)
+          ExplorerDialogs.confirm(in: window, title: NL("删除"), detail: detail + "\n\n" + sources.prefix(5).map(\.path).joined(separator: "\n"), confirmTitle: NL("永久删除"), destructive: true) { perform(prepared) }
+        } catch { self?.busy = false; self?.operationError = self?.errorMessage(error, at: sources.first); self?.render() }
+      }
+    } else if defaults.bool(forKey: "skipTrashConfirmation") { perform([:]) }
+    else { ExplorerDialogs.confirm(in: window, title: NL("移到回收站"), detail: NL("将 {0} 个项目移到回收站？", sources.count), confirmTitle: NL("移到回收站"), remember: { [weak self] in self?.defaults.set($0, forKey: "skipTrashConfirmation") }) { perform([:]) } }
   }
   private func undoFiles() {
     guard !busy, let changes = undoChanges.popLast() else { return }
@@ -1277,7 +1329,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private func runOperation(recordUndo: Bool = true, completion: ((FileActionResult) -> Void)? = nil, _ operation: @escaping @Sendable () -> FileActionResult) {
     runAsyncOperation(recordUndo: recordUndo, completion: completion) { await Task.detached { operation() }.value }
   }
-  func runAsyncOperation(recordUndo: Bool = true, completion: ((FileActionResult) -> Void)? = nil, _ operation: @escaping () async -> FileActionResult) {
+  func runAsyncOperation(recordUndo: Bool = true, selectResults: Bool = true, completion: ((FileActionResult) -> Void)? = nil, _ operation: @escaping () async -> FileActionResult) {
     guard !busy else { return }; busy = true; operationError = nil; offersPrivacySettings = false; message = NL("正在处理…"); updateStatus()
     let origin = tabs[activeTab].id, originDirectory = directory
     Task { @MainActor [weak self] in
@@ -1286,7 +1338,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       completion?(result)
       self.operationError = result.errors.isEmpty ? nil : result.errors.joined(separator: "\n")
       self.busy = false; self.message = result.errors.isEmpty ? NL("已完成") : result.errors.prefix(2).joined(separator: "；")
-      if let index = self.tabs.firstIndex(where: { $0.id == origin }), self.tabs[index].directory == originDirectory,
+      if selectResults, let index = self.tabs.firstIndex(where: { $0.id == origin }), self.tabs[index].directory == originDirectory,
         !result.succeeded.isEmpty || result.errors.isEmpty { self.tabs[index].selectedPaths = Set(result.succeeded.map(\.path)) }
       if self.tabs[self.activeTab].id == origin && self.directory == originDirectory { self.reload() } else { self.updateStatus() }
     }

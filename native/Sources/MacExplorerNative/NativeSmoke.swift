@@ -191,6 +191,7 @@ enum NativeSmoke {
       checks += try await NativeAddressTabChecks.run(source: browser)
       checks += try NativeShortcutChecks.run()
       checks += try await NativePrivacyChecks.run(output: report.deletingLastPathComponent())
+      checks += try await NativeNetworkDeleteChecks.run(output: report.deletingLastPathComponent())
       browser.navigate(to: root)
       try await until { !browser.loading && browser.entries.count == 10_003 }
       metrics["iconLoadsAfterAllInteractions"] = IconLoader.shared.loads

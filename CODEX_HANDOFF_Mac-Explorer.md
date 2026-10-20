@@ -1,6 +1,6 @@
 # Mac Explorer Fork：改造初始化与 Codex 交接文档
 
-> 文档日期：2026-10-20（Phase 4C）
+> 文档日期：2026-10-20（4C 收尾及网络删除追加）
 >
 > 上游仓库：https://github.com/qixiaoyu27/Mac-Explorer
 >
@@ -25,7 +25,8 @@
 - 默认多轮哈希、来源隐藏改名和阶段日志已删除；使用系统复制及进度/取消、错误选择和日期恢复读回。Phase 1 已完成本地提交收尾；Phase 2 已完成本地提交收尾；Phase 3 已完成本地提交收尾；用户随后授权先做 4A/4B，现已完成实现与隔离验收（核心 714、UI 442 通过另 1 SVN 跳过），已完成本地提交；见 [4A/4B 验证记录](docs/PHASE_4AB_VALIDATION.md)。4A/4B 提交为 `a0a248d`；用户随后授权 4C，现已实现现有五列配置并完成隔离验收（核心 728、UI 476 通过另 1 SVN 跳过），已完成本地提交收尾；见 [4C 记录](docs/PHASE_4C_VALIDATION.md)。不修改系统默认项。
 - 用户随后授权 SMB 实测、提交兼容修复及 Phase 1 复验。实际路径为 `/Volumes/passport` 与 `/Volumes/NSSD`；仅公布的新 UUID 小夹具。首次失败及旧现场见 [历史实测记录](docs/SMB_VALIDATION.md)，最新源码、真实矩阵、完整回归及保留现场以 [SMB 专项复验](docs/SMB_PHASE1_REACCEPTANCE.md) 为准。没有恢复多轮内容哈希或覆盖重命名，没有更改日常安装版。
 - 4C 体验期间用户要求处理旧测试残留：原 35 根及 23 个根伴随文件现已逐项只读核实不存在；本机新建清理备份也已删除。用户选择自行在树莓派执行精确清理命令，过程与结果见 [残留清理记录](docs/SMB_FIXTURE_CLEANUP.md)。
-- 用户随后授权修复权限提示：共享 EACCES/EPERM 不再误导为未授予完全磁盘访问权限；保留原因、错误码、具体失败路径，删除全部失败保留选择和剪贴板。最新完整核心 728、UI 491 通过另 1 SVN 跳过；验收及计划收尾状态见 [权限修复记录](docs/PERMISSION_ERROR_VALIDATION.md)。4C 与本轮修复已完成本地提交收尾。
+- 用户随后授权修复权限提示：共享 EACCES/EPERM 不再误导为未授予完全磁盘访问权限；保留原因、错误码、具体失败路径，删除全部失败保留选择和剪贴板。最新完整核心 728、UI 491 通过另 1 SVN 跳过；验收及计划收尾状态见 [权限修复记录](docs/PERMISSION_ERROR_VALIDATION.md)。4C 与本轮修复已提交 `96c79d5`。
+- 既定功能计划已完成至 4C；用户追加授权网络驱动器删除对齐 Windows：网络项目每次确认永久删除，取消为默认焦点，本地继续回收站；错误不静默降级。实现及隔离验收完成（核心 750、UI 511 通过另 1 SVN 跳过），详见 [网络删除记录](docs/NETWORK_DELETE_VALIDATION.md)。真实 NAS 永久删除没有在本轮测试。
 - `native/PARITY_AUDIT.md`、`native/SYNC_STATUS.md` 是上游迁移记录，其通过数量不算本 Fork 本轮验收结果。
 
 ## 1. 项目背景与总体目标

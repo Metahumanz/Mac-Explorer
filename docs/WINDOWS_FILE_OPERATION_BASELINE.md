@@ -51,3 +51,10 @@
 仍需真实 Windows 11 与 macOS/SMB 小夹具对照：普通复制和跨卷移动的创建日期、目录日期、权限继承、不同精度卷、网络断连和磁盘写满。Windows 参考行为不能证明内部实现相同；本项目继续以用户要求的原创建/修改日期保留为验收目标，不宣称 Windows 全量行为一致。
 
 后续用户已授权真实 SMB 小夹具测试和兼容修复、重新验收。[首次失败](SMB_VALIDATION.md)保留为历史，最新源码、结果及限制见 [SMB 专项复验](SMB_PHASE1_REACCEPTANCE.md)。SMB 不支持排他改名时，同共享移动会回退为一次安全复制再删源；不能把此路径的性能表述成 Windows 服务端原地改名，也不要求用户修改 NAS 配置来绕过客户端问题。
+
+
+## 用户追加：网络驱动器删除
+
+Windows Shell 的 [FOF_WANTNUKEWARNING](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-setoperationflags) 要求永久删除而非回收时显示警告，并部分覆盖免确认选项。本次据此实现：普通网络共享项目每次确认永久删除；本地项目保留回收站与原确认设置；混合选择分别执行，永久删除不进入撤销栈。
+
+不能推断所有 Windows 网络位置都没有回收站：[微软说明的文件夹重定向](https://devblogs.microsoft.com/oldnewthing/20140611-00/?p=763/) 存在网络回收站位置，NAS 服务端也可能配置自己的回收/快照策略。本客户端不检测或承诺服务端回收能力，不配置服务器回收站。拒绝访问仍按实际权限报错，不通过重试、提权或回收失败自动降级绕过。
