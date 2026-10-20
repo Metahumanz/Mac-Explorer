@@ -876,6 +876,11 @@ private final class EDSettingsBody: EDView {
     language.arrange = { rect in row.frame = rect }
     content.flow.add(language) { _ in 58 }
     if let browser {
+      let terminal = EDGroup(NL("终端"))
+      let selected = browser.defaults.string(forKey: NativeTerminal.preferenceKey) ?? ""
+      let application = EDChoiceRow(title: NL("终端应用"), options: NativeTerminal.options(selected: selected), value: selected) { [weak browser] in browser?.defaults.set($0, forKey: NativeTerminal.preferenceKey) }
+      terminal.content.addSubview(application); terminal.arrange = { application.frame = $0 }
+      content.flow.add(terminal) { _ in 58 }
       let search = EDGroup(NL("文件搜索"))
       let mode = EDChoiceRow(title: NL("搜索模式"), options: [(NL("普通文本"), "text"), (NL("通配符"), "wildcard"), (NL("正则表达式"), "regex")], value: FileSearchMode(rawValue: browser.defaults.string(forKey: "searchMode") ?? "")?.rawValue ?? "text") { [weak browser] in browser?.defaults.set($0, forKey: "searchMode") }
       search.content.addSubview(mode); search.arrange = { mode.frame = $0 }

@@ -43,8 +43,8 @@ open 'native/output/validation/Mac Explorer.app'
 - 多卷回收站汇总、来源记录、原地还原/选择还原目录、清空前确认；iCloud 权限失败时选择授权目录、取消和错误显示。
 - 压缩包内部浏览、子目录导航、选择、临时打开、安全解压到指定位置和 ZIP 压缩；使用随应用构建的 libarchive C helper。
 - Git/SVN 状态角标和父目录汇总、分支、差异、暂存/添加、提交、更新、丢弃；执行前预览、陈旧计划拒绝及丢弃备份；关闭集成会停止检测进程。
-- 简中、繁中、英文和跟随系统；工具栏定制、操作快捷键录入/冲突校验及恢复默认；操作快捷键允许规定的裸按键，系统全局唤醒键仍要求修饰键或功能键。
-- 此电脑实际挂载卷和容量、卷推出；AirDrop 文件选择/拖入；SMB 地址连接和 Bonjour 发现；鼠标侧键及触控板导航。
+- 简中、繁中、英文和跟随系统；终端应用选择（自动、Terminal、已安装的 Warp/iTerm2/Ghostty）、工具栏定制、操作快捷键录入/冲突校验及恢复默认；操作快捷键允许规定的裸按键，系统全局唤醒键仍要求修饰键或功能键。
+- 此电脑实际挂载卷和容量、卷推出；AirDrop 页面内附近设备发现、文件选择/拖入；SMB 地址连接和 Bonjour 发现；鼠标侧键及触控板导航。设备发现使用系统私有接口，不可用时保留系统发送入口。
 - 可选系统文件查看器接入及恢复、全局唤醒、原生专用自动更新与安装入口。系统默认项仅在用户明确启用后修改，原生更新拒绝 Electron 产物。
 
 ## 文件安全边界
@@ -91,7 +91,7 @@ python3 -I native/scripts/smoke.py --validation
 python3 -I native/scripts/package-release.py
 ```
 
-产物使用 `Mac-Explorer-Native-{version}-mac-arm64` 名称和 `SHA256SUMS-native.txt`，不会冒充或覆盖 Electron 发布附件。`scripts/install-native.sh` 与 `update-native.sh` 是原生安装/更新入口，校验版本、校验和、Bundle ID、可执行文件和签名。本轮没有向 GitHub 发布原生附件，本机安装使用同一原生安装入口。
+产物使用 `Mac-Explorer-Native-{version}-mac-arm64` 名称和 `SHA256SUMS-native.txt`，不会冒充或覆盖 Electron 发布附件。`scripts/install-native.sh` 与 `update-native.sh` 是原生安装/更新入口，校验版本、校验和、Bundle ID、可执行文件和签名。本机安装与应用内更新使用同一原生安装入口。
 
 ## 视觉对照
 

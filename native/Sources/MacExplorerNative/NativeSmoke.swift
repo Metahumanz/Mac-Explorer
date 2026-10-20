@@ -14,6 +14,22 @@ enum NativeSmoke {
       checks.append(name)
     }
     do {
+      if ProcessInfo.processInfo.arguments.contains("--smoke-vcs-edit") {
+        checks += try await NativeVCSEditingChecks.run()
+        try write(["passed": true, "checks": checks], to: report)
+        NSApp.terminate(nil); return
+      }
+      if ProcessInfo.processInfo.arguments.contains("--smoke-integrations") {
+        checks += try await NativeTerminalChecks.run(browser: browser, output: report.deletingLastPathComponent())
+        checks += try await NativeAirDropUIChecks.run()
+        try write(["passed": true, "checks": checks, "fixtureDevices": true], to: report)
+        NSApp.terminate(nil); return
+      }
+      if ProcessInfo.processInfo.arguments.contains("--smoke-airdrop") {
+        checks += try await NativeAirDropUIChecks.run()
+        try write(["passed": true, "checks": checks, "fixtureDevices": true], to: report)
+        NSApp.terminate(nil); return
+      }
       try await until { !browser.loading && browser.snapshot != nil && browser.entries.count == 10_003 }
       window.contentView?.layoutSubtreeIfNeeded()
       checks += try await NativeInputNavigationChecks.runBrowser(browser: browser, window: window)
@@ -174,6 +190,8 @@ enum NativeSmoke {
       checks += try await NativeAddressTabChecks.run(source: browser)
       checks += try NativeShortcutChecks.run()
       checks += try await NativePrivacyChecks.run()
+      checks += try await NativeTerminalChecks.run(browser: browser, output: report.deletingLastPathComponent())
+      checks += try await NativeAirDropUIChecks.run()
       browser.navigate(to: root)
       try await until { !browser.loading && browser.entries.count == 10_003 }
       metrics["iconLoadsAfterAllInteractions"] = IconLoader.shared.loads

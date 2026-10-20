@@ -848,5 +848,17 @@
   "通配符": "Wildcards",
   "正则表达式": "Regular expression",
   "正则表达式无效": "Invalid regular expression",
-  "搜索表达式过于复杂": "Search expression is too complex"
+  "搜索表达式过于复杂": "Search expression is too complex",
+  "附近设备": "Nearby devices",
+  "正在查找附近设备…": "Looking for nearby devices…",
+  "未发现附近设备": "No nearby devices found",
+  "无法查找附近设备": "Unable to find nearby devices",
+  "未命名设备": "Unnamed device",
+  "{0} 台设备": "{0} devices",
+  "终端": "Terminal",
+  "终端应用": "Terminal application",
+  "自动选择": "Automatic",
+  "{0}（未安装）": "{0} (not installed)",
+  "所选终端不可用": "Selected terminal unavailable",
+  "所选终端未安装，请在设置中重新选择。": "The selected terminal is not installed. Choose another in Settings."
 }
