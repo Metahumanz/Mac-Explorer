@@ -851,7 +851,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     tabs.append(BrowserTab(history: [url])); activeTab = tabs.count - 1; search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload()
     view.layoutSubtreeIfNeeded(); tabsDocument.subviews.last?.scrollToVisible(tabsDocument.subviews.last!.bounds)
   }
-  @objc func newTab() { openTab(at: home) }
+  @objc func newTab() { openTab(at: NativeStartLocation.load(defaults).url(home: home)) }
   @objc func closeTab() { closeTab(at: activeTab) }
   private func closeTab(at index: Int) {
     guard tabs.indices.contains(index) else { return }

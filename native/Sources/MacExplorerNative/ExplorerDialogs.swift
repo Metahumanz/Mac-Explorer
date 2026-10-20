@@ -912,6 +912,15 @@ private final class EDSettingsBody: EDView {
     }
     group.arrange = { _ = arrangeAppearance($0.width) }
     content.flow.add(group) { 26 + arrangeAppearance($0) }
+    if let browser {
+      let startup = EDGroup(NL("启动位置"))
+      let destination = EDChoiceRow(title: NL("默认打开"), options: [(NL("此电脑"), "computer"), (NL("个人文件夹"), "home")], value: NativeStartLocation.load(browser.defaults).rawValue) { [weak browser] value in
+        guard let location = NativeStartLocation(rawValue: value) else { return }
+        browser?.defaults.set(location.rawValue, forKey: NativeStartLocation.preferenceKey)
+      }
+      startup.content.addSubview(destination); startup.arrange = { destination.frame = $0 }
+      content.flow.add(startup) { _ in 58 }
+    }
     let language = EDGroup(NL("语言"))
     let row = EDChoiceRow(title: NL("界面语言"), options: [(NL("跟随系统"), "system"), ("简体中文", "zh-CN"), ("繁體中文", "zh-TW"), ("English", "en")], value: browser?.defaults.string(forKey: "language") ?? "system") { [weak self] in self?.browser?.changeLanguage($0) }
     language.content.addSubview(row)

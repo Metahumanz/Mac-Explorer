@@ -902,5 +902,7 @@
   "访问被拒绝，请检查文件权限或应用访问授权。（{0}）": "Access denied. Check file permissions or app access authorization. ({0})",
   "永久删除网络驱动器上的 {0} 个项目？这些项目不会进入回收站，此操作无法撤销。": "Permanently delete {0} items on the network drive? They will not go to the Recycle Bin. This cannot be undone.",
   "永久删除 {0} 个网络项目，并将 {1} 个本地项目移到回收站？网络项目无法撤销删除。": "Permanently delete {0} network items and move {1} local items to the Recycle Bin? Network deletions cannot be undone.",
-  "删除未完成，部分内容可能已删除。": "Deletion did not finish. Some contents may already have been deleted."
+  "删除未完成，部分内容可能已删除。": "Deletion did not finish. Some contents may already have been deleted.",
+  "启动位置": "Startup location",
+  "默认打开": "Open File Explorer to"
 }

@@ -26,6 +26,10 @@ enum NativeSmoke {
         let restored = try await NativeColumnChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
         try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
       }
+      if let index = CommandLine.arguments.firstIndex(of: "--start-location-settings"), CommandLine.arguments.indices.contains(index + 1) {
+        let restored = try await NativeStartLocationChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
+        try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
+      }
       try await until { !browser.loading && browser.snapshot != nil && browser.entries.count == 10_003 }
       window.contentView?.layoutSubtreeIfNeeded()
       checks += try await NativeInputNavigationChecks.runBrowser(browser: browser, window: window)
@@ -178,6 +182,7 @@ enum NativeSmoke {
       checks += try await NativeInteractionChecks.run(source: browser, output: report.deletingLastPathComponent())
       checks += try await NativeLatestChecks.run(parent: window)
       checks += try await NativeLifecycleChecks.run(source: browser)
+      checks += try await NativeStartLocationChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeCreatedDateChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVolumeChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeSMBChecks.run(output: report.deletingLastPathComponent())

@@ -21,3 +21,20 @@ public enum NativeSessions {
     defaults.set(try JSONEncoder().encode(valid), forKey: "nativeWindows")
   }
 }
+
+
+/// Only the two supported landing pages can be persisted; explicit paths take precedence.
+public enum NativeStartLocation: String, Sendable {
+  case home, computer
+  public static let preferenceKey = "startLocation"
+  public static func load(_ defaults: UserDefaults) -> Self {
+    defaults.string(forKey: preferenceKey).flatMap(Self.init(rawValue:)) ?? .home
+  }
+  public func url(home: URL) -> URL {
+    self == .computer ? URL(string: "explorer://computer")! : home
+  }
+  public static func initialURL(explicit: String?, defaults: UserDefaults, home: URL) -> URL {
+    if let explicit { return NativeSessions.validLocation(explicit) ?? URL(fileURLWithPath: explicit) }
+    return load(defaults).url(home: home)
+  }
+}
