@@ -22,6 +22,10 @@ enum NativeSmoke {
         let restored = try await NativeSMBChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
         try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
       }
+      if let index = CommandLine.arguments.firstIndex(of: "--column-settings"), CommandLine.arguments.indices.contains(index + 1) {
+        let restored = try await NativeColumnChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
+        try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
+      }
       try await until { !browser.loading && browser.snapshot != nil && browser.entries.count == 10_003 }
       window.contentView?.layoutSubtreeIfNeeded()
       checks += try await NativeInputNavigationChecks.runBrowser(browser: browser, window: window)
@@ -48,7 +52,7 @@ enum NativeSmoke {
       try expect(browser.selectedPaths == selected && browser.collection.selectionIndexPaths.count == 2, "selection survives details-to-icons switch")
       try expect(browser.collection.visibleItems().count < 150, "collection reuses visible items")
       let menu = browser.viewMenu()
-      try expect(menu.map(\.title) == ["超大图标", "大图标", "中图标", "小图标", "列表", "详细信息", "平铺", "内容", "详细信息窗格", "预览窗格", "显示", "应用到所有文件夹"], "View menu order matches the Electron reference")
+      try expect(menu.map(\.title) == ["超大图标", "大图标", "中图标", "小图标", "列表", "详细信息", "平铺", "内容", "列", "详细信息窗格", "预览窗格", "显示", "应用到所有文件夹"], "View menu preserves the established order and adds column configuration")
       for index in [0, 1, 2, 3, 4, 6, 7] {
         menu[index].action?()
         window.contentView?.layoutSubtreeIfNeeded()
@@ -67,10 +71,10 @@ enum NativeSmoke {
         try capture(window, at: report.deletingLastPathComponent().appendingPathComponent("native-preview-\(name).png"))
       }
       NSApp.appearance = NSAppearance(named: .aqua)
-      menu[8].action?()
+      menu.first { $0.title == NL("详细信息窗格") }?.action?()
       try expect(browser.paneMode == "details", "details and preview panes are mutually exclusive")
-      menu[8].action?()
-      let show = menu[10].children
+      menu.first { $0.title == NL("详细信息窗格") }?.action?()
+      let show = menu.first { $0.title == NL("显示") }!.children
       show[1].action?()
       try expect(browser.table.rowHeight == 28, "compact view uses 28-point rows")
       show[1].action?()
@@ -177,6 +181,7 @@ enum NativeSmoke {
       checks += try await NativeCreatedDateChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVolumeChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeSMBChecks.run(output: report.deletingLastPathComponent())
+      checks += try await NativeColumnChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVCSUIChecks.run(parent: window)
       checks += try await NativeVCSEditingChecks.run()
       checks += try await NativePaneChecks.run()
@@ -185,7 +190,7 @@ enum NativeSmoke {
       checks += try await NativeLanguageChecks.run()
       checks += try await NativeAddressTabChecks.run(source: browser)
       checks += try NativeShortcutChecks.run()
-      checks += try await NativePrivacyChecks.run()
+      checks += try await NativePrivacyChecks.run(output: report.deletingLastPathComponent())
       browser.navigate(to: root)
       try await until { !browser.loading && browser.entries.count == 10_003 }
       metrics["iconLoadsAfterAllInteractions"] = IconLoader.shared.loads
