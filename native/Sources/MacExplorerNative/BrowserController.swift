@@ -345,8 +345,8 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     specialView.frame = content.bounds; loadingView.frame = content.bounds
     tableScroll.frame = NSRect(x: 14, y: 0, width: max(0, content.bounds.width - 38), height: content.bounds.height)
     collectionScroll.frame = content.bounds
-    collection.frame.size.width = collectionScroll.contentSize.width; collectionLayout.invalidateLayout()
-    let available = max(0, tableScroll.contentSize.width)
+    collection.frame.size.width = collectionScroll.contentView.bounds.width; collectionLayout.invalidateLayout()
+    let available = max(0, tableScroll.contentView.bounds.width)
     let metadata: [CGFloat] = width <= 900 ? [150, 0, 80] : width <= 1100 ? [153, 110, 85] : [165, 132, 100]
     for (i, column) in table.tableColumns.enumerated() {
       let hidden = i == 2 && width <= 900 || (paneWidth > 0 && width <= 1100 && i >= 2) || (paneWidth > 0 && width <= 900 && i == 1)
