@@ -27,6 +27,20 @@ enum ExplorerDialogs {
     form.field.selectText(nil)
   }
 
+  static func smbConnection(in window: NSWindow, item: SavedSMBConnection?, address: String, save: @escaping (String, String) throws -> Void) {
+    let form = EDSMBConnectionForm(name: item?.name ?? "", address: item?.address ?? address)
+    let dialog = EDPresentation(parent: window, title: item == nil ? NL("添加连接") : NL("编辑连接"), size: NSSize(width: 480, height: 370), body: form)
+    dialog.surface.primary.title = NL("保存")
+    dialog.surface.primary.isEnabled = form.valid
+    form.onChange = { [weak dialog, weak form] in guard let form else { return }; dialog?.surface.primary.isEnabled = form.valid }
+    dialog.onSubmit = { [weak dialog, weak form] in
+      guard let form, form.valid else { return }
+      do { try save(form.name.field.stringValue, form.address.field.stringValue); dialog?.close() }
+      catch { form.error.stringValue = error.localizedDescription }
+    }
+    dialog.present(focus: form.name.field)
+  }
+
   static func confirm(in window: NSWindow, title: String, detail: String, confirmTitle: String, remember: ((Bool) -> Void)? = nil, action: @escaping () -> Void) {
     let body = EDScrollingBody()
     body.flow.padding = 0
@@ -553,12 +567,40 @@ final class EDButton: NSButton {
   }
 }
 
+private final class EDSMBConnectionForm: EDView {
+  let name: EDNameForm
+  let address: EDNameForm
+  let error = edLabel("", size: 12, wraps: true)
+  var onChange: (() -> Void)?
+  var valid: Bool { (try? SavedSMBConnection(name: name.field.stringValue, address: address.field.stringValue)) != nil }
+  init(name: String, address: String) {
+    self.name = EDNameForm(value: name); self.address = EDNameForm(value: address, title: NL("服务器地址"))
+    super.init(frame: .zero); error.textColor = EDColors.error
+    [self.name, self.address, error].forEach(addSubview)
+    let changed: (String) -> Void = { [weak self] _ in
+      guard let self else { return }; self.error.stringValue = ""
+      if !self.name.field.stringValue.isEmpty, !self.address.field.stringValue.isEmpty {
+        do { _ = try SavedSMBConnection(name: self.name.field.stringValue, address: self.address.field.stringValue) }
+        catch { self.error.stringValue = error.localizedDescription }
+      }
+      self.onChange?()
+    }
+    self.name.onChange = changed; self.address.onChange = changed
+  }
+  required init?(coder: NSCoder) { fatalError() }
+  override func layout() {
+    super.layout(); name.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 64)
+    address.frame = NSRect(x: 0, y: 76, width: bounds.width, height: 64); error.frame = NSRect(x: 0, y: 151, width: bounds.width, height: 38)
+  }
+}
+
 private final class EDNameForm: EDView, NSTextFieldDelegate {
   let field = ExplorerTextField()
   var onChange: ((String) -> Void)?
-  private let label = edLabel(NL("名称"))
+  private let label: NSTextField
   private var editing = false
-  init(value: String) {
+  init(value: String, title: String = NL("名称")) {
+    label = edLabel(title)
     super.init(frame: .zero)
     field.stringValue = value
     field.font = .systemFont(ofSize: 13)
@@ -568,7 +610,7 @@ private final class EDNameForm: EDView, NSTextFieldDelegate {
     field.drawsBackground = false
     field.focusRingType = .none
     field.delegate = self
-    field.setAccessibilityLabel(NL("名称"))
+    field.setAccessibilityLabel(title)
     addSubview(label)
     addSubview(field)
   }

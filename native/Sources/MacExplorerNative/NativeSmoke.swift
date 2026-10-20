@@ -18,6 +18,10 @@ enum NativeSmoke {
         let restored = try await NativeCreatedDateChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
         try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
       }
+      if let index = CommandLine.arguments.firstIndex(of: "--saved-smb-settings"), CommandLine.arguments.indices.contains(index + 1) {
+        let restored = try await NativeSMBChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
+        try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
+      }
       try await until { !browser.loading && browser.snapshot != nil && browser.entries.count == 10_003 }
       window.contentView?.layoutSubtreeIfNeeded()
       checks += try await NativeInputNavigationChecks.runBrowser(browser: browser, window: window)
@@ -172,6 +176,7 @@ enum NativeSmoke {
       checks += try await NativeLifecycleChecks.run(source: browser)
       checks += try await NativeCreatedDateChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVolumeChecks.run(output: report.deletingLastPathComponent())
+      checks += try await NativeSMBChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVCSUIChecks.run(parent: window)
       checks += try await NativeVCSEditingChecks.run()
       checks += try await NativePaneChecks.run()

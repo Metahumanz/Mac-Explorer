@@ -8,7 +8,15 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   // Retained for source compatibility; connections are handled by the Native service.
   var onConnect: ((String) -> Void)?
   var onVolumesChanged: (() -> Void)?
-  private var connectionTask: Task<Void, Never>?
+  private let connectionOwner = UUID()
+  private var connectionError: String?
+  private let connectionSession: SMBConnectionSession
+  private let savedStore: SavedSMBConnections?
+  private var observers: [NSObjectProtocol] = []
+  private let savedTitle = label(NL("常用连接"), size: 14)
+  private let addConnection = EDButton(title: NL("添加连接"), style: .secondary)
+  private let connectionStatus = label("", size: 12, color: ExplorerPalette.secondary)
+  private var savedRows: [SavedConnectionRow] = []
   private var ejecting = Set<String>()
   private var mode = ""
   private var query = ""
@@ -37,12 +45,13 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   private var mountedRows: [NetworkDeviceRow] = []
   private let dropArea = AirDropTarget()
 
-  init(frame: NSRect = .zero, volumeLoader: @escaping () async throws -> [NativeVolume] = { try await Task.detached { try NativeVolumes.list() }.value }, discoveryEnabled: Bool = true) {
+  init(frame: NSRect = .zero, volumeLoader: @escaping () async throws -> [NativeVolume] = { try await Task.detached { try NativeVolumes.list() }.value }, discoveryEnabled: Bool = true, defaults: UserDefaults? = nil, connectionSession: SMBConnectionSession? = nil) {
     self.volumeLoader = volumeLoader; self.discoveryEnabled = discoveryEnabled
+    self.connectionSession = connectionSession ?? .shared; self.savedStore = defaults.map { SavedSMBConnections(defaults: $0) }
     super.init(frame: frame)
     scroll.documentView = document; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = false; scroll.automaticallyAdjustsContentInsets = false
     addSubview(scroll)
-    [heading, dropArea, choose, server, connect, refresh, networkStatus, volumeStatus, serverTitle, mountedTitle, discoveredTitle, emptyIcon].forEach(document.addSubview)
+    [heading, dropArea, choose, server, connect, refresh, networkStatus, volumeStatus, savedTitle, addConnection, connectionStatus, serverTitle, mountedTitle, discoveredTitle, emptyIcon].forEach(document.addSubview)
     heading.font = .systemFont(ofSize: 20, weight: .medium)
     server.font = .systemFont(ofSize: 13); server.placeholderString = NL("smb://服务器/共享"); server.bezelStyle = .roundedBezel
     server.delegate = self; refresh.iconName = "refresh"
@@ -52,28 +61,37 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
     refresh.onPress = { [weak self] in guard let self else { return }; self.discover(); self.loadVolumes(token: self.revision) }
     dropArea.onFiles = { [weak self] in self?.share($0) }
     discovery.delegate = self
+    addConnection.iconName = "plus"; addConnection.onPress = { [weak self] in self?.editConnection(nil) }
+    observers.append(NotificationCenter.default.addObserver(forName: SavedSMBConnections.changed, object: nil, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.updateSavedConnections() } })
+    observers.append(NotificationCenter.default.addObserver(forName: SMBConnectionSession.changed, object: self.connectionSession, queue: .main) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self else { return }; self.syncConnection()
+        if self.mode == "network", !self.isHidden, self.window != nil, !self.connectionSession.isBusy { self.loadVolumes(token: self.revision) }
+      }
+    })
   }
   required init?(coder: NSCoder) { fatalError() }
   func show(_ name: String) {
-    mode = name; query = ""; revision += 1; let token = revision
+    mode = name; query = ""; connectionError = nil; revision += 1; let token = revision
     volumes = []; volumeError = nil; volumeStatus.stringValue = ""; volumeStatus.isHidden = true
-    connectionTask?.cancel(); connectionTask = nil; setConnecting(false)
+    connectionSession.cancel(owner: connectionOwner); syncConnection()
     stopDiscovery(); cards.forEach { $0.removeFromSuperview() }; cards.removeAll(); serviceRows.forEach { $0.removeFromSuperview() }; serviceRows.removeAll(); mountedRows.forEach { $0.removeFromSuperview() }; mountedRows.removeAll()
     heading.stringValue = name == "computer" ? NL("设备和驱动器") : name == "airdrop" ? NL("隔空投送") : NL("网络")
     dropArea.isHidden = name != "airdrop"; choose.isHidden = name != "airdrop"
-    for control in [server, connect, refresh, serverTitle, mountedTitle, discoveredTitle] { control.isHidden = name != "network" }
+    for control in [server, connect, refresh, serverTitle, mountedTitle, discoveredTitle, savedTitle, addConnection, connectionStatus] { control.isHidden = name != "network" }
     networkStatus.isHidden = name == "airdrop"; networkStatus.stringValue = ""
+    updateSavedConnections()
     if name == "network" { discover() }
     if name == "computer" || name == "network" { loadVolumes(token: token) }
 
     needsLayout = true
   }
   private func loadVolumes(token: Int) {
-    volumeRequest += 1; let request = volumeRequest, loader = volumeLoader
+    volumeRequest += 1; let request = volumeRequest, loader = volumeLoader, mountRevision = connectionSession.mountRevision
     Task { @MainActor [weak self] in
       do {
         let volumes = try await loader()
-        guard let self, self.revision == token, self.volumeRequest == request else { return }; self.volumeError = nil; self.volumes = volumes; self.updateVolumes(); self.needsLayout = true
+        guard let self, self.revision == token, self.volumeRequest == request else { return }; self.volumeError = nil; self.volumes = volumes; if self.connectionSession.mountRevision == mountRevision { self.connectionSession.reconcile(volumes) }; self.updateVolumes(); self.needsLayout = true
       } catch {
         guard let self, self.revision == token, self.volumeRequest == request else { return }; self.volumes = []; self.volumeError = NL("无法读取已挂载的磁盘。"); self.updateVolumes(); self.needsLayout = true
       }
@@ -101,16 +119,17 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   }
   override var isHidden: Bool {
     didSet {
-      if isHidden, !oldValue { revision += 1; stopDiscovery(); connectionTask?.cancel(); connectionTask = nil; setConnecting(false) }
+      if isHidden, !oldValue { revision += 1; stopDiscovery(); connectionSession.cancel(owner: connectionOwner) }
     }
   }
   override func viewWillMove(toWindow newWindow: NSWindow?) {
-    if newWindow == nil { revision += 1; stopDiscovery(); connectionTask?.cancel(); connectionTask = nil }
+    if newWindow == nil { revision += 1; stopDiscovery(); connectionSession.cancel(owner: connectionOwner) }
     super.viewWillMove(toWindow: newWindow)
   }
   private func updateVolumes() {
     cards.forEach { $0.removeFromSuperview() }; cards.removeAll()
     mountedRows.forEach { $0.removeFromSuperview() }; mountedRows.removeAll()
+    syncConnection()
     volumeStatus.stringValue = volumeError ?? ""; volumeStatus.isHidden = mode != "network" || volumeError == nil
     if mode == "computer" { networkStatus.stringValue = volumeError ?? "" }
     let visible = volumes.filter { (mode == "computer" || $0.isNetwork) && matches($0.name, $0.path) }
@@ -131,6 +150,7 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   func filter(_ value: String) {
     query = value
     updateVolumes()
+    updateSavedConnections()
     if mode == "network" { updateServices() }
     needsLayout = true
   }
@@ -153,7 +173,13 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
       server.frame = NSRect(x: 32, y: 108, width: max(100, min(width - 170, 582)), height: 34)
       connect.frame = NSRect(x: server.frame.maxX + 10, y: 108, width: 80, height: 34)
       serverTitle.frame = NSRect(x: 32, y: 82, width: width - 64, height: 22)
-      var y: CGFloat = 172
+      connectionStatus.frame = NSRect(x: 32, y: 148, width: width - 64, height: 20)
+      let addWidth = max(104, ceil((addConnection.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width) + 50)
+      savedTitle.frame = NSRect(x: 32, y: 186, width: max(0, width - addWidth - 80), height: 24)
+      addConnection.frame = NSRect(x: width - 32 - addWidth, y: 180, width: addWidth, height: 34)
+      var y: CGFloat = 224
+      for row in savedRows { row.frame = NSRect(x: 32, y: y, width: width - 64, height: 80); y += 88 }
+      y += 16
       if !mountedRows.isEmpty || volumeError != nil {
         mountedTitle.frame = NSRect(x: 32, y: y, width: width - 64, height: 24); y += 36
         for row in mountedRows { row.frame = NSRect(x: 32, y: y, width: width - 64, height: 64); y += 72 }
@@ -184,27 +210,55 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   private func setConnecting(_ busy: Bool) {
     connect.title = busy ? NL("取消") : NL("连接"); connect.isEnabled = busy || canConnect; server.isEnabled = !busy; refresh.isEnabled = !busy
     for row in serviceRows { row.button.isEnabled = !busy && row.available }
+    addConnection.isEnabled = savedStore != nil && !busy
   }
   private var canConnect: Bool {
     let address = server.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     return !address.isEmpty && address != "smb://"
   }
-  func controlTextDidChange(_ notification: Notification) { connect.isEnabled = connectionTask != nil || canConnect }
+  func controlTextDidChange(_ notification: Notification) { connectionError = nil; syncConnection() }
   @objc private func connectServer() {
-    if let task = connectionTask { task.cancel(); connect.isEnabled = false; networkStatus.stringValue = NL("正在取消…"); return }
-    let input = server.stringValue
-    do { _ = try NativeNetwork.validate(input) } catch { networkStatus.stringValue = NL(error.localizedDescription); return }
-    let token = revision; setConnecting(true); networkStatus.stringValue = NL("正在连接…")
-    connectionTask = Task { @MainActor [weak self] in
-      do {
-        let directory = try await NativeNetwork.shared.connection(input)
-        guard let self, self.revision == token else { return }; self.connectionTask = nil; self.setConnecting(false)
-        if let directory { self.networkStatus.stringValue = ""; self.onVolumesChanged?(); self.onNavigate?(directory) }
-        else { self.networkStatus.stringValue = NL("已取消") }
-      } catch {
-        guard let self, self.revision == token else { return }; self.connectionTask = nil; self.setConnecting(false); self.networkStatus.stringValue = NL(error.localizedDescription)
+    if connectionSession.isBusy { connectionSession.cancel(); syncConnection(); return }
+    beginConnection(server.stringValue)
+  }
+  func stopConnection() { connectionSession.cancel(owner: connectionOwner) }
+  func beginConnection(_ input: String) {
+    connectionError = nil
+    let token = revision
+    do {
+      try connectionSession.begin(input, owner: connectionOwner) { [weak self] directory in
+        guard let self, self.revision == token, self.mode == "network", !self.isHidden, self.window != nil else { return }
+        self.onVolumesChanged?(); self.onNavigate?(directory)
       }
+    } catch { connectionError = error.localizedDescription }
+    syncConnection()
+  }
+  private func syncConnection() {
+    setConnecting(connectionSession.isBusy)
+    connect.isEnabled = connectionSession.phase != .cancelling && (connectionSession.isBusy || canConnect)
+    if connectionSession.isBusy { connectionError = nil }
+    connectionStatus.stringValue = connectionError ?? connectionSession.message
+    addConnection.isEnabled = savedStore != nil && !connectionSession.isBusy
+    updateSavedConnections()
+  }
+  private func editConnection(_ item: SavedSMBConnection?) {
+    guard let window, let savedStore, !connectionSession.isBusy else { return }
+    ExplorerDialogs.smbConnection(in: window, item: item, address: server.stringValue) { name, address in
+      _ = try savedStore.save(id: item?.id, name: name, address: address)
     }
+  }
+  private func updateSavedConnections() {
+    savedRows.forEach { $0.removeFromSuperview() }; savedRows.removeAll()
+    guard mode == "network" else { return }
+    for item in savedStore?.list() ?? [] where matches(item.name, item.address) {
+      let row = SavedConnectionRow(item: item, status: connectionSession.status(for: item, volumes: volumes, readFailed: volumeError != nil))
+      row.connect.isEnabled = !connectionSession.isBusy; row.more.isEnabled = !connectionSession.isBusy
+      row.onConnect = { [weak self] in self?.server.stringValue = item.address; self?.beginConnection(item.address) }
+      row.onEdit = { [weak self] in self?.editConnection(item) }
+      row.onRemove = { [weak self] in self?.savedStore?.remove(item.id) }
+      document.addSubview(row); savedRows.append(row)
+    }
+    needsLayout = true
   }
   private func discover() {
     stopDiscovery(); guard discoveryEnabled else { updateServices(); return }; discovery = NetServiceBrowser(); discovery.delegate = self
@@ -212,7 +266,7 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
     discovery.searchForServices(ofType: "_smb._tcp.", inDomain: "local.")
     let token = revision, browser = discovery
     DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak browser] in
-      guard let self, self.revision == token, self.discovery === browser, self.connectionTask == nil else { return }
+      guard let self, self.revision == token, self.discovery === browser, !self.connectionSession.isBusy else { return }
       self.updateServices()
     }
   }
@@ -223,7 +277,7 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
     guard browser === discovery else { return }; service.delegate = nil; service.stop(); services.removeAll { $0 == service }; if !moreComing { updateServices() }
   }
-  func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) { guard browser === discovery, connectionTask == nil else { return }; networkStatus.stringValue = NL("无法发现共享电脑") }
+  func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) { guard browser === discovery, !connectionSession.isBusy else { return }; networkStatus.stringValue = NL("无法发现共享电脑") }
   func netServiceDidResolveAddress(_ sender: NetService) { guard services.contains(sender) else { return }; updateServices() }
 
   private func updateServices() {
@@ -237,13 +291,13 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
         self.server.stringValue = address; self.connectServer()
       }
       row.available = service.hostName != nil && service.port > 0
-      row.button.isEnabled = connectionTask == nil && row.available
+      row.button.isEnabled = !connectionSession.isBusy && row.available
       row.button.setAccessibilityLabel(NL("连接“{0}”", service.name))
       document.addSubview(row); serviceRows.append(row)
     }
-    if connectionTask == nil { networkStatus.stringValue = serviceRows.isEmpty ? (query.isEmpty ? NL("未发现共享设备") : NL("没有找到匹配的项目")) : "" }; needsLayout = true
+    if !connectionSession.isBusy { networkStatus.stringValue = serviceRows.isEmpty ? (query.isEmpty ? NL("未发现共享设备") : NL("没有找到匹配的项目")) : "" }; needsLayout = true
   }
-  deinit { discovery.delegate = nil; discovery.stop(); services.forEach { $0.delegate = nil; $0.stop() }; connectionTask?.cancel() }
+  deinit { for observer in observers { NotificationCenter.default.removeObserver(observer) }; discovery.delegate = nil; discovery.stop(); services.forEach { $0.delegate = nil; $0.stop() } }
 }
 
 final class DriveCard: SurfaceView {
@@ -334,5 +388,33 @@ private final class NetworkDeviceRow: SurfaceView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect); ExplorerPalette.border.setStroke()
     let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: bounds.height - 0.5)); line.line(to: NSPoint(x: bounds.width, y: bounds.height - 0.5)); line.stroke()
+  }
+}
+
+final class SavedConnectionRow: SurfaceView {
+  let item: SavedSMBConnection
+  let connect = EDButton(title: NL("连接"), style: .secondary)
+  let more = ExplorerButton(icon: "more")
+  var onConnect: (() -> Void)?
+  var onEdit: (() -> Void)?
+  var onRemove: (() -> Void)?
+  private let name: NSTextField, address: NSTextField, state: NSTextField
+  init(item: SavedSMBConnection, status: String) {
+    self.item = item; name = label(item.name, size: 13); address = label(item.address, size: 11, color: ExplorerPalette.secondary); state = label(status, size: 11, color: ExplorerPalette.secondary)
+    super.init(frame: .zero); name.font = .systemFont(ofSize: 13, weight: .semibold)
+    connect.title = status == NL("已挂载") ? NL("打开") : [NL("未挂载"), NL("连接失败"), NL("读取失败")].contains(status) ? NL("重新连接") : NL("连接")
+    [name, address, state, connect, more].forEach(addSubview); toolTip = item.name + "\n" + item.address
+    connect.onPress = { [weak self] in self?.onConnect?() }
+    more.setAccessibilityLabel(NL("管理“{0}”", item.name)); connect.setAccessibilityLabel(connect.title + " · " + item.name)
+    more.onPress = { [weak self] in
+      guard let self else { return }
+      ExplorerMenu.present([ExplorerMenuItem(title: NL("编辑连接"), action: { [weak self] in self?.onEdit?() }), ExplorerMenuItem(title: NL("移除连接"), action: { [weak self] in self?.onRemove?() })], below: self.more)
+    }
+  }
+  required init?(coder: NSCoder) { fatalError() }
+  override func layout() {
+    super.layout(); let width = max(0, bounds.width - 176)
+    name.frame = NSRect(x: 12, y: 7, width: width, height: 20); address.frame = NSRect(x: 12, y: 30, width: width, height: 18); state.frame = NSRect(x: 12, y: 52, width: width, height: 18)
+    connect.frame = NSRect(x: bounds.width - 140, y: 24, width: 96, height: 30); more.frame = NSRect(x: bounds.width - 36, y: 24, width: 32, height: 30)
   }
 }

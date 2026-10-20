@@ -119,7 +119,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
   func createWindow(tab: BrowserTab, source: BrowserController, at point: NSPoint) -> NSWindow {
     if sessionDefaults == nil { sessionDefaults = source.defaults }
     lastHomeDirectory = source.home
-    let controller = BrowserController(initial: tab.directory, defaults: source.defaults)
+    let controller = BrowserController(initial: tab.directory, defaults: source.defaults, networkSession: source.networkSession)
     controller.home = source.home; controller.testTrashDirectory = source.testTrashDirectory; controller.filePasteboard = source.filePasteboard
     controller.adopt(tab)
     let size = source.view.window?.frame.size ?? NSSize(width: 1260, height: 820)
@@ -270,7 +270,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
         guard let old = owner.contentViewController as? BrowserController else { continue }
         let settingsOpen = ExplorerDialogs.isPresenting(in: owner)
         ExplorerDialogs.close(in: owner); old.stopObserving()
-        let next = BrowserController(initial: old.directory, defaults: old.defaults); next.copySession(from: old)
+        let next = BrowserController(initial: old.directory, defaults: old.defaults, networkSession: old.networkSession); next.copySession(from: old)
         owner.contentViewController = next; self.register(owner, browser: next)
         if current === owner { self.activate(owner) }
         if settingsOpen { next.executeAction("settings") }

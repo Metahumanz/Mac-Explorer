@@ -95,7 +95,10 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   let table = FileTableView(), collection = FileCollectionView()
   let tableScroll = NSScrollView(), collectionScroll = NSScrollView()
   let content = SurfaceView()
-  let specialView = ExplorerSpecialView()
+  let specialView: ExplorerSpecialView
+  let networkSession: SMBConnectionSession
+  private let connectionOwner = UUID()
+  private var connectionProgress: SMBConnectionProgress?
   let addressBar = ExplorerAddressBar(), searchBox = ExplorerSearchBox()
   var address: NSTextField { addressBar.field }
   var search: NSTextField { searchBox.field }
@@ -125,7 +128,9 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private let paneScroll = NSScrollView(), paneBody = SurfaceView()
   private var paneRequest = UUID()
 
-  init(initial: URL, defaults: UserDefaults) {
+  init(initial: URL, defaults: UserDefaults, networkSession: SMBConnectionSession? = nil) {
+    self.networkSession = networkSession ?? .shared
+    specialView = ExplorerSpecialView(defaults: defaults, connectionSession: self.networkSession)
     self.defaults = defaults; places = QuickAccessState(defaults: defaults); tabs = [BrowserTab(history: [initial])]
     home = ProcessInfo.processInfo.environment["EXPLORER_NATIVE_HOME"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
     super.init(nibName: nil, bundle: nil)
@@ -648,7 +653,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     }
   }
   func stopObserving() {
-    guard !stopped else { return }; stopped = true; generation += 1; queryGeneration += 1
+    guard !stopped else { return }; networkSession.cancel(owner: connectionOwner); connectionProgress?.close(); specialView.stopConnection(); stopped = true; generation += 1; queryGeneration += 1
     directoryWatcher.stop(); automaticRead?.cancel(); refreshWork?.cancel(); refreshWork = nil
     loadTask?.cancel(); queryTask?.cancel(); searchTask?.cancel()
     inputNavigation?.close(); inputNavigation = nil; preferencesWork?.cancel(); vcsTimer?.invalidate(); vcsTimer = nil
@@ -1251,11 +1256,20 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     else { askName(title: NL("连接服务器"), value: "smb://") { [weak self] value in self?.connectServer(value) } }
   }
   private func connectServer(_ address: String) {
-    guard !busy else { return }
-    Task { @MainActor [weak self] in
-      do { if let destination = try await NativeNetwork.shared.connection(address) { self?.navigate(to: destination) } }
-      catch { self?.operationError = error.localizedDescription; self?.render() }
-    }
+    guard !busy, let window = view.window else { return }
+    let token = generation
+    do {
+      try networkSession.begin(address, owner: connectionOwner, finished: { [weak self] phase in
+        guard let self, !self.stopped, self.generation == token else { return }
+        if case .failed(let message) = phase { self.operationError = message; self.render() }
+      }) { [weak self] destination in
+        guard let self, !self.stopped, !self.busy, self.renamingEntry == nil, self.generation == token,
+          self.view.window.map({ !ExplorerDialogs.isPresenting(in: $0) && $0.attachedSheet == nil }) == true else { return }
+        self.rebuildSidebar(); self.navigate(to: destination)
+      }
+      connectionProgress?.close(); connectionProgress = SMBConnectionProgress(parent: window, session: networkSession, owner: connectionOwner)
+      // Failure/cancel leaves the current tab, selection and clipboard untouched.
+    } catch { operationError = error.localizedDescription; render() }
   }
   private func ejectVolume(_ url: URL) {
     guard !busy else { return }

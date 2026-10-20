@@ -878,5 +878,22 @@
   "类型未知": "Unknown type",
   "容量不可用": "Capacity unavailable",
   "容量未知": "Capacity unknown",
-  "未知": "Unknown"
+  "未知": "Unknown",
+  "保存": "Save",
+  "已挂载": "Mounted",
+  "已连接": "Connected",
+  "常用连接": "Saved connections",
+  "待连接": "Ready to connect",
+  "最多保存 100 个常用连接。": "You can save up to 100 connections.",
+  "未挂载": "Not mounted",
+  "添加连接": "Add connection",
+  "移除连接": "Remove connection",
+  "管理“{0}”": "Manage “{0}”",
+  "编辑连接": "Edit connection",
+  "该连接已在常用连接中。": "This connection is already saved.",
+  "请输入有效的连接名称（最多 120 个字符）。": "Enter a valid connection name (up to 120 characters).",
+  "读取失败": "Read failed",
+  "连接失败": "Connection failed",
+  "连接已被移除，请刷新后重试。": "The connection was removed. Refresh and try again.",
+  "重新连接": "Reconnect"
 }

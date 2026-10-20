@@ -62,6 +62,34 @@ struct NetworkChecks {
     let snapshot = try NativeVolumes.list()
     try check(snapshot.contains(where: { $0.path == "/" && !$0.canEject }), "Read-only real root volume metadata")
     try check(snapshot.allSatisfy { ($0.total ?? 0) >= 0 && ($0.free ?? 0) >= 0 }, "Nonnegative real capacity metadata")
+    let suite = "local.macexplorer.smb-store-checks." + UUID().uuidString, preferences = UserDefaults(suiteName: suite)!
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let store = SavedSMBConnections(defaults: preferences)
+    try check(store.list().isEmpty && preferences.object(forKey: SavedSMBConnections.key) == nil, "Empty favorites do not write preferences at startup")
+    let saved = try store.save(name: "  团队 NAS  ", address: " SMB://NAS.LOCAL:445/团队 文件/ ")
+    try check(saved.name == "团队 NAS" && saved.address == "smb://nas.local/%E5%9B%A2%E9%98%9F%20%E6%96%87%E4%BB%B6", "Saved addresses normalize host, default port, trailing slash and Unicode")
+    try check(SavedSMBConnections(defaults: UserDefaults(suiteName: suite)!).list() == [saved], "A fresh store restores saved connections")
+    let prior = preferences.array(forKey: SavedSMBConnections.key) as? [[String: String]]
+    for address in ["smb://user:secret@nas/share", "smb://user@nas/share", "https://nas/share", "smb://nas/share?password=x", "smb://nas/%00share"] {
+      try rejected("unsafe favorite") { _ = try store.save(name: "Unsafe", address: address) }
+      try check(preferences.array(forKey: SavedSMBConnections.key) as? [[String: String]] == prior, "Rejected address leaves stored data untouched")
+    }
+    for name in ["", "\n", "a\nb", String(repeating: "a", count: 121)] { try rejected("invalid favorite name") { _ = try store.save(name: name, address: "smb://nas/share") } }
+    try rejected("duplicate canonical favorite") { _ = try store.save(name: "Duplicate", address: saved.address + "/") }
+    let other = try SavedSMBConnections(defaults: preferences).save(name: "Other", address: "smb://nas/Case")
+    let renamed = try store.save(id: saved.id, name: "Renamed", address: saved.address)
+    try check(store.list() == [renamed, other], "Editing fresh preferences preserves another window's newer record")
+    try rejected("editing a removed connection") { _ = try store.save(id: UUID(), name: "Missing", address: "smb://nas/missing") }
+    try check(try SavedSMBConnection.canonicalAddress("smb://NAS:1445/Case") == "smb://nas:1445/Case", "Nondefault port and path case remain distinct")
+    try check(Set((preferences.array(forKey: SavedSMBConnections.key) as! [[String: String]])[0].keys) == ["id", "name", "address"], "Only ID, display name and address are persisted")
+    store.remove(saved.id)
+    try check(store.list() == [other], "Remove affects only the selected connection")
+    preferences.set(["malformed", ["id": other.id.uuidString, "name": other.name, "address": other.address], ["id": UUID().uuidString, "name": "Duplicate", "address": other.address], ["id": UUID().uuidString, "name": "Unsafe", "address": "smb://user:secret@nas/share"]] as [Any], forKey: SavedSMBConnections.key)
+    try check(store.list() == [other], "Malformed, duplicate and credential-bearing persisted records are ignored without discarding valid records")
+    preferences.removeObject(forKey: SavedSMBConnections.key)
+    for index in 0..<100 { _ = try store.save(name: "Connection \(index)", address: "smb://fixture/share\(index)") }
+    try rejected("favorite limit") { _ = try store.save(name: "Extra", address: "smb://fixture/extra") }
+    try check(store.list().count == 100, "Favorite storage remains bounded")
     let address = try NativeNetwork.validate("smb://fixture/share"), token = UnsafeMutableRawPointer(bitPattern: 1)!
     let succeeded = NativeMountAPI(start: { _, queue, report in queue.asyncAfter(deadline: .now() + 0.01) { report(0, [fixture.path]) }; return (0, token) }, cancel: { _ in fatalError("Unexpected cancellation") })
     let mounted = try await NativeMountRequest(api: succeeded).run(address, timeout: 1)
