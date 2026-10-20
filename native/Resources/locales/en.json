@@ -872,5 +872,11 @@
   "继续移动将移除来源，部分属性可能丢失。": "Continuing will remove the source. Some properties may be lost.",
   "跳过": "Skip",
   "部分文件属性无法保留：{0}": "Some file properties could not be preserved: {0}",
-  "项目在传输期间发生变化，已停止操作。": "An item changed during transfer. Operation stopped."
+  "项目在传输期间发生变化，已停止操作。": "An item changed during transfer. Operation stopped.",
+  "无法读取已挂载的磁盘。": "Could not read mounted drives.",
+  "网络驱动器": "Network drive",
+  "类型未知": "Unknown type",
+  "容量不可用": "Capacity unavailable",
+  "容量未知": "Capacity unknown",
+  "未知": "Unknown"
 }

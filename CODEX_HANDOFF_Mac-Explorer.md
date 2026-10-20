@@ -22,7 +22,7 @@
 - Phase 0.5 已构建并打开独立 validation 应用（Bundle ID `local.macexplorer.native-validation`）：包校验、启动检查及 548 项核心检查通过；初次 UI smoke 两次失败；随后修正两处视口宽度计算，完整 UI smoke 352 项通过。体验应用已按用户要求关闭，不替换日常安装版。
 - Phase 0.5 已单独提交：`511f6af`，包含视口修正、对应 UI 检查及阶段文档，未推送。
 - 用户授权进入 Phase 1，随后要求待审核行为全部参考 Windows 文件资源管理器；当前实现按 [Windows 行为基准](docs/WINDOWS_FILE_OPERATION_BASELINE.md) 修订，实际结果见 [Phase 1 验证记录](docs/PHASE_1_VALIDATION.md)。
-- 默认多轮哈希、来源隐藏改名和阶段日志已删除；使用系统复制及进度/取消、错误选择和日期恢复读回。Phase 1 已完成本地提交收尾；Phase 2 已完成本地提交收尾；Phase 3 未开始，不修改系统默认项。
+- 默认多轮哈希、来源隐藏改名和阶段日志已删除；使用系统复制及进度/取消、错误选择和日期恢复读回。Phase 1 已完成本地提交收尾；Phase 2 已完成本地提交收尾；Phase 3 已完成本地提交收尾；Phase 4 建议计划已整理，尚未开始，不修改系统默认项。
 - 用户随后授权 SMB 实测、提交兼容修复及 Phase 1 复验。实际路径为 `/Volumes/passport` 与 `/Volumes/NSSD`；仅公布的新 UUID 小夹具。首次失败及旧现场见 [历史实测记录](docs/SMB_VALIDATION.md)，最新源码、真实矩阵、完整回归及保留现场以 [SMB 专项复验](docs/SMB_PHASE1_REACCEPTANCE.md) 为准。没有恢复多轮内容哈希或覆盖重命名，没有更改日常安装版。
 - `native/PARITY_AUDIT.md`、`native/SYNC_STATUS.md` 是上游迁移记录，其通过数量不算本 Fork 本轮验收结果。
 
@@ -37,7 +37,7 @@
 1. **P0：文件操作的数据安全。** 特别是剪切/粘贴跨磁盘、跨 SMB 共享时，不得因失败、掉线、目标已存在、空间不足或元数据恢复失败而静默丢失原文件。
 2. **P1：尽可能保留原文件的创建日期和修改日期。** 重点是跨 `Passport` ↔ `NSSD` 的剪切/移动，也应检查普通复制。无法保证时明确反馈，不得误称已经保留。
 3. **P2：详细信息视图增加「创建日期」列及排序。** 原始需求在 Phase 2 已实现并本地提交：详情列、表头/菜单、默认/文件夹排序及重启恢复均已完成隔离验收，见 [验证记录](docs/PHASE_2_VALIDATION.md)。
-4. **P2：核验网络磁盘识别与完善容量展示。** 历史 Electron 版将 SMB 盘标注为「本地磁盘」；原生版已区分「网络位置」，后续验证真实分类并处理未知读数，保留现有容量条和剩余空间视图。
+4. **P2：核验网络磁盘识别与完善容量展示。** 历史 Electron 版将 SMB 盘标注为「本地磁盘」；原生版已在 Phase 3 补齐「网络驱动器 / 类型未知」及容量未知/不可用状态，已知容量条保留；两个真实共享卷根只读核对通过，见 [验证记录](docs/PHASE_3_VALIDATION.md)。
 5. **P3：改善 SMB 日常体验。** 如连接收藏/快速重连、网络断开提示、容量查询失败提示。只有在 P0–P2 稳定后再讨论，**不要提前展开**。
 
 **不在本轮目标内：** 重写 UI 框架、整体换技术栈、Windows 盘符模拟、开发全功能传输队列或断点续传平台、云同步、增加不相关的文件管理功能、自动管理真实 NAS 数据。
@@ -88,7 +88,7 @@ df -h '/Volumes/passport' '/Volumes/NSSD'
 | 同上及 `TrashStore.swift` | 撤销与回收站还原依赖相同移动底层；修改时需要一起回归，避免反向移动再次丢失日期。 |
 | `FileEntry.swift`、`DirectoryReader.swift` | 已读取 `created` / `modified`，日期可以缺失；信息侧栏及属性窗口已有创建日期。 |
 | `EntryQuery.swift`、`BrowserController.swift`、`ExplorerDialogs.swift` | Phase 2 已补齐创建日期排序、列表列和默认排序设置，并以列标识替代四列索引假设。 |
-| `NativeNetwork.swift`、`ExplorerSpecialView.swift` | 已区分本地与网络卷，卡片显示“网络位置”；仍需处理属性缺失、容量未知及真实挂载验证。继续复用 NetFS 与 Bonjour。 |
+| `NativeNetwork.swift`、`ExplorerSpecialView.swift` | Phase 0 当时仅区分本地与网络，卡片显示“网络位置”；Phase 3 已补齐未知状态、网络驱动器标签、容量异常及只读挂载验证。NetFS 与 Bonjour 保留。 |
 | `native/scripts/build.py` | 原生构建仍复用 `electron/templates/` 与 `electron/native/FileIcon.swift`，不能清理掉这些资源。 |
 
 历史 Electron `v0.1.61` 的报告仍有效：`moveNoReplace` 使用 `/bin/mv -n`，普通复制使用带 `preserveTimestamps` 的 `fs.cp`，“此电脑”固定显示“本地磁盘”。这些用于解释历史 Electron 版的现象，不将它们当作当前已安装原生版的实测结论。
@@ -117,8 +117,8 @@ df -h '/Volumes/passport' '/Volumes/NSSD'
 | Phase 0.5 | 基于已迁移原生版的独立 validation 构建、隔离检查与本地体验 | 构建/包校验/启动/核心检查及修正后的完整 UI 自动检查通过；体验应用已关闭 |
 | Phase 1 | 元数据恢复验证、跨卷保护与逐项结果；回归撤销/还原 | SMB 排他提交及 AppleDouble 兼容修复、Git 本地提交完成；真实 SMB 三轮通过，最终检查与限制见专项复验 |
 | Phase 2 | 创建日期列、排序、配置兼容及窄窗口布局 | 实现、限定隔离验收及本地提交完成；见 [Phase 2 验证记录](docs/PHASE_2_VALIDATION.md) |
-| Phase 3 | 验证已有网络卷标签，完善未知容量和属性缺失状态 | 计划已细化，待用户启动；本轮不开发 |
-| Phase 4 | 常用连接、列配置及更多传输体验 | 尚未立项 |
+| Phase 3 | 验证已有网络卷标签，完善未知容量和属性缺失状态 | 实现、隔离验收及本地提交完成；结果见 [Phase 3 验证记录](docs/PHASE_3_VALIDATION.md) |
+| Phase 4 | 优先常用 SMB 连接/手动重连及离线恢复；列配置独立可选 | 建议计划见开发文档，尚未授权开发 |
 
 每阶段分别记录结果。本次 NAS 写入仅获授权执行已公布的专用小夹具；应用安装替换、推送和发布未获授权。
 
@@ -148,7 +148,7 @@ df -h '/Volumes/passport' '/Volumes/NSSD'
 ## 7. Codex 的工作与交付规范
 
 - 继续使用用户 Fork 已有的 `feat/metadata-safe-file-operations` 功能分支，不直接在 `main` 上开发；保留 `upstream` 远程。
-- **Phase 0/0.5 已完成，Phase 1 已于 2026-10-20 获授权并实现，专用小夹具 NAS 修复复验也已获授权。用户随后已授权 Phase 2；不得因此进入 Phase 3、操作现有 NAS 数据或替换日常安装版。**
+- **Phase 0/0.5 已完成，Phase 1 已于 2026-10-20 获授权并实现，专用小夹具 NAS 修复复验也已获授权。用户随后已授权 Phase 2、Phase 3；真实共享仅允许读取卷根属性，不读写现有 NAS 文件、不替换日常安装版。**
 - 审计报告至少包含：实际调用链、根因假设与证据、可行的系统 API/技术选型、可能受 Samba/NTFS 限制的功能、失败保护方案、修改文件清单、测试设计、仍需用户确认的决策。
 - 开发阶段按 Phase 和功能拆分小 commit；各项实现附对应测试及测试结果。不要把“构建通过”当成“跨 SMB 日期保留问题解决”。
 - 对需要真实 NAS 的写入测试，先说明**将创建的专用测试目录、文件数、最大数据量、清理方式、风险**，等用户明确允许后再执行。
@@ -156,7 +156,7 @@ df -h '/Volumes/passport' '/Volumes/NSSD'
 
 ## 8. 后续接手提示词
 
-请先阅读本交接文档、`docs/NATIVE_METADATA_PLAN.md`、`docs/WINDOWS_FILE_OPERATION_BASELINE.md`、`docs/PHASE_1_VALIDATION.md`、`docs/SMB_PHASE1_REACCEPTANCE.md` 及最新 `docs/PHASE_2_VALIDATION.md`。Phase 0.5 已提交为 `511f6af`，日常原生 1.1.0 未替换。Phase 1 按 Windows 工作流基准修订，随后已修复 SMB 排他提交、缓存属性和 AppleDouble 目录兼容，并完成三轮真实小夹具复验；具体通过、警告、未运行项及旧现场以最新报告为准。Phase 1 已完成本地提交，提交号以当前分支 `git log` 为准；未推送。用户随后已明确启动 Phase 2；创建日期列、排序和设置已实现并完成隔离验收（核心 665、排序 XCTest 11、UI 389 通过另 1 SVN 跳过），已完成本地提交；详细范围与证据见 `docs/PHASE_2_VALIDATION.md`。旧失败及探针的 35 个专用根继续保留，不能将 Git 工作区收尾视为删除这些现场的授权。不要恢复旧多轮哈希、隐藏来源和阶段日志设计，也不要拿旧检查数量替代当前源码证明。不覆盖复用旧失败或探针目录，不操作现有 NAS 数据；Phase 2 已完成，Phase 3 安排见开发计划，尚未启动；不自动进入 Phase 3、不安装替换、不推送或发布。真实 Windows 11 对照、断连/写满与服务端落盘没有验收。
+请先阅读本交接文档、`docs/NATIVE_METADATA_PLAN.md`、`docs/WINDOWS_FILE_OPERATION_BASELINE.md`、`docs/PHASE_1_VALIDATION.md`、`docs/SMB_PHASE1_REACCEPTANCE.md`、`docs/PHASE_2_VALIDATION.md` 及最新 `docs/PHASE_3_VALIDATION.md`。Phase 0.5 已提交为 `511f6af`，日常原生 1.1.0 未替换。Phase 1 按 Windows 工作流基准修订，随后已修复 SMB 排他提交、缓存属性和 AppleDouble 目录兼容，并完成三轮真实小夹具复验；具体通过、警告、未运行项及旧现场以最新报告为准。Phase 1 已完成本地提交，提交号以当前分支 `git log` 为准；未推送。用户随后已明确启动 Phase 2；创建日期列、排序和设置已实现并完成隔离验收（核心 665、排序 XCTest 11、UI 389 通过另 1 SVN 跳过），已完成本地提交；详细范围与证据见 `docs/PHASE_2_VALIDATION.md`。旧失败及探针的 35 个专用根继续保留，不能将 Git 工作区收尾视为删除这些现场的授权。不要恢复旧多轮哈希、隐藏来源和阶段日志设计，也不要拿旧检查数量替代当前源码证明。不覆盖复用旧失败或探针目录，不操作现有 NAS 数据；Phase 2 已完成，Phase 3 已完成网络/未知类型与容量状态实现，核心 688、UI 414 通过另 1 SVN 跳过；passport/NSSD 卷根只读核对通过，已完成本地提交，结果见 `docs/PHASE_3_VALIDATION.md`；Phase 4 建议按 4A 常用连接、4B 离线恢复分步推进，4C 列配置独立可选，详细安排见开发计划；不自动进入 Phase 4、不安装替换、不推送或发布。真实 Windows 11 对照、断连/写满与服务端落盘没有验收。
 
 ## 9. 已完成的 Fork 初始化
 

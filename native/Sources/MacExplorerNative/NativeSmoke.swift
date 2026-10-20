@@ -171,6 +171,7 @@ enum NativeSmoke {
       checks += try await NativeLatestChecks.run(parent: window)
       checks += try await NativeLifecycleChecks.run(source: browser)
       checks += try await NativeCreatedDateChecks.run(output: report.deletingLastPathComponent())
+      checks += try await NativeVolumeChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVCSUIChecks.run(parent: window)
       checks += try await NativeVCSEditingChecks.run()
       checks += try await NativePaneChecks.run()
