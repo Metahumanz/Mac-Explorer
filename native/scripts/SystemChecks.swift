@@ -69,6 +69,14 @@ struct SystemChecks {
     try rejected("symlink backup") { _ = try viewer.perform("enable") }
     try check(read(system).isEqual(to: original), "Symlink rejection preserves preferences")
     try fm.removeItem(at: backup)
+    let forkSystem = root.appendingPathComponent("fork-system.plist"), forkBackup = root.appendingPathComponent("fork-backup.plist")
+    try write(original, forkSystem)
+    let forkViewer = NativeFileViewer(backupURL: forkBackup, fixture: forkSystem, appID: "local.macexplorer.native-fork")
+    try check(forkViewer.perform("enable").canRestore, "Fork viewer uses its own restorable backup")
+    try check(read(forkSystem)["global"] as? String == "local.macexplorer.native-fork", "Fork viewer selects the Fork identity rather than the original application")
+    try check(read(system).isEqual(to: original), "Independent Fork viewer fixture leaves the original configuration unchanged")
+    _ = try forkViewer.perform("restore")
+    try check(read(forkSystem).isEqual(to: original) && !fm.fileExists(atPath: forkBackup.path), "Fork viewer restores its own previous state")
     try check(NativeUpdateValidation.compare("0.9.9", "1.0.0") == -1, "Major version update")
     try check(NativeUpdateValidation.compare("1.10.0", "1.2.9") == 1, "Numeric minor ordering")
     try rejected("invalid version") { _ = try NativeUpdateValidation.compare("1.0.0-beta", "1.0.0") }
@@ -122,6 +130,10 @@ struct SystemChecks {
       return app
     }
     let installed = try signedApp("installed", version: "1.0.0"), replacement = try signedApp("replacement", version: "1.2.3")
+    let forkApplication = try signedApp("fork-update-rejection", version: "1.0.0")
+    try write(["CFBundleIdentifier": "local.macexplorer.native-fork", "CFBundleExecutable": "MacExplorerNative", "CFBundleShortVersionString": "1.0.0", "CFBundlePackageType":"APPL"], forkApplication.appendingPathComponent("Contents/Info.plist"))
+    _ = try NativeCommand.run(executable: "/usr/bin/codesign", arguments: ["--force", "--sign", "-", forkApplication.path])
+    try rejected("Fork is not an upstream update installation target") { try NativeUpdateValidation.validateApp(forkApplication) }
     let updateZip = root.appendingPathComponent(archive)
     _ = try NativeCommand.run(executable: "/usr/bin/ditto", arguments: ["-c", "-k", "--norsrc", "--keepParent", replacement.path, updateZip.path])
     let updateBytes = try Data(contentsOf: updateZip)

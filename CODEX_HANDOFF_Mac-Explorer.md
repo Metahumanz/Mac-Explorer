@@ -28,6 +28,7 @@
 - 用户随后授权修复权限提示：共享 EACCES/EPERM 不再误导为未授予完全磁盘访问权限；保留原因、错误码、具体失败路径，删除全部失败保留选择和剪贴板。最新完整核心 728、UI 491 通过另 1 SVN 跳过；验收及计划收尾状态见 [权限修复记录](docs/PERMISSION_ERROR_VALIDATION.md)。4C 与本轮修复已提交 `96c79d5`。
 - 既定功能计划已完成至 4C；用户追加授权网络驱动器删除对齐 Windows：网络项目每次确认永久删除，取消为默认焦点，本地继续回收站；错误不静默降级。实现及隔离验收完成（核心 750、UI 511 通过另 1 SVN 跳过），详见 [网络删除记录](docs/NETWORK_DELETE_VALIDATION.md)。真实 NAS 永久删除没有在本轮测试。
 - 网络删除已提交 `ff7e30b`；用户随后要求将默认“此电脑 / 个人文件夹”的选择移入应用设置。设置、启动/窗口/标签页入口及本地启动脚本已调整；核心专项 121、完整 UI 526 通过另 1 SVN 跳过，本轮改动已完成本地提交收尾，用户随后授权推送当前分支并独立安装，验收见 [启动设置记录](docs/START_LOCATION_VALIDATION.md)。全部既定任务及未覆盖实机边界见 [完成度审计](docs/TASK_COMPLETION_AUDIT.md)。
+- 启动位置设置已提交 `bb6d3ba`。用户已授权提交后 push 当前功能分支，再独立安装为 `/Applications/Mac Explorer Fork.app`；保留原应用，使用独立应用标识、偏好和支持文件目录，详情见 [Fork 安装说明](docs/FORK_INSTALLATION.md)。
 - `native/PARITY_AUDIT.md`、`native/SYNC_STATUS.md` 是上游迁移记录，其通过数量不算本 Fork 本轮验收结果。
 
 ## 1. 项目背景与总体目标

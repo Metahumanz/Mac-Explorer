@@ -30,6 +30,10 @@ enum NativeSmoke {
         let restored = try await NativeStartLocationChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
         try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
       }
+      if NativeAppProfile.isFork {
+        try expect(Bundle.main.bundleIdentifier == "local.macexplorer.native-fork", "Fork bundle uses an independent preference identity")
+        try expect(NativeAppProfile.supportDirectory.lastPathComponent == "Mac Explorer Fork", "Fork support files are separated from the original application")
+      }
       try await until { !browser.loading && browser.snapshot != nil && browser.entries.count == 10_003 }
       window.contentView?.layoutSubtreeIfNeeded()
       checks += try await NativeInputNavigationChecks.runBrowser(browser: browser, window: window)

@@ -20,7 +20,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
   private let arguments = CommandLine.arguments
   private var focusMonitor: Any?
   private var systemIntegration: NativeSystemIntegration?
-  private lazy var versionControl = NativeVersionControl(backupDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mac Explorer Native/vcs-backups"))
+  private lazy var versionControl = NativeVersionControl(backupDirectory: NativeAppProfile.supportDirectory.appendingPathComponent("vcs-backups"))
   private var pendingExternalURLs: [URL] = []
   private var sessionDefaults: UserDefaults?
   private var lastHomeDirectory: URL?
@@ -85,7 +85,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
       (NSApp.keyWindow?.firstResponder as? NSView)?.needsDisplay = true
       return event
     }
-    if smoke == nil && comparison == nil { NativeUpdateCoordinator.current().startAutomaticChecks() }
+    if smoke == nil && comparison == nil && !NativeAppProfile.isFork { NativeUpdateCoordinator.current().startAutomaticChecks() }
     makeMenus()
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)

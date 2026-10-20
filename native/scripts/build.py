@@ -9,15 +9,18 @@ import subprocess
 import sys
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--validation", action="store_true", help="Build a separate bundle without replacing the running prototype")
+profile = parser.add_mutually_exclusive_group()
+profile.add_argument("--validation", action="store_true", help="Build a separate bundle without replacing the running prototype")
+profile.add_argument("--fork", action="store_true", help="Build Mac Explorer Fork with an independent application identity")
 args = parser.parse_args()
 root = pathlib.Path(__file__).resolve().parents[1]
 subprocess.run(["swift", "build", "--package-path", str(root), "-c", "release"], check=True)
 bin_dir = pathlib.Path(subprocess.check_output(
     ["swift", "build", "--package-path", str(root), "-c", "release", "--show-bin-path"], text=True
 ).strip())
-output_directory = root / "output" / "validation" if args.validation else root / "output"
-app = output_directory / "Mac Explorer.app"
+output_directory = root / "output" / "fork" if args.fork else root / "output" / "validation" if args.validation else root / "output"
+app_name = "Mac Explorer Fork" if args.fork else "Mac Explorer"
+app = output_directory / (app_name + ".app")
 contents = app / "Contents"
 binary_path = str(contents / "MacOS" / "MacExplorerNative")
 processes = subprocess.run(["/bin/ps", "-axo", "command="], capture_output=True, text=True, check=True).stdout.splitlines()
@@ -45,9 +48,9 @@ if not icon_binary.exists() or icon_binary.stat().st_mtime < icon_source.stat().
 subprocess.run(["codesign", "--force", "--sign", "-", str(icon_binary)], check=True)
 info = {
     "CFBundleExecutable": "MacExplorerNative",
-    "CFBundleIdentifier": "local.macexplorer.native-validation" if args.validation else "local.macexplorer.native-prototype",
-    "CFBundleName": "Mac Explorer",
-    "CFBundleDisplayName": "Mac Explorer",
+    "CFBundleIdentifier": "local.macexplorer.native-fork" if args.fork else "local.macexplorer.native-validation" if args.validation else "local.macexplorer.native-prototype",
+    "CFBundleName": app_name,
+    "CFBundleDisplayName": app_name,
     "CFBundlePackageType": "APPL",
     "CFBundleIconFile": "AppIcon.icns",
     "CFBundleShortVersionString": (root / "VERSION").read_text().strip(),
@@ -62,6 +65,9 @@ info = {
     "NSDocumentsFolderUsageDescription": "浏览文稿中的文件。",
     "NSDownloadsFolderUsageDescription": "浏览下载中的文件。",
 }
+if args.fork:
+    info["MacExplorerBuildProfile"] = "fork"
+    info["MacExplorerSourceRevision"] = subprocess.check_output(["git", "-C", str(root.parent), "rev-parse", "HEAD"], text=True).strip()
 with (contents / "Info.plist").open("wb") as output:
     plistlib.dump(info, output)
 subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)

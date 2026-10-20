@@ -125,8 +125,13 @@ enum NativeParityChecks {
     try button("关于").performClick(nil)
     try await Task.sleep(nanoseconds: 100_000_000)
     let text = views().compactMap { ($0 as? NSTextField)?.stringValue }.joined(separator: "\n")
-    try expect(text.contains("尚未检查更新") && text.contains("GPL-3.0-only") && !text.contains("当前版本："), "About restores update status and copyright without duplicate version")
-    try expect(text.contains("自动检查更新") && views().compactMap { $0 as? NSButton }.contains { $0.title == "每天" }, "About shows automatic update frequency with daily default")
+    if NativeAppProfile.isFork {
+      try expect(text.contains("Mac Explorer Fork") && text.contains("GPL-3.0-only") && !text.contains("当前版本："), "Fork About retains its own name and the original copyright")
+      try expect(!text.contains("自动检查更新") && !views().contains { $0 is NativeUpdateView }, "Fork About excludes upstream update controls")
+    } else {
+      try expect(text.contains("尚未检查更新") && text.contains("GPL-3.0-only") && !text.contains("当前版本："), "About restores update status and copyright without duplicate version")
+      try expect(text.contains("自动检查更新") && views().compactMap { $0 as? NSButton }.contains { $0.title == "每天" }, "About shows automatic update frequency with daily default")
+    }
     for title in ["项目主页", "GitHub 发布页", "问题反馈", "开源许可"] { _ = try button(title) }
     checks.append("All four About project links are present")
     let updates = NativeUpdateView()

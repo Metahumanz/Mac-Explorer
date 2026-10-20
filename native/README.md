@@ -28,6 +28,17 @@ open 'native/output/validation/Mac Explorer.app'
 
 普通构建 Bundle ID 为 `local.macexplorer.native-prototype`；测试构建为 `local.macexplorer.native-validation`。构建只写入忽略提交的 `native/output/` 与 `native/.build/`，不安装应用。产物是本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证。
 
+## 并行安装本 Fork
+
+保留现有应用，独立构建和安装为 `/Applications/Mac Explorer Fork.app`：
+
+```sh
+python3 -I native/scripts/build.py --fork
+python3 -I native/scripts/install-fork.py
+```
+
+使用独立 Bundle ID、偏好和支持文件目录，不启用上游自动更新；目标已存在时拒绝覆盖。原生正式安装器的覆盖升级路径不用于本 Fork。身份、校验及精确安装包测试见 [Fork 安装说明](../docs/FORK_INSTALLATION.md)。
+
 ## 功能实现
 
 以下是已接入源码的能力清单。实际检查结果以本轮终端输出及新生成的检查报告为准，不把旧截图或旧报告当作本轮验收。

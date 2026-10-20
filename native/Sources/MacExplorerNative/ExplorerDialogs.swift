@@ -1112,14 +1112,16 @@ private final class EDSettingsBody: EDView {
     content.flow.add(versionLabel) { _ in 28 }
     let separator = SurfaceView(); separator.color = ExplorerPalette.border
     content.flow.add(separator) { _ in 1 }
-    let updateDefaults = browser?.defaults ?? .standard
-    let frequency = EDChoiceRow(title: NL("自动检查更新"), options: [
-      (NL("每次打开"), "launch"), (NL("每天"), "daily"), (NL("每周"), "weekly"), (NL("从不"), "never")
-    ], value: NativeUpdateFrequency.saved(in: updateDefaults).rawValue) { value in
-      updateDefaults.set(value, forKey: NativeUpdateFrequency.preferenceKey)
+    if !NativeAppProfile.isFork {
+      let updateDefaults = browser?.defaults ?? .standard
+      let frequency = EDChoiceRow(title: NL("自动检查更新"), options: [
+        (NL("每次打开"), "launch"), (NL("每天"), "daily"), (NL("每周"), "weekly"), (NL("从不"), "never")
+      ], value: NativeUpdateFrequency.saved(in: updateDefaults).rawValue) { value in
+        updateDefaults.set(value, forKey: NativeUpdateFrequency.preferenceKey)
+      }
+      content.flow.add(frequency) { _ in 34 }
+      let updates = NativeUpdateView(); content.flow.add(updates) { _ in updates.preferredHeight }
     }
-    content.flow.add(frequency) { _ in 34 }
-    let updates = NativeUpdateView(); content.flow.add(updates) { _ in updates.preferredHeight }
     let linksRow = EDView()
     let links = [("项目主页", ""), ("GitHub 发布页", "/releases"), ("问题反馈", "/issues"), ("开源许可", "/blob/main/LICENSE")].map { title, path in
       let button = EDButton(title: NL(title), style: .secondary)

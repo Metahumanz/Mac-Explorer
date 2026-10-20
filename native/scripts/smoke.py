@@ -11,18 +11,23 @@ import tempfile
 parser = argparse.ArgumentParser()
 parser.add_argument("--skip-build", action="store_true")
 parser.add_argument("--validation", action="store_true")
+parser.add_argument("--app", type=pathlib.Path, help="Check this exact built or installed native bundle")
+parser.add_argument("--output", type=pathlib.Path, help="Write reports here instead of beside the bundle")
 args = parser.parse_args()
 root = pathlib.Path(__file__).resolve().parents[1]
+if args.app and (not args.skip_build or args.validation):
+    parser.error("--app requires --skip-build and cannot be combined with --validation")
 if not args.skip_build:
     subprocess.run([sys.executable, "-I", str(root / "scripts" / "build.py")] + (["--validation"] if args.validation else []), check=True)
 app_directory = root / "output" / "validation" if args.validation else root / "output"
-output = app_directory / "smoke"
+app_bundle = args.app.resolve(strict=True) if args.app else app_directory / "Mac Explorer.app"
+output = args.output or app_directory / "smoke"
 output.mkdir(parents=True, exist_ok=True)
 report = output / "report.json"
 for previous_report in [report, output / "startup-report.json"]:
     if previous_report.exists():
         previous_report.unlink()
-app = app_directory / "Mac Explorer.app" / "Contents" / "MacOS" / "MacExplorerNative"
+app = app_bundle / "Contents" / "MacOS" / "MacExplorerNative"
 with tempfile.TemporaryDirectory(prefix="mac-explorer-native-") as temporary:
     fixture = pathlib.Path(temporary)
     for i in range(10_000):

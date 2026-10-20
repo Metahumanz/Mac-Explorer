@@ -39,6 +39,13 @@ enum StartupCheck {
       guard NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else {
         throw StartupFailure(description: "Close the native prototype before the startup check; existing instances are not terminated")
       }
+      guard let preferences = UserDefaults(suiteName: bundleID) else { throw StartupFailure(description: "Cannot snapshot startup preferences") }
+      let savedPreferences = preferences.persistentDomain(forName: bundleID)
+      defer {
+        if let savedPreferences { preferences.setPersistentDomain(savedPreferences, forName: bundleID) }
+        else { preferences.removePersistentDomain(forName: bundleID) }
+        preferences.synchronize()
+      }
       var checks: [[String: Any]] = []
       for (index, arguments) in [[], ["--path", CommandLine.arguments[2]], []].enumerated() {
         let launcher = Process()

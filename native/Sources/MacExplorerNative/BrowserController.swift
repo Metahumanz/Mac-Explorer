@@ -1619,7 +1619,7 @@ extension BrowserController {
     else {
       roots = [home.appendingPathComponent(".Trash")] + (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) ?? []).filter { $0.path.hasPrefix("/Volumes/") }.map { $0.appendingPathComponent(".Trashes/\(getuid())") }
     }
-    let records = testTrashDirectory?.deletingLastPathComponent().appendingPathComponent("native-trash-origins") ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mac Explorer Native/trash-origins")
+    let records = testTrashDirectory?.deletingLastPathComponent().appendingPathComponent("native-trash-origins") ?? NativeAppProfile.supportDirectory.appendingPathComponent("trash-origins")
     return TrashStore(roots: roots, records: records)
   }
   private func restoreFromTrash(choose: Bool) {
