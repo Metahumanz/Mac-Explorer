@@ -1,6 +1,6 @@
 # Mac Explorer Fork：改造初始化与 Codex 交接文档
 
-> 文档日期：2026-10-19（Phase 0.5）
+> 文档日期：2026-10-20（Phase 1）
 >
 > 上游仓库：https://github.com/qixiaoyu27/Mac-Explorer
 >
@@ -12,7 +12,7 @@
 >
 > 用途：Fork 后作为本地 Codex 的**背景、目标、约束与验收依据**。此文档不是要求 Codex 一次性实现所有功能。
 
-## 当前决定与执行状态（2026-10-19 更新）
+## 当前决定与执行状态（2026-10-20 更新）
 
 用户已确认：**跟随上游，本机日常应用已迁移到原生版；开发仍使用隔离构建与验证。随后已授权 Phase 0.5 隔离构建验证；实际结果见 [Phase 0.5 验证记录](docs/PHASE_0_5_VALIDATION.md)。**
 
@@ -20,14 +20,17 @@
 - 当前功能分支为 `feat/metadata-safe-file-operations`，无需重新克隆或重新建分支；`origin` 指向自己的 Fork，`upstream` 已保留。
 - 当前安装包已只读核实为原生 `1.1.0`：`/Applications/Mac Explorer.app`，Bundle ID `local.macexplorer.native-prototype`，可执行文件 `MacExplorerNative`。
 - Phase 0.5 已构建并打开独立 validation 应用（Bundle ID `local.macexplorer.native-validation`）：包校验、启动检查及 548 项核心检查通过；初次 UI smoke 两次失败；随后修正两处视口宽度计算，完整 UI smoke 352 项通过。体验应用已按用户要求关闭，不替换日常安装版。
-- Phase 0.5 已完成；Phase 1 文件操作改造待后续授权与实施，不执行真实 NAS 文件操作。
+- Phase 0.5 已单独提交：`511f6af`，包含视口修正、对应 UI 检查及阶段文档，未推送。
+- 用户授权进入 Phase 1，随后要求待审核行为全部参考 Windows 文件资源管理器；当前实现按 [Windows 行为基准](docs/WINDOWS_FILE_OPERATION_BASELINE.md) 修订，实际结果见 [Phase 1 验证记录](docs/PHASE_1_VALIDATION.md)。
+- 默认多轮哈希、来源隐藏改名和阶段日志已删除；使用系统复制及进度/取消、错误选择和日期恢复读回。Phase 1 已完成本地提交收尾；Phase 2/3 未开始，不修改系统默认项。
+- 用户随后授权 SMB 实测、提交兼容修复及 Phase 1 复验。实际路径为 `/Volumes/passport` 与 `/Volumes/NSSD`；仅公布的新 UUID 小夹具。首次失败及旧现场见 [历史实测记录](docs/SMB_VALIDATION.md)，最新源码、真实矩阵、完整回归及保留现场以 [SMB 专项复验](docs/SMB_PHASE1_REACCEPTANCE.md) 为准。没有恢复多轮内容哈希或覆盖重命名，没有更改日常安装版。
 - `native/PARITY_AUDIT.md`、`native/SYNC_STATUS.md` 是上游迁移记录，其通过数量不算本 Fork 本轮验收结果。
 
 ## 1. 项目背景与总体目标
 
 用户希望继续使用 `qixiaoyu27/Mac-Explorer` 的 Windows 11 风格界面，将其改造成适合 macOS 本地文件和局域网 NAS 日常管理的文件资源管理器，而不是更换成双栏管理器或重写项目。
 
-用户当前使用 MacBook Air M2；NAS 为树莓派 4B，运行 Samba，连接两个 NTFS 磁盘，对外共享名称在 Mac 上显示为 **`Passport`**、**`NSSD`**。它们在 macOS 已挂载为 `/Volumes/Passport` 和 `/Volumes/NSSD`，可以在 Mac Explorer 的「此电脑」中显示容量和打开文件。
+用户当前使用 MacBook Air M2；NAS 为树莓派 4B，运行 Samba，连接两个 NTFS 磁盘，对外共享名称在 Mac 上显示为 **`Passport`**、**`NSSD`**。本轮核实实际挂载路径是 `/Volumes/passport`（小写）和 `/Volumes/NSSD`，可以在 Mac Explorer 的「此电脑」中显示容量和打开文件。
 
 **核心诉求（按优先级）：**
 
@@ -61,15 +64,15 @@
 # macOS BSD stat：同时输出人类可读时间和 Unix 秒时间戳。
 stat -f '%N | create=%SB | modify=%Sm | birth_epoch=%B | mtime_epoch=%m' \
   -t '%Y-%m-%d %H:%M:%S' \
-  '/Volumes/Passport/<测试目录>/<测试文件>'
+  '/Volumes/passport/<测试目录>/<测试文件>'
 
 stat -f '%N | create=%SB | modify=%Sm | birth_epoch=%B | mtime_epoch=%m' \
   -t '%Y-%m-%d %H:%M:%S' \
   '/Volumes/NSSD/<测试目录>/<测试文件>'
 
 # 检查系统识别的网络挂载及可用容量
-mount | grep -E '/Volumes/(Passport|NSSD)'
-df -h '/Volumes/Passport' '/Volumes/NSSD'
+mount | rg '/Volumes/(passport|NSSD)'
+df -h '/Volumes/passport' '/Volumes/NSSD'
 ```
 
 不要提交服务器口令、SMB 用户名、私有 IP 或私人文件；测试输出可脱敏。
@@ -112,12 +115,12 @@ df -h '/Volumes/Passport' '/Volumes/NSSD'
 | --- | --- | --- |
 | Phase 0 | 架构、调用链、旧版差异、根因假设、安全边界与测试覆盖审计 | 已完成；未进行 NAS 传输实测 |
 | Phase 0.5 | 基于已迁移原生版的独立 validation 构建、隔离检查与本地体验 | 构建/包校验/启动/核心检查及修正后的完整 UI 自动检查通过；体验应用已关闭 |
-| Phase 1 | 元数据恢复验证、跨卷保护与逐项结果；回归撤销/还原 | 待后续实施与验收 |
-| Phase 2 | 创建日期列、排序、配置兼容及窄窗口布局 | 待 Phase 1 稳定 |
+| Phase 1 | 元数据恢复验证、跨卷保护与逐项结果；回归撤销/还原 | SMB 排他提交及 AppleDouble 兼容修复、Git 本地提交完成；真实 SMB 三轮通过，最终检查与限制见专项复验 |
+| Phase 2 | 创建日期列、排序、配置兼容及窄窗口布局 | 计划已细化，待用户启动；本轮不开发 |
 | Phase 3 | 验证已有网络卷标签，完善未知容量和属性缺失状态 | 待前阶段稳定 |
 | Phase 4 | 常用连接、列配置及更多传输体验 | 尚未立项 |
 
-每阶段分别记录结果。真实 NAS 写入、应用安装替换、推送和发布不包含在当前整理或隔离体验任务中。
+每阶段分别记录结果。本次 NAS 写入仅获授权执行已公布的专用小夹具；应用安装替换、推送和发布未获授权。
 
 ## 6. 验收矩阵（每阶段逐步扩充）
 
@@ -140,12 +143,12 @@ df -h '/Volumes/Passport' '/Volumes/NSSD'
 
 原生检查入口以 `native/README.md` 为准。构建和体验流程见计划中的 Phase 0.5，实际结果见独立验证记录；不要因交接文档中的历史 Electron 命令而运行 `npm ci` 或维护旧版功能。
 
-任何本地核心检查、UI smoke 或构建通过，都不能代替真实 Samba/NTFS 的元数据验收。NAS 写入仍须单独得到用户明确授权。
+任何本地核心检查、UI smoke 或构建通过，都不能代替真实 Samba/NTFS 的元数据验收。用户已授权本次公布范围的小夹具测试，不扩大到真实文件、断连或服务器配置。
 
 ## 7. Codex 的工作与交付规范
 
 - 继续使用用户 Fork 已有的 `feat/metadata-safe-file-operations` 功能分支，不直接在 `main` 上开发；保留 `upstream` 远程。
-- **Phase 0/0.5 已完成。本次提交不包含 Phase 1 业务改动，不写入 NAS、不替换日常安装版。**
+- **Phase 0/0.5 已完成，Phase 1 已于 2026-10-20 获授权并实现，专用小夹具 NAS 修复复验也已获授权。不得因此进入 Phase 2/3、操作现有 NAS 数据或替换日常安装版。**
 - 审计报告至少包含：实际调用链、根因假设与证据、可行的系统 API/技术选型、可能受 Samba/NTFS 限制的功能、失败保护方案、修改文件清单、测试设计、仍需用户确认的决策。
 - 开发阶段按 Phase 和功能拆分小 commit；各项实现附对应测试及测试结果。不要把“构建通过”当成“跨 SMB 日期保留问题解决”。
 - 对需要真实 NAS 的写入测试，先说明**将创建的专用测试目录、文件数、最大数据量、清理方式、风险**，等用户明确允许后再执行。
@@ -153,7 +156,7 @@ df -h '/Volumes/Passport' '/Volumes/NSSD'
 
 ## 8. 后续接手提示词
 
-请先阅读本交接文档、`docs/NATIVE_METADATA_PLAN.md` 和 `docs/PHASE_0_5_VALIDATION.md`。原生版隔离构建、核心与 UI 自动检查已完成，体验应用已关闭。保留当前已有改动；后续阶段以用户最新授权为准，NAS 写入、安装替换、推送和发布需各自明确授权。
+请先阅读本交接文档、`docs/NATIVE_METADATA_PLAN.md`、`docs/WINDOWS_FILE_OPERATION_BASELINE.md`、`docs/PHASE_1_VALIDATION.md` 和最新 `docs/SMB_PHASE1_REACCEPTANCE.md`。Phase 0.5 已提交为 `511f6af`，日常原生 1.1.0 未替换。Phase 1 按 Windows 工作流基准修订，随后已修复 SMB 排他提交、缓存属性和 AppleDouble 目录兼容，并完成三轮真实小夹具复验；具体通过、警告、未运行项及旧现场以最新报告为准。Phase 1 已完成本地提交，提交号以当前分支 `git log` 为准；未推送。Phase 2 详细安排见开发计划，尚未启动。旧失败及探针的 35 个专用根继续保留，不能将 Git 工作区收尾视为删除这些现场的授权。不要恢复旧多轮哈希、隐藏来源和阶段日志设计，也不要拿旧检查数量替代当前源码证明。不覆盖复用旧失败或探针目录，不操作现有 NAS 数据；不自动进入 Phase 2/3、不安装替换、不推送或发布。真实 Windows 11 对照、断连/写满与服务端落盘没有验收。
 
 ## 9. 已完成的 Fork 初始化
 

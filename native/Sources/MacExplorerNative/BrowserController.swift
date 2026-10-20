@@ -532,7 +532,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       guard let service = NSSharingService(named: .sendViaAirDrop), service.canPerform(withItems: urls) else { operationError = NL("隔空投送不可用"); render(); return false }
       service.perform(withItems: urls); return true
     }
-    runOperation { FileActions.transfer(urls, to: target, move: operation == .move) }; return true
+    runTransferOperation { control in FileActions.transfer(urls, to: target, move: operation == .move, control: control) }; return true
   }
   private func layoutSidebarRows() { for item in sidebarDocument.subviews { item.frame.size.width = max(0, sidebar.bounds.width - (item.identifier?.rawValue == "divider" ? 40 : 16)) } }
   private func toggleFolder(_ url: URL) {
@@ -690,6 +690,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     privacySettings.isHidden = lastError == nil || !(needsFullDiskAccess || lastError?.contains(NL("完全磁盘访问权限")) == true || lastError?.contains(NL("部分回收站无法读取，请检查访问权限后再清空。")) == true)
     errorClose.isHidden = lastError == nil; exitSearch.isHidden = lastError != nil || !searchActive
     errorLabel.stringValue = lastError ?? (searchActive ? NL("“{0}” 的搜索结果 · {1} 个匹配项目", search.stringValue, entries.count) : "")
+    errorLabel.toolTip = lastError
     updateStatus(); updatePane(); view.needsLayout = true
     if !loading, let pendingRename, entries.contains(where: { $0.id == pendingRename }) {
       self.pendingRename = nil
@@ -1151,12 +1152,12 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     guard !busy, writable else { return }; readClipboard()
     let sources = clipboard, target = directory, move = isCut, version = clipboardChange
     guard !sources.isEmpty else { return }
-    runOperation(completion: { [weak self] result in
+    runTransferOperation(completion: { [weak self] result in
       guard let self, move, self.clipboardChange == version else { return }
-      let moved = Set((result.changes.compactMap(\.source) + result.succeeded.filter { sources.contains($0) }).map(\.path))
+      let moved = Set((result.consumedMoveSources + result.succeeded.filter { sources.contains($0) }).map(\.path))
       self.clipboard.removeAll { moved.contains($0.path) }; if self.clipboard.isEmpty { self.isCut = false }
       if self.filePasteboard.changeCount == version { self.writeClipboard() }
-    }) { FileActions.transfer(sources, to: target, move: move) }
+    }) { control in FileActions.transfer(sources, to: target, move: move, control: control) }
   }
   private func trashSelected() {
     let sources = selectedEntries().map(\.url); guard !sources.isEmpty, !viewingTrash, let window = view.window else { return }
@@ -1185,12 +1186,12 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private func undoFiles() {
     guard !busy, let changes = undoChanges.popLast() else { return }
     let testTrash = testTrashDirectory
-    runOperation(recordUndo: false, completion: { [weak self] result in
+    runTransferOperation(recordUndo: false, completion: { [weak self] result in
       guard let self, !result.errors.isEmpty else { return }
-      let completed = Set((result.changes.compactMap(\.source) + result.succeeded).map(\.path))
+      let completed = Set((result.changes.compactMap(\.source) + result.succeeded + result.consumedMoveSources).map(\.path))
       let remaining = changes.filter { !completed.contains($0.destination.path) }
       if !remaining.isEmpty { self.undoChanges.append(remaining) }
-    }) { FileActions.undo(changes, testTrash: testTrash) }
+    }) { control in FileActions.undo(changes, testTrash: testTrash, control: control) }
   }
   private func runSingle(beginRename: Bool = false, _ operation: @escaping @Sendable () throws -> FileActionChange) {
     guard !busy else { return }; busy = true; operationError = nil; message = NL("正在处理…"); updateStatus()
@@ -1208,7 +1209,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private func runOperation(recordUndo: Bool = true, completion: ((FileActionResult) -> Void)? = nil, _ operation: @escaping @Sendable () -> FileActionResult) {
     runAsyncOperation(recordUndo: recordUndo, completion: completion) { await Task.detached { operation() }.value }
   }
-  private func runAsyncOperation(recordUndo: Bool = true, completion: ((FileActionResult) -> Void)? = nil, _ operation: @escaping () async -> FileActionResult) {
+  func runAsyncOperation(recordUndo: Bool = true, completion: ((FileActionResult) -> Void)? = nil, _ operation: @escaping () async -> FileActionResult) {
     guard !busy else { return }; busy = true; operationError = nil; message = NL("正在处理…"); updateStatus()
     let origin = tabs[activeTab].id, originDirectory = directory
     Task { @MainActor [weak self] in
@@ -1254,7 +1255,6 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     let title = chosen.count == 1 ? entry.name : NL("{0} 个项目", chosen.count)
     let location = Set(urls.map { $0.deletingLastPathComponent().path }).sorted().joined(separator: "、")
     let initial = [(NL("类型"), chosen.count == 1 ? entry.kind : NL("多个项目")), (NL("位置"), location), (NL("大小"), NL("正在计算…"))]
-    let dates = chosen.count == 1 ? [(NL("创建日期"), entry.created.map(dateFormatter.string) ?? "—"), (NL("修改日期"), entry.modified.map(dateFormatter.string) ?? "—")] : []
     let present: (NSImage) -> Void = { [weak self, weak window] icon in
       guard let self, let window, window.isVisible, self.selectedPaths == selection else { return }
       ExplorerDialogs.properties(in: window, title: title, icon: icon, values: initial, load: {
@@ -1262,7 +1262,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
         let result = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
         var values = Array(initial.prefix(2)) + [(NL("大小"), ExplorerFormat.size(result.size)), (NL("占用空间"), ExplorerFormat.size(result.allocated) + NL("（{0} 字节）", result.allocated.formatted(.number.locale(NativeLanguage.formatLocale))))]
         if chosen.count > 1 || entry.isDirectory { values.append((NL("包含"), NL("{0} 个文件，{1} 个文件夹", result.files, result.folders))) }
-        values += dates
+        if chosen.count == 1 { values += [(NL("创建日期"), result.created.map(self.dateFormatter.string) ?? "—"), (NL("修改日期"), result.modified.map(self.dateFormatter.string) ?? "—")] }
         if let readOnly = result.readOnly { values.append((NL("只读"), readOnly ? NL("是") : NL("否"))) }
         if chosen.count == 1 { values.append((NL("隐藏"), entry.isHidden ? NL("是") : NL("否"))) }
         if result.skipped > 0 { values.append((NL("状态"), NL("{0} 个项目无法读取，统计不完整", result.skipped))) }
@@ -1334,7 +1334,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     case "undo": undoFiles()
     case "move-here":
       clipboard = (filePasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []; clipboardChange = filePasteboard.changeCount; isCut = true; pasteFiles()
-    case "duplicate": guard writable else { return }; let sources = selectedEntries().map(\.url), target = directory; runOperation { FileActions.transfer(sources, to: target, move: false) }
+    case "duplicate": guard writable else { return }; let sources = selectedEntries().map(\.url), target = directory; runTransferOperation { control in FileActions.transfer(sources, to: target, move: false, control: control) }
     case "select-all": selectAllFiles()
     case "new-folder": createEntry(directory: true)
     case "trash": trashSelected()
@@ -1428,7 +1428,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     let operation = dropOperation(info, target: fromTab ? target : nil)
     let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     guard !urls.isEmpty, !operation.isEmpty else { return false }
-    runOperation { FileActions.transfer(urls, to: target, move: operation == .move) }; return true
+    runTransferOperation { control in FileActions.transfer(urls, to: target, move: operation == .move, control: control) }; return true
   }
   func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { reload() }
   func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, dragOperation operation: NSDragOperation) { reload() }
@@ -1495,8 +1495,8 @@ extension BrowserController {
     let store = trashStore
     if choose {
       let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.prompt = NL("还原到此处")
-      panel.beginSheetModal(for: window) { [weak self] response in if response == .OK, let destination = panel.url { self?.runOperation(recordUndo: false) { store.restore(urls, to: destination) } } }
-    } else { runOperation(recordUndo: false) { store.restore(urls) } }
+      panel.beginSheetModal(for: window) { [weak self] response in if response == .OK, let destination = panel.url { self?.runTransferOperation(recordUndo: false) { control in store.restore(urls, to: destination, control: control) } } }
+    } else { runTransferOperation(recordUndo: false) { control in store.restore(urls, control: control) } }
   }
   private func emptySystemTrash() {
     guard !busy, let window = view.window else { return }
