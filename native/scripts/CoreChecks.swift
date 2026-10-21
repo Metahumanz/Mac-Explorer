@@ -65,11 +65,11 @@ struct CoreValidation {
       do { _ = try DirectoryReader.read(url) } catch { rejected = true }
       try check(rejected, "Invalid input rejected: \(url)")
     }
-    func entry(_ name: String, folder: Bool = false, size: Int64 = 0, modified: Double? = nil,
+    func entry(_ name: String, folder: Bool = false, size: Int64 = 0, modified: Double? = nil, created: Double? = nil,
       hidden: Bool = false, path: String? = nil) -> FileEntry {
       FileEntry(url: root.appendingPathComponent(path ?? name), name: name, isDirectory: folder,
         isSymbolicLink: false, isPackage: false, size: size,
-        modified: modified.map { Date(timeIntervalSince1970: $0) }, isHidden: hidden)
+        modified: modified.map { Date(timeIntervalSince1970: $0) }, isHidden: hidden, created: created.map { Date(timeIntervalSince1970: $0) })
     }
     func names(_ entries: [FileEntry], sort: EntrySort = .name, ascending: Bool = true) -> [String] {
       EntryQuery.apply(entries, showHidden: true, query: "", sort: sort, ascending: ascending).map(\.name)
@@ -89,6 +89,19 @@ struct CoreValidation {
     let dates = [entry("new", modified: 200), entry("unknown"), entry("old10", modified: 100), entry("old2", modified: 100)]
     try check(names(dates, sort: .modified) == ["unknown", "old2", "old10", "new"], "Modified ascending")
     try check(names(dates, sort: .modified, ascending: false) == ["new", "old10", "old2", "unknown"], "Modified descending")
+    let created = [entry("new", modified: -100, created: 200), entry("unknown", modified: 999),
+      entry("old10", created: 100), entry("old2", created: 100), entry("epoch", created: 0), entry("early", created: -1)]
+    try check(names(created, sort: .created) == ["unknown", "early", "epoch", "old2", "old10", "new"], "Created ascending keeps missing, early and epoch dates distinct")
+    try check(names(created, sort: .created, ascending: false) == ["new", "old10", "old2", "epoch", "early", "unknown"], "Created descending with natural name ties")
+    let creationFolders = [entry("file", created: -1), entry("folder", folder: true, created: 100)]
+    for ascending in [true, false] {
+      try check(names(creationFolders, sort: .created, ascending: ascending) == ["folder", "file"], "Created sort keeps folders first with different dates")
+    }
+    let sameNames = [entry("same", created: 1, path: "b/same"), entry("same", created: 1, path: "a/same")]
+    for ascending in [true, false] {
+      let result = EntryQuery.apply(sameNames, showHidden: true, query: "", sort: .created, ascending: ascending)
+      try check(result.map(\.url) == (ascending ? sameNames.reversed().map(\.url) : sameNames.map(\.url)), "Created equal names use literal paths")
+    }
     let kinds = [entry("z.txt"), entry("z.jpg"), entry("a.txt"), entry("a.jpg")]
     try check(names(kinds, sort: .kind) == ["a.txt", "z.txt", "a.jpg", "z.jpg"], "Localized kind ascending")
     try check(names(kinds, sort: .kind, ascending: false) == ["z.jpg", "a.jpg", "z.txt", "a.txt"], "Localized kind descending")

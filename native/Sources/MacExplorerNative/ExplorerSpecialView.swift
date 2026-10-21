@@ -13,6 +13,11 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   private var mode = ""
   private var query = ""
   private var revision = 0
+  private var volumeRequest = 0
+  private var volumeError: String?
+  private let volumeLoader: () async throws -> [NativeVolume]
+  private let discoveryEnabled: Bool
+  private let volumeStatus = label("", color: ExplorerPalette.secondary)
   private let scroll = NSScrollView(), document = SurfaceView()
   private let heading = label("", size: 20)
   private let choose = EDButton(title: NL("选择文件…"), style: .primary)
@@ -36,26 +41,26 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   private var airDropSettled = false
   private var windowCloseObserver: NSObjectProtocol?
 
-  override convenience init(frame: NSRect) { self.init(frame: frame, airDrop: NativeAirDrop()) }
-  init(frame: NSRect, airDrop: AirDropDiscovering) {
-    self.airDrop = airDrop
+  init(frame: NSRect = .zero, airDrop: AirDropDiscovering = NativeAirDrop(), volumeLoader: @escaping () async throws -> [NativeVolume] = { try await Task.detached { try NativeVolumes.list() }.value }, discoveryEnabled: Bool = true) {
+    self.airDrop = airDrop; self.volumeLoader = volumeLoader; self.discoveryEnabled = discoveryEnabled
     super.init(frame: frame)
     scroll.documentView = document; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = false; scroll.automaticallyAdjustsContentInsets = false
     addSubview(scroll)
-    [heading, dropArea, choose, server, connect, refresh, networkStatus, serverTitle, mountedTitle, discoveredTitle, emptyIcon].forEach(document.addSubview)
+    [heading, dropArea, choose, server, connect, refresh, networkStatus, volumeStatus, serverTitle, mountedTitle, discoveredTitle, emptyIcon].forEach(document.addSubview)
     heading.font = .systemFont(ofSize: 20, weight: .medium)
     server.font = .systemFont(ofSize: 13); server.placeholderString = NL("smb://服务器/共享"); server.bezelStyle = .roundedBezel
     server.delegate = self; refresh.iconName = "refresh"
     emptyIcon.image = ExplorerIcons.image("network", size: 32, color: ExplorerPalette.accent); emptyIcon.isHidden = true
     server.target = self; server.action = #selector(connectServer)
     choose.onPress = { [weak self] in self?.chooseFiles() }; connect.onPress = { [weak self] in self?.connectServer() }
-    refresh.onPress = { [weak self] in guard let self else { return }; if self.mode == "airdrop" { self.discoverAirDrop() } else { self.discover() } }
+    refresh.onPress = { [weak self] in guard let self else { return }; if self.mode == "airdrop" { self.discoverAirDrop() } else { self.discover(); self.loadVolumes(token: self.revision) } }
     dropArea.onFiles = { [weak self] in self?.share($0) }
     discovery.delegate = self
   }
   required init?(coder: NSCoder) { fatalError() }
   func show(_ name: String) {
     mode = name; query = ""; revision += 1; let token = revision
+    volumes = []; volumeError = nil; volumeStatus.stringValue = ""; volumeStatus.isHidden = true
     connectionTask?.cancel(); connectionTask = nil; setConnecting(false)
     stopDiscovery(); cards.forEach { $0.removeFromSuperview() }; cards.removeAll(); serviceRows.forEach { $0.removeFromSuperview() }; serviceRows.removeAll(); mountedRows.forEach { $0.removeFromSuperview() }; mountedRows.removeAll()
     airDropCards.forEach { $0.removeFromSuperview() }; airDropCards.removeAll()
@@ -72,12 +77,13 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
     needsLayout = true
   }
   private func loadVolumes(token: Int) {
+    volumeRequest += 1; let request = volumeRequest, loader = volumeLoader
     Task { @MainActor [weak self] in
       do {
-        let volumes = try await Task.detached { try NativeVolumes.list() }.value
-        guard let self, self.revision == token else { return }; self.volumes = volumes; self.updateVolumes(); self.needsLayout = true
+        let volumes = try await loader()
+        guard let self, self.revision == token, self.volumeRequest == request else { return }; self.volumeError = nil; self.volumes = volumes; self.updateVolumes(); self.needsLayout = true
       } catch {
-        guard let self, self.revision == token else { return }; self.networkStatus.stringValue = NL(error.localizedDescription)
+        guard let self, self.revision == token, self.volumeRequest == request else { return }; self.volumes = []; self.volumeError = NL("无法读取已挂载的磁盘。"); self.updateVolumes(); self.needsLayout = true
       }
     }
   }
@@ -89,7 +95,7 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
       do {
         let volumes = try await Task.detached { try NativeVolumes.eject(volume.url) }.value
         guard let self else { return }; self.ejecting.remove(volume.path); self.onVolumesChanged?()
-        guard self.revision == token else { return }; self.volumes = volumes; self.updateVolumes(); self.needsLayout = true
+        guard self.revision == token else { return }; self.volumeError = nil; self.volumes = volumes; self.updateVolumes(); self.needsLayout = true
       } catch {
         guard let self else { return }; self.ejecting.remove(volume.path)
         guard self.revision == token else { return }; self.networkStatus.stringValue = NL(error.localizedDescription)
@@ -143,15 +149,18 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
     super.viewWillMove(toWindow: newWindow)
   }
   private func updateVolumes() {
+    guard mode == "computer" || mode == "network" else { return }
     cards.forEach { $0.removeFromSuperview() }; cards.removeAll()
     mountedRows.forEach { $0.removeFromSuperview() }; mountedRows.removeAll()
-    let visible = volumes.filter { (mode == "computer" || !$0.local) && matches($0.name, $0.path) }
+    volumeStatus.stringValue = volumeError ?? ""; volumeStatus.isHidden = mode != "network" || volumeError == nil
+    if mode == "computer" { networkStatus.stringValue = volumeError ?? "" }
+    let visible = volumes.filter { (mode == "computer" || $0.isNetwork) && matches($0.name, $0.path) }
     if mode == "network" {
       for volume in visible {
         let row = NetworkDeviceRow(name: volume.name, address: volume.path, icon: "folder", actionTitle: NL("打开")) { [weak self] in self?.onNavigate?(volume.url) }
         document.addSubview(row); mountedRows.append(row)
       }
-      mountedTitle.isHidden = visible.isEmpty
+      mountedTitle.isHidden = visible.isEmpty && volumeError == nil
       return
     }
     if mode == "computer" { heading.stringValue = NL("设备和驱动器（{0}）", visible.count) }
@@ -193,9 +202,10 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
       connect.frame = NSRect(x: server.frame.maxX + 10, y: 108, width: 80, height: 34)
       serverTitle.frame = NSRect(x: 32, y: 82, width: width - 64, height: 22)
       var y: CGFloat = 172
-      if !mountedRows.isEmpty {
+      if !mountedRows.isEmpty || volumeError != nil {
         mountedTitle.frame = NSRect(x: 32, y: y, width: width - 64, height: 24); y += 36
         for row in mountedRows { row.frame = NSRect(x: 32, y: y, width: width - 64, height: 64); y += 72 }
+        if volumeError != nil { volumeStatus.frame = NSRect(x: 32, y: y, width: width - 64, height: 24); y += 32 }
         y += 20
       }
       discoveredTitle.frame = NSRect(x: 32, y: y + 6, width: width - 190, height: 24)
@@ -245,7 +255,7 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
     }
   }
   private func discover() {
-    stopDiscovery(); discovery = NetServiceBrowser(); discovery.delegate = self
+    stopDiscovery(); guard discoveryEnabled else { updateServices(); return }; discovery = NetServiceBrowser(); discovery.delegate = self
     updateServices(); networkStatus.stringValue = NL("正在查找共享电脑…")
     discovery.searchForServices(ofType: "_smb._tcp.", inDomain: "local.")
     let token = revision, browser = discovery
@@ -284,7 +294,7 @@ final class ExplorerSpecialView: SurfaceView, NetServiceBrowserDelegate, NetServ
   deinit { if let windowCloseObserver { NotificationCenter.default.removeObserver(windowCloseObserver) }; discovery.delegate = nil; discovery.stop(); services.forEach { $0.delegate = nil; $0.stop() }; connectionTask?.cancel() }
 }
 
-private final class DriveCard: SurfaceView {
+final class DriveCard: SurfaceView {
   let volume: ExplorerVolume
   var open: (() -> Void)?
   var eject: (() -> Void)?
@@ -298,10 +308,14 @@ private final class DriveCard: SurfaceView {
     ejectButton.isBordered = false; ejectButton.image = NSImage(systemSymbolName: "eject", accessibilityDescription: NL("推出")); ejectButton.toolTip = NL("推出"); ejectButton.setAccessibilityLabel(NL("推出")); ejectButton.target = self; ejectButton.action = #selector(ejectVolume); ejectButton.isHidden = !volume.canEject
     icon.image = NSWorkspace.shared.icon(forFile: volume.url.path); icon.imageScaling = .scaleProportionallyUpOrDown
     name.stringValue = volume.name; name.font = .systemFont(ofSize: 15, weight: .semibold)
-    kind.stringValue = volume.local ? NL("本地磁盘") : NL("网络位置")
-    capacity.stringValue = NL("{0} 可用，共 {1}", ExplorerFormat.size(volume.free), ExplorerFormat.size(volume.total))
+    switch volume.kind { case .local: kind.stringValue = NL("本地磁盘"); case .network: kind.stringValue = NL("网络驱动器"); case .unknown: kind.stringValue = NL("类型未知") }
+    switch volume.capacityState {
+    case .unavailable, .invalid: capacity.stringValue = NL("容量不可用")
+    case .unknown: capacity.stringValue = NL("容量未知")
+    case .known, .partial: capacity.stringValue = NL("{0} 可用，共 {1}", volume.free.map(ExplorerFormat.size) ?? NL("未知"), volume.total.map(ExplorerFormat.size) ?? NL("未知"))
+    }
     toolTip = capacity.stringValue
-    setAccessibilityRole(.button); setAccessibilityLabel(volume.name + "，" + capacity.stringValue)
+    setAccessibilityRole(.button); setAccessibilityLabel(volume.name + "，" + kind.stringValue + "，" + capacity.stringValue)
   }
   required init?(coder: NSCoder) { fatalError() }
   @objc private func ejectVolume() { eject?() }
@@ -321,9 +335,9 @@ private final class DriveCard: SurfaceView {
   override func draw(_ dirtyRect: NSRect) {
     let frame = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
     (selected ? ExplorerPalette.selection : ExplorerPalette.sidebar).setFill(); frame.fill(); ExplorerPalette.border.setStroke(); frame.stroke()
+    guard let fraction = volume.usedFraction else { return }
     let track = NSRect(x: 108, y: 65, width: max(0, bounds.width - 130), height: 6)
     ExplorerPalette.active.setFill(); NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
-    let fraction = volume.total > 0 ? min(1, max(0, 1 - Double(volume.free) / Double(volume.total))) : 0
     NSColor(srgbRed: 66 / 255, green: 160 / 255, blue: 218 / 255, alpha: 1).setFill()
     NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * fraction, height: 6), xRadius: 3, yRadius: 3).fill()
   }

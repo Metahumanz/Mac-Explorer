@@ -37,7 +37,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     NSWindow.allowsAutomaticWindowTabbing = false
     let smoke = argument("--smoke-test")
     let comparison = argument("--compare")
-    let initial = smoke ?? comparison ?? argument("--path") ?? FileManager.default.homeDirectoryForCurrentUser.path
+    let explicitLocation = smoke ?? comparison ?? argument("--path")
     let defaults: UserDefaults
     if smoke != nil || comparison != nil {
       guard let isolated = UserDefaults(suiteName: "local.macexplorer.native-smoke.\(ProcessInfo.processInfo.processIdentifier)") else {
@@ -60,7 +60,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
       self?.summon()
     })
     versionControl.setEnabled(defaults.object(forKey: "versionControl") as? Bool ?? true)
-    browser = BrowserController(initial: URL(fileURLWithPath: initial), defaults: defaults)
+    let home = ProcessInfo.processInfo.environment["EXPLORER_NATIVE_HOME"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
+    browser = BrowserController(initial: NativeStartLocation.initialURL(explicit: explicitLocation, defaults: defaults, home: home), defaults: defaults)
     if smoke != nil || comparison != nil { browser.filePasteboard = NSPasteboard(name: .init("local.macexplorer.native-test.\(ProcessInfo.processInfo.processIdentifier)")) }
     if let comparison {
       browser.home = URL(fileURLWithPath: comparison).deletingLastPathComponent()
@@ -164,7 +165,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     let source = browser ?? BrowserController(initial: home, defaults: sessionDefaults ?? .standard)
     if browser == nil { source.home = home }
     let top = window.map { NSPoint(x: $0.frame.minX + 180, y: $0.frame.maxY - 20) } ?? NSEvent.mouseLocation
-    createWindow(tab: BrowserTab(history: [source.home]), source: source, at: top)
+    createWindow(tab: BrowserTab(history: [NativeStartLocation.load(source.defaults).url(home: source.home)]), source: source, at: top)
   }
 
   private func summon() {

@@ -19,11 +19,19 @@ enum NativeSmoke {
         try write(["passed": true, "checks": checks], to: report)
         NSApp.terminate(nil); return
       }
+      if let index = CommandLine.arguments.firstIndex(of: "--start-location-settings"), CommandLine.arguments.indices.contains(index + 1) {
+        let restored = try await NativeStartLocationChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
+        try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
+      }
       if ProcessInfo.processInfo.arguments.contains("--smoke-integrations") {
         checks += try await NativeTerminalChecks.run(browser: browser, output: report.deletingLastPathComponent())
         checks += try await NativeAirDropUIChecks.run()
         try write(["passed": true, "checks": checks, "fixtureDevices": true], to: report)
         NSApp.terminate(nil); return
+      }
+      if let index = CommandLine.arguments.firstIndex(of: "--created-date-settings"), CommandLine.arguments.indices.contains(index + 1) {
+        let restored = try await NativeCreatedDateChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
+        try write(["passed": true, "checks": restored], to: report); NSApp.terminate(nil); return
       }
       if ProcessInfo.processInfo.arguments.contains("--smoke-airdrop") {
         checks += try await NativeAirDropUIChecks.run()
@@ -122,10 +130,14 @@ enum NativeSmoke {
       try expect(browser.entries[0].url.deletingLastPathComponent().lastPathComponent == "Folder 2", "search submission searches descendants without following folder links")
       browser.search.stringValue = ""; browser.searchBox.onClear?()
       try await until { !browser.loading && browser.entries.count == 10_003 }
-      browser.sortMenu()[0].action?(); browser.sortMenu()[5].action?()
+      func chooseSort(_ title: String) throws {
+        guard let action = browser.sortMenu().first(where: { $0.title == NL(title) })?.action else { throw Failure(description: "Missing sort menu action: " + title) }
+        action()
+      }
+      try chooseSort("名称"); try chooseSort("递减")
       try await until { browser.entries.last?.name == "file-0.txt" }
       try expect(browser.entries.first?.isDirectory == true, "descending sorting retains folders first")
-      browser.sortMenu()[4].action?()
+      try chooseSort("递增")
       try await until { browser.entries.first?.name == "Folder 2" }
       let folderRow = browser.entries.firstIndex { $0.name == "Folder 2" }!
       browser.table.selectRowIndexes(IndexSet(integer: folderRow), byExtendingSelection: false)
@@ -182,13 +194,16 @@ enum NativeSmoke {
       checks += try await NativeInteractionChecks.run(source: browser, output: report.deletingLastPathComponent())
       checks += try await NativeLatestChecks.run(parent: window)
       checks += try await NativeLifecycleChecks.run(source: browser)
+      checks += try await NativeStartLocationChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVCSUIChecks.run(parent: window)
       checks += try await NativeVCSEditingChecks.run()
       checks += try await NativePaneChecks.run()
+      checks += try await NativeCreatedDateChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeClipboardChecks.run()
       checks += try await NativeTransferPanelChecks.run()
       checks += try await NativeLanguageChecks.run()
       checks += try await NativeAddressTabChecks.run(source: browser)
+      checks += try await NativeVolumeChecks.run(output: report.deletingLastPathComponent())
       checks += try NativeShortcutChecks.run()
       checks += try await NativePrivacyChecks.run()
       checks += try await NativeTerminalChecks.run(browser: browser, output: report.deletingLastPathComponent())
