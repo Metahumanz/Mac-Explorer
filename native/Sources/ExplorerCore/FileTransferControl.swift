@@ -51,7 +51,7 @@ public final class FileTransferControl: @unchecked Sendable {
 }
 
 /// System copy preserves native streams/metadata and supplies progress without a second data pass.
-/// ACL inheritance remains the destination filesystem's responsibility.
+/// Copy explicit ACLs while letting the system retain inherited destination entries.
 enum NativeTransferCopy {
   struct Failure: LocalizedError {
     let underlying: NSError
@@ -106,6 +106,31 @@ enum NativeTransferCopy {
   static func copyDescriptors(_ source: Int32, to destination: Int32, sourceURL: URL, destinationURL: URL, total: Int64, control: FileTransferControl?, moving: Bool, link: Bool) throws -> Bool {
     try run(sourceURL, to: destinationURL, total: total, control: control, moving: moving, descriptors: (source, destination, link))
   }
+  static func explicitACL(_ descriptor: Int32) throws -> String? {
+    guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
+      if errno == ENOTSUP || errno == ENOENT { return nil }
+      throw VerifiedTransfer.posix()
+    }
+    defer { acl_free(UnsafeMutableRawPointer(acl)) }
+    var explicit = acl_init(0)
+    guard explicit != nil else { throw VerifiedTransfer.posix() }
+    defer { if let explicit { acl_free(UnsafeMutableRawPointer(explicit)) } }
+    var entry: acl_entry_t?, count = 0
+    var next = Int32(ACL_FIRST_ENTRY.rawValue)
+    while acl_get_entry(acl, next, &entry) == 0 {
+      next = Int32(ACL_NEXT_ENTRY.rawValue)
+      var flags: acl_flagset_t?
+      guard acl_get_flagset_np(entry.map { UnsafeMutableRawPointer($0) }, &flags) == 0 else { throw VerifiedTransfer.posix() }
+      if acl_get_flag_np(flags, ACL_ENTRY_INHERITED) == 1 { continue }
+      var copy: acl_entry_t?
+      guard acl_create_entry(&explicit, &copy) == 0, acl_copy_entry(copy, entry) == 0 else { throw VerifiedTransfer.posix() }
+      count += 1
+    }
+    guard count > 0 else { return nil }
+    guard let text = acl_to_text(explicit, nil) else { throw VerifiedTransfer.posix() }
+    defer { acl_free(text) }
+    return String(cString: text)
+  }
   private static func run(_ source: URL, to destination: URL, total: Int64, control: FileTransferControl?, moving: Bool, descriptors: (Int32, Int32, Bool)?) throws -> Bool {
     try control?.check()
     guard let state = copyfile_state_alloc() else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOMEM)) }
@@ -116,10 +141,10 @@ enum NativeTransferCopy {
     guard copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CB), pointer) == 0,
           copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CTX), context) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
     // No COPYFILE_MOVE: the transfer owns the separate, guarded source-cleanup step.
-    let flags = copyfile_flags_t(COPYFILE_DATA | COPYFILE_STAT | COPYFILE_XATTR | COPYFILE_RECURSIVE | COPYFILE_EXCL | COPYFILE_NOFOLLOW | COPYFILE_CLONE)
+    let flags = copyfile_flags_t(COPYFILE_DATA | COPYFILE_STAT | COPYFILE_XATTR | COPYFILE_ACL | COPYFILE_RECURSIVE | COPYFILE_EXCL | COPYFILE_NOFOLLOW | COPYFILE_CLONE)
     let result = withExtendedLifetime(value) {
       if let (from, to, link) = descriptors {
-        return fcopyfile(from, to, state, copyfile_flags_t(link ? COPYFILE_XATTR | COPYFILE_NOFOLLOW : COPYFILE_DATA | COPYFILE_STAT | COPYFILE_XATTR))
+        return fcopyfile(from, to, state, copyfile_flags_t((link ? COPYFILE_XATTR | COPYFILE_NOFOLLOW : COPYFILE_DATA | COPYFILE_STAT | COPYFILE_XATTR) | COPYFILE_ACL))
       }
       return copyfile(source.path, destination.path, state, flags)
     }

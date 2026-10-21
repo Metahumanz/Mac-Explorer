@@ -267,6 +267,67 @@ struct MetadataTransferChecks {
       hooks.exclusiveRename = { _,_ in throw VerifiedTransfer.posix(ENOTSUP) }
       return hooks
     }
+    for checkpoint in [TransferCheckpoint.afterCopy, .afterDates, .beforePublish, .afterPublish] {
+      for replace in [false, true] {
+        let(file,target,dest)=try fixture("target-change-\(checkpoint)-\(replace)")
+        var hooks=unsupported()
+        hooks.checkpoint={stage,_,_ in if stage == checkpoint {
+          if replace { try fm.removeItem(at:dest) }
+          let descriptor=open(dest.path,O_WRONLY|O_CREAT|O_TRUNC,0o600)
+          guard descriptor>=0 else {throw VerifiedTransfer.posix()};defer{close(descriptor)}
+          guard Darwin.write(descriptor,"NO",2)==2 else {throw VerifiedTransfer.posix()}
+        }}
+        // Continuing after a property warning must never accept a changed target.
+        hooks.control=FileTransferControl(onProblem:{$0.propertyLoss ? .continueWithoutProperties : .skip})
+        let result=transfer(file,target,hooks:hooks)
+        try check(!result.errors.isEmpty && exists(file) && result.consumedMoveSources.isEmpty,"target changes at \(checkpoint) cannot consume a cut source")
+        try check(try Data(contentsOf:file)==Data("OK".utf8) && Data(contentsOf:dest)==Data("NO".utf8),"target changes at \(checkpoint) preserve both the original and the external edit")
+      }
+    }
+    do {
+      let(file,target,dest)=try fixture("date-retry-after-write")
+      var hooks=unsupported(),attempts=0,problems=0
+      hooks.restoreDates={fd,stamp in
+        attempts+=1;try VerifiedTransfer.restoreDates(fd,stamp)
+        if attempts==1 {throw VerifiedTransfer.posix(EIO)}
+      }
+      hooks.control=FileTransferControl(onProblem:{_ in problems+=1;return problems==1 ? .retry : .skip})
+      let result=transfer(file,target,hooks:hooks)
+      try check(result.errors.isEmpty && attempts==2 && problems==1 && exists(dest) && !exists(file),"retry trusts only the metadata changes made by this transfer")
+    }
+    func aclText(_ url:URL) throws -> String {
+      guard let acl=acl_get_file(url.path,ACL_TYPE_EXTENDED) else {throw VerifiedTransfer.posix()};defer{acl_free(UnsafeMutableRawPointer(acl))}
+      guard let text=acl_to_text(acl,nil) else {throw VerifiedTransfer.posix()};defer{acl_free(text)}
+      return String(cString:text)
+    }
+    for descriptor in [false,true] {
+      let(file,target,dest)=try fixture("explicit-acl-\(descriptor)")
+      let chmod=Process();chmod.executableURL=URL(fileURLWithPath:"/bin/chmod");chmod.arguments=["+a","everyone deny write",file.path]
+      try chmod.run();chmod.waitUntilExit();try check(chmod.terminationStatus==0,"ACL fixture is installed")
+      let before=try aclText(file)
+      let result=transfer(file,target,hooks:descriptor ? unsupported() : TransferHooks())
+      try check(result.errors.isEmpty && !exists(file),"ACL-preserving move completes on both copy paths")
+      try check(try aclText(dest)==before,"native and descriptor copies preserve explicit ACL entries")
+    }
+    for choice in [FileTransferDecision.skip, .continueWithoutProperties] {
+      let(file,target,dest)=try fixture("lost-acl-\(choice)")
+      let chmod=Process();chmod.executableURL=URL(fileURLWithPath:"/bin/chmod");chmod.arguments=["+a","everyone deny write",file.path]
+      try chmod.run();chmod.waitUntilExit();try check(chmod.terminationStatus==0,"ACL-loss fixture is installed")
+      var hooks=unsupported(),problems=0
+      hooks.restoreDates={fd,stamp in
+        guard let empty=acl_init(0) else {throw VerifiedTransfer.posix()};defer{acl_free(UnsafeMutableRawPointer(empty))}
+        guard acl_set_fd_np(fd,empty,ACL_TYPE_EXTENDED)==0 else {throw VerifiedTransfer.posix()}
+        try VerifiedTransfer.restoreDates(fd,stamp)
+      }
+      hooks.control=FileTransferControl(onProblem:{problem in if problem.propertyLoss {problems+=1};return choice})
+      let result=transfer(file,target,hooks:hooks)
+      if choice == .skip {
+        try check(!result.errors.isEmpty && exists(file) && !exists(dest) && result.consumedMoveSources.isEmpty,"silent ACL loss cannot delete the source")
+      } else {
+        try check(result.succeeded==[dest] && !exists(file) && result.errors.count==1,"only explicit permission allows a move with ACL loss")
+      }
+      try check(problems==1,"ACL readback failure uses the property-loss decision")
+    }
     do {
       let a=TransferMoment(timespec(tv_sec:100,tv_nsec:999_999_950)),b=TransferMoment(timespec(tv_sec:101,tv_nsec:0))
       try check(!a.matches(b,precision:1) && a.matches(b,precision:100),"only SMB tolerates sub-100ns client/server representation differences")

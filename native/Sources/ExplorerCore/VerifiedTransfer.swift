@@ -208,18 +208,26 @@ private struct TransferTree {
     return try withExtendedLifetime(held) { try body(directory, components.last!) }
   }
 
-  func restore(_ source: [TransferNode], target: [TransferNode], hooks: TransferHooks, updated: ((TransferNode) -> Void)? = nil) throws {
+  func restore(_ source: [TransferNode], from tree: TransferTree, target: [TransferNode], hooks: TransferHooks, updated: ((TransferNode) -> Void)? = nil) throws {
     let index = Dictionary(uniqueKeysWithValues: target.map { ($0.relative, $0) })
+    let sourceIndex = Dictionary(uniqueKeysWithValues: source.map { ($0.relative, $0) })
     for node in source.reversed() {
       try hooks.control?.check()
       guard let original = index[node.relative] else { throw VerifiedTransfer.failure("文件内容校验失败，来源已保留。") }
       try withParent(node.relative, expected: index) { parent, name in
         let flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK | (node.stamp.type == S_IFLNK ? O_SYMLINK : O_NOFOLLOW)
         let file = try TransferFD(openat(parent, name, flags))
-        guard try original.stamp.sameObject(file.stamp) else { throw VerifiedTransfer.failure("项目在传输期间发生变化，已停止操作。") }
+        guard try original.stamp.unchanged(file.stamp) else { throw VerifiedTransfer.failure("项目在传输期间发生变化，已停止操作。") }
         defer { if let stamp = try? file.stamp { updated?(TransferNode(relative: node.relative, stamp: stamp, link: original.link, companion: try? AppleDoubleCompanion.stamp(in: parent, primary: name))) } }
         if let restore = hooks.restoreDates { try restore(file.raw, node.stamp) }
         else { try VerifiedTransfer.restoreDates(file.raw, node.stamp) }
+        try tree.withParent(node.relative, expected: sourceIndex) { directory, name in
+          let from = try TransferFD(openat(directory, name, flags))
+          guard try node.stamp.unchanged(from.stamp) else { throw VerifiedTransfer.failure("项目在传输期间发生变化，已停止操作。") }
+          if let expected = try NativeTransferCopy.explicitACL(from.raw), try NativeTransferCopy.explicitACL(file.raw) != expected {
+            throw VerifiedTransfer.failure("目标校验失败，来源已保留。")
+          }
+        }
       }
     }
   }
@@ -368,6 +376,8 @@ enum VerifiedTransfer {
   private static func sourceUnchanged(_ before: [TransferNode], _ after: [TransferNode]) -> Bool {
     sameLayout(before, after) && zip(before, after).allSatisfy { a, b in
       guard a.stamp.unchanged(b.stamp) else { return false }
+      // On APFS, literal ._ files are verified as ordinary tree entries, not SMB metadata.
+      if a.stamp.precision != 100 { return true }
       switch (a.companion, b.companion) {
       case (nil, nil): return true
       case let (.some(a), .some(b)): return a.unchanged(b)
@@ -463,12 +473,18 @@ enum VerifiedTransfer {
       try hooks.checkpoint?(.afterCopy, source.url, payload.url)
       let copied = try payload.capture(control: hooks.control)
       guard sameLayout(before, copied) else { throw failure("文件内容校验失败，来源已保留。") }
+      guard owned.isEmpty || sourceUnchanged(before.compactMap { owned[$0.relative] }, copied) else { throw failure("目标校验失败，来源已保留。") }
+      // Only our metadata writes may update this baseline; rereading the path would trust a replacement.
+      var expectedTarget = Dictionary(uniqueKeysWithValues: copied.map { ($0.relative, $0) })
       var filesystem = statfs()
       guard fstatfs(stage.fd.raw, &filesystem) == 0 else { throw posix() }
       let fsName = withUnsafePointer(to: &filesystem.f_fstypename) { $0.withMemoryRebound(to: CChar.self, capacity: 16) { String(cString: $0) } }
       while true {
         do {
-          try payload.restore(before, target: try payload.capture(control: hooks.control), hooks: hooks, updated: { if direct { owned[$0.relative] = $0 } })
+          try payload.restore(before, from: source, target: before.compactMap { expectedTarget[$0.relative] }, hooks: hooks, updated: {
+            expectedTarget[$0.relative] = $0
+            if direct { owned[$0.relative] = $0 }
+          })
           try hooks.checkpoint?(.afterDates, source.url, payload.url)
           datesVerified = datesMatch(before, try payload.capture(control: hooks.control), filesystem: fsName)
           guard datesVerified else { throw failure("文件日期校验失败，来源已保留。") }
@@ -491,12 +507,12 @@ enum VerifiedTransfer {
       try hooks.control?.check()
       guard try sourceUnchanged(before, source.capture(control: hooks.control)) else { throw failure("项目在传输期间发生变化，已停止操作。") }
       let staged = try payload.capture(control: hooks.control)
-      guard sameLayout(before, staged), !datesVerified || datesMatch(before, staged, filesystem: fsName) else { throw failure("文件内容校验失败，来源已保留。") }
+      guard sameLayout(before, staged), sourceUnchanged(before.compactMap { expectedTarget[$0.relative] }, staged), !datesVerified || datesMatch(before, staged, filesystem: fsName) else { throw failure("文件内容校验失败，来源已保留。") }
       if !direct { try rename(payload, destination, hooks: hooks) }
       published = true
       try hooks.checkpoint?(.afterPublish, source.url, destination.url)
       let final = try destination.capture(control: hooks.control)
-      guard sameLayout(staged, final), zip(staged, final).allSatisfy({ $0.stamp.sameObject($1.stamp) }), !datesVerified || datesMatch(before, final, filesystem: fsName) else { throw failure("目标校验失败，来源已保留。") }
+      guard sameLayout(staged, final), zip(staged, final).allSatisfy({ $0.stamp.unchanged($1.stamp, ignoreChangeTime: !direct && $0.relative.isEmpty) }), !datesVerified || datesMatch(before, final, filesystem: fsName) else { throw failure("目标校验失败，来源已保留。") }
       if move {
         while true {
           do {
