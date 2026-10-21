@@ -52,7 +52,7 @@ run_brew() {
   "$brew" "$@" > "$work/brew.log" || { cat "$work/brew.log" >&2; return 1; }
 }
 progress '检查 Mac Explorer 更新' '檢查 Mac Explorer 更新' 'Checking for Mac Explorer updates'
-run_brew update
+run_brew update --quiet
 run_brew tap qixiaoyu27/tap
 "$brew" info --json=v2 --cask "$cask" > "$work/info.json"
 latest=$(/usr/bin/plutil -extract casks.0.version raw -o - "$work/info.json")
