@@ -70,9 +70,10 @@ python3 -I native/scripts/check-vcs.py
 python3 -I native/scripts/check-archives.py
 python3 -I native/scripts/check-localization.py
 python3 -I native/scripts/check-native-install.py
+python3 -I scripts/check-homebrew-install.py
 ```
 
-`check-core.py` 覆盖目录、过滤/排序、文件操作、属性、监听、快速访问、最新核心能力、网络解析、回收站、更新与系统文件查看器，也可传入检查名运行单项。`check-trash.py` 专测撤销身份和模拟多卷回收站，不调用用户真实 Trash。Git/SVN 检查创建本地临时仓库和仓库服务端；安装检查用签名夹具和临时安装目录，不覆盖日常应用。
+`check-core.py` 覆盖目录、过滤/排序、文件操作、属性、监听、快速访问、最新核心能力、网络解析、回收站、更新与系统文件查看器，也可传入检查名运行单项。`check-trash.py` 专测撤销身份和模拟多卷回收站，不调用用户真实 Trash。Git/SVN 检查创建本地临时仓库和仓库服务端；原生安装检查用签名夹具和临时安装目录。`check-homebrew-install.py` 使用隔离命令夹具检查 Homebrew 安装、接管、更新、语言和失败处理；这些检查均不覆盖日常应用。
 
 隔离 AppKit 检查：
 
