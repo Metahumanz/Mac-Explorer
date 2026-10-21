@@ -220,7 +220,7 @@ final class FileRowView: NSTableRowView {
   override func mouseEntered(with event: NSEvent) { hovered = true }
   override func mouseExited(with event: NSEvent) { hovered = false }
   override func drawBackground(in dirtyRect: NSRect) {
-    (hovered && !isSelected ? ExplorerPalette.rowHover : ExplorerPalette.surface).setFill()
+    ExplorerPalette.surface.setFill()
     NSBezierPath(roundedRect: bounds, xRadius: 3, yRadius: 3).fill()
   }
   override func drawSelection(in dirtyRect: NSRect) {
@@ -429,7 +429,7 @@ final class ItemSurface: SurfaceView {
   override func mouseExited(with event: NSEvent) { hovered = false }
   override func draw(_ dirtyRect: NSRect) {
     ExplorerPalette.surface.setFill(); bounds.fill()
-    if selected || hovered { (selected ? ExplorerPalette.selection : ExplorerPalette.rowHover).setFill(); NSBezierPath(roundedRect: bounds, xRadius: 3, yRadius: 3).fill() }
+    if selected { ExplorerPalette.selection.setFill(); NSBezierPath(roundedRect: bounds, xRadius: 3, yRadius: 3).fill() }
     if bottomLine { ExplorerPalette.border.setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill() }
   }
 }
