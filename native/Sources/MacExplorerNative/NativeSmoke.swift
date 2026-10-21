@@ -186,6 +186,7 @@ enum NativeSmoke {
       checks += try await NativeVCSEditingChecks.run()
       checks += try await NativePaneChecks.run()
       checks += try await NativeClipboardChecks.run()
+      checks += try await NativeTransferPanelChecks.run()
       checks += try await NativeLanguageChecks.run()
       checks += try await NativeAddressTabChecks.run(source: browser)
       checks += try NativeShortcutChecks.run()

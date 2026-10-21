@@ -7,7 +7,7 @@ import tempfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="explorer-trash-build-") as temporary:
-    sources = [root / "Sources" / "ExplorerCore" / f"{name}.swift" for name in ["Localization", "FileEntry", "DirectoryReader", "FileActions", "TrashStore"]]
+    sources = [root / "Sources" / "ExplorerCore" / f"{name}.swift" for name in ["Localization", "FileEntry", "DirectoryReader", "VerifiedTransfer", "FileTransferControl", "AppleDoubleCompanion", "FileActions", "TrashStore"]]
     for name in ["FileActionChecks", "TrashChecks"]:
         executable = pathlib.Path(temporary) / name
         subprocess.run([

@@ -51,6 +51,28 @@ struct PropertiesChecks {
     try check(cancelled, "Properties traversal cooperates with cancellation")
     try check(try Data(contentsOf: folder.appendingPathComponent("file.txt")) == Data("abc".utf8), "Source payload preserved")
     try check(try Data(contentsOf: outside.appendingPathComponent("not-counted.bin")).count == 8192, "External target preserved")
+    let propertyFile = folder.appendingPathComponent("file.txt")
+    let birth = Date(timeIntervalSince1970: 1_600_000_000), modified = Date(timeIntervalSince1970: 1_600_000_100)
+    try fm.setAttributes([.creationDate: birth, .modificationDate: modified], ofItemAtPath: propertyFile.path)
+    let dates = try FilePropertiesReader.read([propertyFile])
+    try check(dates.created == birth && dates.modified == modified, "Properties re-read current filesystem dates")
+    try fm.setAttributes([.modificationDate: modified.addingTimeInterval(100)], ofItemAtPath: propertyFile.path)
+    try check(try FilePropertiesReader.read([propertyFile]).modified == modified.addingTimeInterval(100), "Properties do not retain a previous date snapshot")
+    try check(try FilePropertiesReader.read([propertyFile, folder.appendingPathComponent("hardlink.txt")]).created == nil, "Multiple selections have no single creation date")
+    for epoch in [-86_400.0, 0.0] {
+      let birth = Date(timeIntervalSince1970: epoch)
+      // Foundation's setter does not establish negative creation times on this host.
+      // Prepare the raw filesystem value directly before testing the reader.
+      let descriptor = open(propertyFile.path, O_RDONLY)
+      guard descriptor >= 0 else { throw VerifiedTransfer.posix() }
+      var attributes = attrlist(); attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
+      attributes.commonattr = attrgroup_t(ATTR_CMN_CRTIME | ATTR_CMN_MODTIME)
+      var times = [timespec(tv_sec: Int(epoch), tv_nsec: 0), timespec(tv_sec: 100, tv_nsec: 0)]
+      let result = times.withUnsafeMutableBytes { fsetattrlist(descriptor, &attributes, $0.baseAddress, $0.count, 0) }
+      close(descriptor)
+      guard result == 0 else { throw VerifiedTransfer.posix() }
+      try check(try FilePropertiesReader.read([propertyFile]).created == birth, "Valid pre-1970 and Unix-epoch creation dates remain visible")
+    }
     print("PropertiesChecks: \(count) assertions passed.")
   }
 }

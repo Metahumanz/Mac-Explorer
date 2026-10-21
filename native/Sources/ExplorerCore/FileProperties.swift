@@ -9,6 +9,8 @@ public struct FileProperties: Sendable {
   public let skipped: Int
   public let symlinks: Int
   public let readOnly: Bool?
+  public let created: Date?
+  public let modified: Date?
 }
 
 public enum FilePropertiesReader {
@@ -51,6 +53,19 @@ public enum FilePropertiesReader {
     }
     try Task.checkCancellation()
     let readOnly: Bool? = paths.count == 1 ? paths[0].withCString { Darwin.access($0, W_OK) != 0 } : nil
-    return FileProperties(size: size, allocated: allocated, files: files, folders: folders, skipped: skipped, symlinks: symlinks, readOnly: readOnly)
+    // Read dates after the scan, rather than reusing the directory listing snapshot.
+    let latest = paths.count == 1 ? try info(paths[0]) : nil
+    func date(_ value: timespec) -> Date { Date(timeIntervalSince1970: Double(value.tv_sec) + Double(value.tv_nsec) / 1_000_000_000) }
+    let created: Date?
+    if let latest {
+      let birth = latest.st_birthtimespec
+      // Negative Unix timestamps are valid. For an all-zero stat value, ask the
+      // filesystem's optional creation-date API instead of inventing an unavailable date.
+      if birth.tv_sec == 0 && birth.tv_nsec == 0 {
+        created = (try? URL(fileURLWithPath: paths[0]).resourceValues(forKeys: [.creationDateKey]))?.creationDate
+      } else { created = date(birth) }
+    } else { created = nil }
+    let modified = latest.map { date($0.st_mtimespec) }
+    return FileProperties(size: size, allocated: allocated, files: files, folders: folders, skipped: skipped, symlinks: symlinks, readOnly: readOnly, created: created, modified: modified)
   }
 }

@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix="explorer-native-archives-") as temporar
     member = tarfile.TarInfo("large"); member.size = 21 * 1024 ** 3
     (fixtures / "too-large.tar").write_bytes(member.tobuf() + b"\0" * 1024)
     (fixtures / "corrupt.zip").write_bytes(b"invalid archive")
-    sources = [root / "Sources" / "ExplorerCore" / name for name in ["FileActions.swift", "NativeCommand.swift", "NativeArchives.swift", "Localization.swift"]]
+    sources = [root / "Sources" / "ExplorerCore" / name for name in ["FileActions.swift", "VerifiedTransfer.swift", "FileTransferControl.swift", "AppleDoubleCompanion.swift", "NativeCommand.swift", "NativeArchives.swift", "Localization.swift"]]
     subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-swift-version", "5", "-O", "-target", f"{platform.machine()}-apple-macos13.0", *map(str, sources), str(root / "scripts" / "ArchiveChecks.swift"), "-o", str(executable)], check=True)
     import os
     subprocess.run([str(executable), str(fixtures)], env={**os.environ, "MAC_EXPLORER_ARCHIVE_READER": str(helper)}, check=True)

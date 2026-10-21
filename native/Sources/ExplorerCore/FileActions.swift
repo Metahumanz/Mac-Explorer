@@ -25,11 +25,18 @@ public struct FileActionResult: Sendable {
   public let errors: [String]
   /// Only completed, reversible operations; pass these to undo in their original order.
   public let changes: [FileActionChange]
+  public let transfers: [FileTransferItem]
 
-  public init(succeeded: [URL], errors: [String], changes: [FileActionChange]) {
+  /// Failed moves keep their original source paths and remain available for retry.
+  public var consumedMoveSources: [URL] {
+    changes.filter { $0.kind == .move }.compactMap(\.source)
+  }
+
+  public init(succeeded: [URL], errors: [String], changes: [FileActionChange], transfers: [FileTransferItem] = []) {
     self.succeeded = succeeded
     self.errors = errors
     self.changes = changes
+    self.transfers = transfers
   }
 }
 
@@ -43,7 +50,8 @@ public enum FileActions {
       let source = try existingURL(template)
       let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
       guard values.isRegularFile == true, values.isSymbolicLink != true else { throw failure(NL("文档模板必须是普通文件。")) }
-      try copyExclusively(source, to: destination)
+      try requireAbsent(destination)
+      try FileManager.default.copyItem(at: source, to: destination)
       return FileActionChange(source: nil, destination: destination, kind: .create)
     }
     // Foundation's createFile can truncate, and createDirectory accepts an existing directory.
@@ -102,11 +110,21 @@ public enum FileActions {
     return FileActionChange(source: source, destination: destination, kind: .move)
   }
 
-  public static func transfer(_ sources: [URL], to directory: URL, move: Bool) -> FileActionResult {
+  public static func transfer(_ sources: [URL], to directory: URL, move: Bool, control: FileTransferControl? = nil) -> FileActionResult {
+    var hooks = TransferHooks(); hooks.control = control
+    return transfer(sources, to: directory, move: move, hooks: hooks)
+  }
+
+  static func transfer(_ sources: [URL], to directory: URL, move: Bool, hooks: TransferHooks) -> FileActionResult {
     var succeeded: [URL] = []
     var errors: [String] = []
     var changes: [FileActionChange] = []
-    for input in sources {
+    var transfers: [FileTransferItem] = []
+    var seen = Set<URL>()
+    items: for input in sources where seen.insert(input).inserted {
+      if hooks.control?.isCancelled == true { if errors.isEmpty { errors.append(NL("已取消")) }; break }
+      var destinationName = input.lastPathComponent
+      while true {
       do {
         let source = try existingURL(input)
         if move { try validateModificationSource(source) }
@@ -114,27 +132,48 @@ public enum FileActions {
         try rejectDescendant(source, directory: directory)
         let sameFolder = try sameDirectory(source.deletingLastPathComponent(), directory)
         if move && sameFolder {
+          transfers.append(FileTransferItem(source: input, destination: source, outcome: .moved, method: .noOp, contentVerified: false, datesVerified: false, recoveryLocations: [], message: nil))
           succeeded.append(source)
-          continue
+          continue items
         }
         let destination: URL
         if sameFolder {
-          destination = try copyBeside(source, in: directory)
+          destination = try copyBeside(source, in: directory, hooks: hooks, transfers: &transfers)
+          if let message = transfers.last?.message { errors.append(message) }
         } else {
-          destination = directory.appendingPathComponent(source.lastPathComponent)
-          if move {
-            try moveExclusively(source, to: destination)
-          } else {
-            try copyExclusively(source, to: destination)
-          }
+          destination = directory.appendingPathComponent(destinationName)
+          let item = try VerifiedTransfer.perform(source, to: destination, move: move, hooks: hooks)
+          transfers.append(item)
+          if let message = item.message { errors.append(message) }
         }
         succeeded.append(destination)
         changes.append(FileActionChange(source: source, destination: destination, kind: move ? .move : .copy))
+        break
       } catch {
+        let typed = error as? FileTransferFailure
+        let canRetry = typed == nil || typed?.item.outcome == .failed
+        if canRetry, typed?.handled != true, hooks.control?.isCancelled != true, !(error is CancellationError) {
+          let candidate = directory.appendingPathComponent(destinationName)
+          let collision = (try? entryInfo(candidate)) != nil
+          let decision = hooks.control?.decide(FileTransferProblem(source: input, destination: candidate, message: error.localizedDescription, propertyLoss: false, collision: collision)) ?? .skip
+          if decision == .keepBoth, collision {
+            for number in 2...10_000 {
+              guard let name = try? numberedName(input, suffix: " (\(number))") else { break }
+              if (try? requireAbsent(directory.appendingPathComponent(name))) != nil { destinationName = name; break }
+            }
+            if destinationName != candidate.lastPathComponent { continue }
+          }
+          if decision == .retry { continue }
+          if decision == .cancel { hooks.control?.cancel() }
+        }
+        if let failure = error as? FileTransferFailure { transfers.append(failure.item) }
+        else { transfers.append(FileTransferItem(source: input, destination: directory.appendingPathComponent(input.lastPathComponent), outcome: .failed, method: .systemCopy, contentVerified: false, datesVerified: false, recoveryLocations: [], message: error.localizedDescription)) }
         errors.append("\(input.path): \(error.localizedDescription)")
+        break
+      }
       }
     }
-    return FileActionResult(succeeded: succeeded, errors: errors, changes: changes)
+    return FileActionResult(succeeded: succeeded, errors: errors, changes: changes, transfers: transfers)
   }
 
   public static func trash(_ sources: [URL], testTrash: URL? = nil) -> FileActionResult {
@@ -170,11 +209,14 @@ public enum FileActions {
     return FileActionResult(succeeded: succeeded, errors: errors, changes: changes)
   }
 
-  public static func undo(_ changes: [FileActionChange], testTrash: URL? = nil) -> FileActionResult {
+  public static func undo(_ changes: [FileActionChange], testTrash: URL? = nil, control: FileTransferControl? = nil) -> FileActionResult {
     var succeeded: [URL] = []
     var errors: [String] = []
     var inverses: [FileActionChange] = []
-    for change in changes.reversed() {
+    var transfers: [FileTransferItem] = []
+    items: for change in changes.reversed() {
+      if control?.isCancelled == true { if errors.isEmpty { errors.append(NL("已取消")) }; break }
+      while true {
       do {
         guard let expected = change.destinationIdentity, try identity(change.destination) == expected else {
           throw failure(NL("项目已被其他文件替换，无法撤销。"))
@@ -195,7 +237,7 @@ public enum FileActions {
           let originalURL = try validatedURL(original)
           if current.path == originalURL.path {
             succeeded.append(current)
-            continue
+            continue items
           }
           let parent = try directoryURL(originalURL.deletingLastPathComponent())
           try rejectDescendant(current, directory: parent)
@@ -205,16 +247,29 @@ public enum FileActions {
             succeeded.append(inverse.destination)
             inverses.append(inverse)
           } else {
-            try moveExclusively(current, to: originalURL)
+            var hooks = TransferHooks(); hooks.control = control
+            let item = try VerifiedTransfer.perform(current, to: originalURL, move: true, hooks: hooks)
+            transfers.append(item)
+            if let message = item.message { errors.append(message) }
             succeeded.append(originalURL)
             inverses.append(FileActionChange(source: current, destination: originalURL, kind: .move))
           }
         }
+        break
       } catch {
+        let typed = error as? FileTransferFailure
+        if typed?.handled != true, control?.isCancelled != true, !(error is CancellationError), typed == nil || typed?.item.outcome == .failed {
+          let choice = control?.decide(FileTransferProblem(source: change.destination, destination: change.source ?? change.destination, message: error.localizedDescription, propertyLoss: false)) ?? .skip
+          if choice == .retry { continue }
+          if choice == .cancel { control?.cancel() }
+        }
+        if let failure = error as? FileTransferFailure { transfers.append(failure.item) }
         errors.append("\(change.destination.path): \(error.localizedDescription)")
+        break
+      }
       }
     }
-    return FileActionResult(succeeded: succeeded, errors: errors, changes: inverses)
+    return FileActionResult(succeeded: succeeded, errors: errors, changes: inverses, transfers: transfers)
   }
 
   public static func identity(_ url: URL) throws -> String {
@@ -336,29 +391,7 @@ public enum FileActions {
   }
 
   private static func moveExclusively(_ source: URL, to destination: URL) throws {
-    try requireAbsent(destination)
-    let result = source.path.withCString { sourcePath in
-      destination.path.withCString { destinationPath in
-        Darwin.renamex_np(sourcePath, destinationPath, UInt32(RENAME_EXCL))
-      }
-    }
-    guard result != 0 else { return }
-    let code = errno
-    if code == EXDEV || code == ENOTSUP || code == ENOSYS {
-      // Foundation documents that moveItem rejects existing destinations. It handles
-      // cross-volume moves and filesystems without exclusive rename support. This fallback
-      // is not atomic; in particular, a cross-volume move includes a copy/removal phase.
-      try FileManager.default.moveItem(at: source, to: destination)
-    } else {
-      throw posixError(destination, code: code)
-    }
-  }
-
-  private static func copyExclusively(_ source: URL, to destination: URL) throws {
-    try requireAbsent(destination)
-    // copyItem copies symbolic-link objects (including broken links), not their targets,
-    // and documents an error when the destination exists. Recursive copies are not atomic.
-    try FileManager.default.copyItem(at: source, to: destination)
+    _ = try VerifiedTransfer.perform(source, to: destination, move: true)
   }
 
   private static func isCollision(_ error: Error) -> Bool {
@@ -380,12 +413,13 @@ public enum FileActions {
     return name
   }
 
-  private static func copyBeside(_ source: URL, in directory: URL) throws -> URL {
+  private static func copyBeside(_ source: URL, in directory: URL, hooks: TransferHooks, transfers: inout [FileTransferItem]) throws -> URL {
     for number in 1...10_000 {
       let suffix = " - " + NL("副本") + (number == 1 ? "" : " (\(number))")
       let destination = directory.appendingPathComponent(try numberedName(source, suffix: suffix))
       do {
-        try copyExclusively(source, to: destination)
+        let item = try VerifiedTransfer.perform(source, to: destination, move: false, hooks: hooks)
+        transfers.append(item)
         return destination
       } catch {
         if !isCollision(error) { throw error }
