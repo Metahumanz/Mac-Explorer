@@ -26,7 +26,7 @@
 打开「终端」，执行：
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/main/scripts/install-homebrew.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/heads/main/scripts/install-homebrew.sh)"
 ```
 
 自动安装所需的 Homebrew，再安装 Mac Explorer；已有应用会检查并更新，保留个人文件和偏好设置。以后检查更新也运行同一条命令。首次安装 Homebrew 时可能需要输入 Mac 登录密码。

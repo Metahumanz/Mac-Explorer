@@ -98,7 +98,7 @@ Apple Silicon（M 系列）· macOS 13+。默认安装到 `/Applications/Mac Exp
 - 每个更新项就地署名。PR 使用 `（[#编号](PR链接)，[@作者](作者链接)）`；无 PR 的直接提交使用 `（[@作者](作者链接)，[短哈希](提交链接)）`。
 - 从上次正式版本到本次 tag 的 commits / merged PR 核实作者；不能只署名合并人，不重复算旧贡献，不虚构 PR 编号。
 - 反馈者放单独的“贡献者”段落，不能写成代码作者。
-- 面向用户的安装与更新统一使用 `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/main/scripts/install-homebrew.sh)"`。该入口自动准备 Homebrew、接管已有应用并按实际版本安装或更新，最后按系统语言输出结果与 🌟 Star 邀请。公开文案只描述当前用法，不写改动过程；提供 DMG 备用方式。应用内更新及历史兼容脚本继续保留，已发布 tag 不修改。
+- 面向用户的安装与更新统一使用 `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/qixiaoyu27/Mac-Explorer/refs/heads/main/scripts/install-homebrew.sh)"`。该入口自动准备 Homebrew、接管已有应用并按实际版本安装或更新，最后按系统语言输出结果与 🌟 Star 邀请。公开文案只描述当前用法，不写改动过程；提供 DMG 备用方式。应用内更新及历史兼容脚本继续保留，已发布 tag 不修改。
 
 ## GitHub Release
 
