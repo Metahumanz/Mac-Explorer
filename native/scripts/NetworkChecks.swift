@@ -23,15 +23,45 @@ struct NetworkChecks {
     try rejected("relative mount result") { _ = try NativeNetwork.mountedDirectory(["relative"]) }
     try rejected("missing mount result") { _ = try NativeNetwork.mountedDirectory([fixture.appendingPathComponent("missing").path]) }
     try rejected("empty mount result") { _ = try NativeNetwork.mountedDirectory([]) }
-    let root = NativeVolume(url: URL(fileURLWithPath: "/"), name: "root", total: 10, free: 5, local: true, canEject: true)
-    let external = NativeVolume(url: URL(fileURLWithPath: "/Volumes/Fixture"), name: "Fixture", total: 10, free: 5, local: true, canEject: true)
-    let network = NativeVolume(url: URL(fileURLWithPath: "/Volumes/Network"), name: "Network", total: 10, free: 5, local: false, canEject: true)
-    try check(!root.canEject && root.local && network.isNetwork, "Root protected, local/network types retained")
+    let root = NativeVolume(url: URL(fileURLWithPath: "/"), name: "root", total: 10, free: 5, kind: .local, canEject: true)
+    let external = NativeVolume(url: URL(fileURLWithPath: "/Volumes/Fixture"), name: "Fixture", total: 10, free: 5, kind: .local, canEject: true)
+    let network = NativeVolume(url: URL(fileURLWithPath: "/Volumes/Network"), name: "Network", total: 10, free: 5, kind: .network, canEject: true)
+    try check(!root.canEject && root.kind == .local && network.isNetwork, "Root protected, local/network types retained")
     try check(NativeVolumes.ejectable(external.url, among: [root, external, network]) == external, "Validate exact ejectable mount")
     for url in [root.url, external.url.appendingPathComponent("file"), URL(fileURLWithPath: "/Volumes/Missing"), URL(string: "smb://server/share")!, URL(string: "file://foreign/Volumes/Fixture")!, URL(string: "file:///Volumes/Fixture?flag=1")!] { try rejected("invalid eject target") { _ = try NativeVolumes.ejectable(url, among: [root, external]) } }
+    let unknown = NativeVolume(url: external.url, name: "Unknown", total: nil, free: nil, kind: .unknown, canEject: false)
+    try check(!unknown.isNetwork && unknown.capacityState == .unknown && unknown.usedFraction == nil, "Unknown type and capacities stay unknown")
+    try check(network.usedFraction == 0.5, "Known capacity has a bounded occupied proportion")
+    for (total, free, state) in [(Int64?(0), Int64?(0), NativeVolumeCapacityState.known), (nil, 2, .partial), (10, nil, .partial), (-1, 2, .invalid), (10, -1, .invalid), (10, 11, .invalid), (0, 1, .invalid), (nil, nil, .unknown)] {
+      let volume = NativeVolume(url: external.url, name: "Capacity", total: total, free: free, kind: .local, canEject: true)
+      try check(volume.capacityState == state && volume.usedFraction == nil, "Missing, zero and invalid capacities do not claim an occupied proportion")
+    }
+    for free in [Int64(0), Int64.max] {
+      let volume = NativeVolume(url: external.url, name: "Extreme", total: Int64.max, free: free, kind: .local, canEject: false)
+      try check(volume.usedFraction == (free == 0 ? 1 : 0), "Large capacities do not overflow")
+    }
+    let unavailable = NativeVolume(url: external.url, name: "Offline", total: 10, free: 5, kind: .network, canEject: true, metadataUnavailable: true)
+    try check(unavailable.capacityState == .unavailable && unavailable.total == nil && unavailable.free == nil, "Read failure does not reuse stale capacities")
+    let mounts = [URL(fileURLWithPath: "/Volumes/SMB"), root.url, URL(fileURLWithPath: "/Volumes/Unknown"), URL(fileURLWithPath: "/Volumes/Denied"), URL(fileURLWithPath: "/Volumes/Missing"), external.url, external.url, fixture]
+    let reader = NativeVolumeReader(mountedURLs: { mounts }, mountKinds: { ["/": .local, "/Volumes/SMB": .network, "/Volumes/Denied": .network] }, attributes: { url in
+      if url.lastPathComponent == "Denied" { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES)) }
+      if url.lastPathComponent == "Missing" { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT)) }
+      return NativeVolumeAttributes(name: url.lastPathComponent, total: url.lastPathComponent == "SMB" ? 10 : nil, free: nil, local: url == external.url ? true : url.lastPathComponent == "SMB" ? true : nil, ejectable: url == root.url)
+    })
+    let modeled = try NativeVolumes.list(using: reader)
+    try check(modeled.count == 6 && modeled.first?.path == "/" && modeled.filter { $0.path == external.path }.count == 1, "Volume list keeps root first, filters non-volume paths and deduplicates")
+    try check(modeled.first { $0.path == "/Volumes/SMB" }?.kind == .network, "Kernel mount classification overrides contradictory cached URL flags")
+    try check(modeled.first { $0.path == "/Volumes/SMB" }?.capacityState == .partial, "Partial metadata retains the known capacity")
+    try check(modeled.first { $0.path == external.path }?.kind == .local, "URL local flag remains a fallback when the mount snapshot lacks a path")
+    try check(modeled.first { $0.path == "/Volumes/Unknown" }?.kind == .unknown, "No mount evidence and no local flag do not imply local")
+    try check(modeled.first { $0.path == "/Volumes/Denied" }?.kind == .network && modeled.first { $0.path == "/Volumes/Denied" }?.capacityState == .unavailable, "Per-volume permission error keeps the known network mount visible")
+    try check(modeled.first { $0.path == "/Volumes/Missing" }?.kind == .unknown && modeled.first { $0.path == "/Volumes/Missing" }?.capacityState == .unavailable, "Disconnected mount remains an unavailable entry for this snapshot")
+    try check(modeled.first?.canEject == false, "Root remains protected even when resource flags claim ejectable")
+    try rejected("volume enumeration failure") { _ = try NativeVolumes.list(using: NativeVolumeReader(mountedURLs: { nil }, mountKinds: { [:] }, attributes: { _ in fatalError("No attributes after list failure") })) }
+    try check(try NativeVolumes.list(using: NativeVolumeReader(mountedURLs: { [] }, mountKinds: { [:] }, attributes: { _ in fatalError("No empty attributes") })).isEmpty, "An empty snapshot is distinct from enumeration failure")
     let snapshot = try NativeVolumes.list()
     try check(snapshot.contains(where: { $0.path == "/" && !$0.canEject }), "Read-only real root volume metadata")
-    try check(snapshot.allSatisfy { $0.total >= 0 && $0.free >= 0 }, "Nonnegative real capacity metadata")
+    try check(snapshot.allSatisfy { ($0.total ?? 0) >= 0 && ($0.free ?? 0) >= 0 }, "Nonnegative real capacity metadata")
     let address = try NativeNetwork.validate("smb://fixture/share"), token = UnsafeMutableRawPointer(bitPattern: 1)!
     let succeeded = NativeMountAPI(start: { _, queue, report in queue.asyncAfter(deadline: .now() + 0.01) { report(0, [fixture.path]) }; return (0, token) }, cancel: { _ in fatalError("Unexpected cancellation") })
     let mounted = try await NativeMountRequest(api: succeeded).run(address, timeout: 1)

@@ -52,6 +52,21 @@ enum LatestCoreChecks {
     try expect(places.merge(imported, defaultPaths: ["/Downloads"], excludedPaths: ["/Cloud"]) == 0, "Repeated import adds no duplicates")
     places.save(to: defaults)
     try expect(QuickAccessState(defaults: defaults).importedNames[folder.standardizedFileURL.path] == "收藏名称", "Imported names survive reload")
+    try expect(NativeStartLocation.load(defaults) == .home, "Unset startup setting retains the personal folder default")
+    defaults.set("computer", forKey: NativeStartLocation.preferenceKey)
+    try expect(NativeStartLocation.load(defaults).url(home: root).absoluteString == "explorer://computer", "This PC is a virtual location rather than a filesystem path")
+    try expect(NativeStartLocation.initialURL(explicit: nil, defaults: defaults, home: root).absoluteString == "explorer://computer", "A normal start uses the selected landing page")
+    try expect(NativeStartLocation.initialURL(explicit: folder.path, defaults: defaults, home: root).path == folder.path, "An explicit local path overrides This PC")
+    try expect(NativeStartLocation.initialURL(explicit: folder.absoluteString, defaults: defaults, home: root) == folder, "An explicit file URL remains supported")
+    try expect(NativeStartLocation.initialURL(explicit: "explorer://network", defaults: defaults, home: root).absoluteString == "explorer://network", "An explicit virtual path overrides the default")
+    defaults.set("home", forKey: NativeStartLocation.preferenceKey)
+    try expect(NativeStartLocation.initialURL(explicit: nil, defaults: defaults, home: root) == root, "Personal folder uses the caller's configured home")
+    try expect(NativeStartLocation.initialURL(explicit: "explorer://computer", defaults: defaults, home: root).absoluteString == "explorer://computer", "An explicit This PC URL overrides personal folder")
+    for invalid in ["network", "trash", "smb://fixture/share", folder.path, 1, ["computer"]] as [Any] {
+      defaults.set(invalid, forKey: NativeStartLocation.preferenceKey)
+      try expect(NativeStartLocation.load(defaults).url(home: root) == root, "Unknown startup values safely fall back without opening arbitrary paths")
+    }
+    defaults.removeObject(forKey: NativeStartLocation.preferenceKey)
     let windows = [NativeSavedWindow(locations: [folder.absoluteString, "explorer://trash", "https://example.com", "file://evil.example/etc/passwd", "explorer://unknown"], frame: "{{0, 0}, {1000, 700}}")]
     try NativeSessions.save(windows, to: defaults)
     try expect(NativeSessions.load(defaults).first?.locations == [folder.absoluteString, "explorer://trash"], "Session persistence rejects remote URLs and unknown virtual locations")

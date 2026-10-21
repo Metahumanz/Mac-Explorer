@@ -29,7 +29,14 @@ enum NativeLanguageChecks {
         a !== old, a.newButton.title == NL("新建"), b.newButton.title == a.newButton.title,
         a.tabs.count == count, a.directory.path == root.path, defaults.string(forKey: "language") == language,
         ExplorerDialogs.isPresenting(in: first) else { throw NativeSmoke.Failure(description: "Language rebuild did not preserve windows, tabs or settings: \(language)") }
+      let volume = NativeVolume(url: root, name: "Language volume", total: nil, free: nil, kind: .network, canEject: false)
+      let card = DriveCard(volume: volume)
+      guard card.accessibilityLabel()?.contains(NL("网络驱动器")) == true, card.accessibilityLabel()?.contains(NL("容量未知")) == true else { throw NativeSmoke.Failure(description: "Volume localization missing: \(language)") }
+      checks.append("Language \(language) localizes network drive type and unknown capacity")
       checks.append("Language \(language) rebuilds both windows and retains tabs, location, preference and settings")
+      guard a.table.tableColumns.first(where: { $0.identifier.rawValue == "created" })?.title == NL("创建日期"),
+        b.sortMenu().contains(where: { $0.title == NL("创建日期") }) else { throw NativeSmoke.Failure(description: "Created-date localization missing: \(language)") }
+      checks.append("Language \(language) localizes the Created column and sort menu")
     }
     return checks
   }

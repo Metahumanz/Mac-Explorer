@@ -3,27 +3,83 @@ import AppKit
 import NetFS
 import Darwin
 
+public enum NativeVolumeKind: String, Sendable { case local, network, unknown }
+public enum NativeVolumeCapacityState: String, Sendable { case known, partial, unknown, invalid, unavailable }
+
 public struct NativeVolume: Equatable, Sendable {
   public let url: URL
   public let name: String
-  public let total: Int64
-  public let free: Int64
-  public let local: Bool
+  public let total: Int64?
+  public let free: Int64?
+  public let kind: NativeVolumeKind
   public let canEject: Bool
-  public var isNetwork: Bool { !local }
+  public let capacityState: NativeVolumeCapacityState
+  public var isNetwork: Bool { kind == .network }
   public var path: String { url.path }
-  public init(url: URL, name: String, total: Int64, free: Int64, local: Bool, canEject: Bool) {
-    self.url = url; self.name = name; self.total = max(0, total); self.free = max(0, free); self.local = local; self.canEject = url.path != "/" && canEject
+  /// Nil means no trustworthy proportion: missing/error, contradictory values, or a zero total.
+  public var usedFraction: Double? {
+    guard capacityState == .known, let total, total > 0, let free else { return nil }
+    return min(1, max(0, 1 - Double(free) / Double(total)))
+  }
+  public init(url: URL, name: String, total: Int64?, free: Int64?, kind: NativeVolumeKind, canEject: Bool, metadataUnavailable: Bool = false) {
+    self.url = url; self.name = name; self.kind = kind; self.canEject = url.path != "/" && canEject
+    self.total = metadataUnavailable ? nil : total.flatMap { $0 >= 0 ? $0 : nil }
+    self.free = metadataUnavailable ? nil : free.flatMap { $0 >= 0 ? $0 : nil }
+    if metadataUnavailable { capacityState = .unavailable }
+    else if total.map({ $0 < 0 }) == true || free.map({ $0 < 0 }) == true || (total != nil && free != nil && free! > total!) { capacityState = .invalid }
+    else if total != nil && free != nil { capacityState = .known }
+    else if total != nil || free != nil { capacityState = .partial }
+    else { capacityState = .unknown }
+  }
+}
+
+struct NativeVolumeAttributes {
+  var name: String? = nil
+  var total: Int64? = nil
+  var free: Int64? = nil
+  var local: Bool? = nil
+  var ejectable = false
+}
+
+/// Per-read dependencies keep errors and missing fields testable without contacting or ejecting a server.
+struct NativeVolumeReader {
+  var mountedURLs: () -> [URL]?
+  var mountKinds: () -> [String: NativeVolumeKind]
+  var attributes: (URL) throws -> NativeVolumeAttributes
+  static var live: Self {
+    let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey, .volumeIsLocalKey, .volumeIsEjectableKey, .volumeIsRemovableKey]
+    return Self(mountedURLs: { FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) }, mountKinds: {
+      // A private buffer is essential: address suggestions and cards can load concurrently.
+      var buffer: UnsafeMutablePointer<statfs>?
+      let count = getmntinfo_r_np(&buffer, MNT_NOWAIT)
+      guard count > 0, let buffer else { return [:] }
+      defer { Darwin.free(buffer) }
+      var result: [String: NativeVolumeKind] = [:]
+      for index in 0..<Int(count) {
+        var entry = buffer[index]
+        let path = withUnsafePointer(to: &entry.f_mntonname) { $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) } }
+        result[path] = entry.f_flags & UInt32(MNT_LOCAL) == 0 ? .network : .local
+      }
+      return result
+    }, attributes: { url in
+      let values = try url.resourceValues(forKeys: keys)
+      return NativeVolumeAttributes(name: values.volumeName, total: values.volumeTotalCapacity.map(Int64.init), free: values.volumeAvailableCapacity.map(Int64.init), local: values.volumeIsLocal,
+        ejectable: values.volumeIsEjectable == true || values.volumeIsRemovable == true)
+    })
   }
 }
 
 public enum NativeVolumes {
-  public static func list() throws -> [NativeVolume] {
-    let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey, .volumeIsLocalKey, .volumeIsEjectableKey, .volumeIsRemovableKey]
-    return (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]) ?? []).compactMap { url in
-      guard url.path == "/" || url.path.hasPrefix("/Volumes/"), let values = try? url.resourceValues(forKeys: keys) else { return nil }
-      return NativeVolume(url: url, name: values.volumeName ?? url.lastPathComponent, total: Int64(values.volumeTotalCapacity ?? 0), free: Int64(values.volumeAvailableCapacity ?? 0), local: values.volumeIsLocal ?? true,
-        canEject: values.volumeIsEjectable == true || values.volumeIsRemovable == true || values.volumeIsLocal == false)
+  public static func list() throws -> [NativeVolume] { try list(using: .live) }
+  static func list(using reader: NativeVolumeReader) throws -> [NativeVolume] {
+    guard let urls = reader.mountedURLs() else { throw NativeNetwork.failure("无法读取已挂载的磁盘。") }
+    let kinds = reader.mountKinds()
+    var seen = Set<String>()
+    return urls.filter { ($0.path == "/" || $0.path.hasPrefix("/Volumes/")) && seen.insert($0.path).inserted }.map { url in
+      let values = try? reader.attributes(url)
+      let kind = kinds[url.path] ?? values?.local.map { $0 ? NativeVolumeKind.local : .network } ?? .unknown
+      return NativeVolume(url: url, name: values?.name ?? url.lastPathComponent, total: values?.total, free: values?.free, kind: kind,
+        canEject: values?.ejectable == true || kind == .network, metadataUnavailable: values == nil)
     }.sorted { a, b in if a.url.path == "/" { return b.url.path != "/" }; if b.url.path == "/" { return false }; return a.name.localizedStandardCompare(b.name) == .orderedAscending }
   }
   public static func eject(_ url: URL) throws -> [NativeVolume] {

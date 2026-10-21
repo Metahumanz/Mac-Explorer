@@ -3,6 +3,7 @@ import Foundation
 public enum EntrySort: String, CaseIterable, Sendable {
   case name
   case modified
+  case created
   case size
   case kind
 }
@@ -28,8 +29,10 @@ public enum EntryQuery {
       switch sort {
       case .name:
         order = left.name.compare(right.name, options: nameOptions, locale: locale)
-      case .modified:
-        switch (left.modified, right.modified) {
+      case .modified, .created:
+        let leftDate = sort == .created ? left.created : left.modified
+        let rightDate = sort == .created ? right.created : right.modified
+        switch (leftDate, rightDate) {
         case let (leftDate?, rightDate?): order = compare(leftDate, rightDate)
         case (nil, .some): order = .orderedAscending
         case (.some, nil): order = .orderedDescending

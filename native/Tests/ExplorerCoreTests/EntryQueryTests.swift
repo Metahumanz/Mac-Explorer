@@ -46,6 +46,20 @@ final class EntryQueryTests: XCTestCase {
     XCTAssertEqual(names(entries, sort: .modified, ascending: false), ["new", "old10", "old2", "unknown"])
   }
 
+  func testCreatedSortKeepsMissingEpochAndEarlyDatesDistinct() {
+    let entries = [entry("new", modified: -100, created: 200), entry("unknown", modified: 999),
+      entry("old10", created: 100), entry("old2", created: 100), entry("epoch", created: 0), entry("early", created: -1)]
+    XCTAssertEqual(names(entries, sort: .created), ["unknown", "early", "epoch", "old2", "old10", "new"])
+    XCTAssertEqual(names(entries, sort: .created, ascending: false), ["new", "old10", "old2", "epoch", "early", "unknown"])
+    let folders = [entry("file", created: -1), entry("folder", folder: true, created: 100)]
+    for ascending in [true, false] {
+      XCTAssertEqual(names(folders, sort: .created, ascending: ascending), ["folder", "file"])
+    }
+    let a = entry("same", created: 1, path: "a/same"), b = entry("same", created: 1, path: "b/same")
+    XCTAssertEqual(EntryQuery.apply([b, a], showHidden: true, query: "", sort: .created, ascending: true), [a, b])
+    XCTAssertEqual(EntryQuery.apply([a, b], showHidden: true, query: "", sort: .created, ascending: false), [b, a])
+  }
+
   func testKindSortAndNameTies() {
     let entries = [entry("z.txt"), entry("z.jpg"), entry("a.txt"), entry("a.jpg")]
     XCTAssertEqual(names(entries, sort: .kind), ["a.txt", "z.txt", "a.jpg", "z.jpg"])
@@ -112,6 +126,7 @@ final class EntryQueryTests: XCTestCase {
     folder: Bool = false,
     size: Int64 = 0,
     modified: TimeInterval? = nil,
+    created: TimeInterval? = nil,
     hidden: Bool = false,
     path: String? = nil
   ) -> FileEntry {
@@ -123,7 +138,8 @@ final class EntryQueryTests: XCTestCase {
       isPackage: false,
       size: size,
       modified: modified.map { Date(timeIntervalSince1970: $0) },
-      isHidden: hidden
+      isHidden: hidden,
+      created: created.map { Date(timeIntervalSince1970: $0) }
     )
   }
 }

@@ -111,9 +111,28 @@ enum NativeInputNavigationChecks {
       _ = navigation.handle(event)
       try check(browser.directory == root, "Main browser double-finger back works in \(mode)")
       try await NativeSmoke.until { !browser.loading }
+      window.contentView?.layoutSubtreeIfNeeded()
+      do {
+        let scroll = mode == .details ? browser.tableScroll : browser.collectionScroll
+        let originalStyle = scroll.scrollerStyle
+        defer {
+          scroll.scrollerStyle = originalStyle
+          browser.view.needsLayout = true
+          window.contentView?.layoutSubtreeIfNeeded()
+        }
+        for style in [NSScroller.Style.legacy, .overlay] {
+          scroll.scrollerStyle = style
+          browser.view.needsLayout = true
+          window.contentView?.layoutSubtreeIfNeeded()
+          let documentWidth = scroll.documentView?.bounds.width ?? 0
+          try check(documentWidth <= scroll.contentView.bounds.width + 1, "\(mode) content fits the viewport with \(style) scrollers")
+          checks.append("\(mode) content fits the viewport with \(style) scrollers")
+        }
+      }
+      event.fixturePoint = browser.content.convert(NSPoint(x: browser.content.bounds.midX, y: browser.content.bounds.midY), to: nil)
       event.fixtureDelta = -60; event.fixtureTimestamp = 2
       _ = navigation.handle(event)
-      try check(browser.directory == root.appendingPathComponent("Folder 2"), "Main browser double-finger forward works in \(mode)")
+      try check(browser.directory == root.appendingPathComponent("Folder 2"), "Main browser double-finger forward works in \(mode): current=\(browser.directory.absoluteString), expected=\(root.appendingPathComponent("Folder 2").absoluteString), loading=\(browser.loading), forwardEnabled=\(browser.forwardButton.isEnabled)")
       try await NativeSmoke.until { !browser.loading }
       browser.back()
       try await NativeSmoke.until { !browser.loading }

@@ -869,6 +869,15 @@ private final class EDSettingsBody: EDView {
     }
     group.arrange = { _ = arrangeAppearance($0.width) }
     content.flow.add(group) { 26 + arrangeAppearance($0) }
+    if let browser {
+      let startup = EDGroup(NL("启动位置"))
+      let destination = EDChoiceRow(title: NL("默认打开"), options: [(NL("此电脑"), "computer"), (NL("个人文件夹"), "home")], value: NativeStartLocation.load(browser.defaults).rawValue) { [weak browser] value in
+        guard let location = NativeStartLocation(rawValue: value) else { return }
+        browser?.defaults.set(location.rawValue, forKey: NativeStartLocation.preferenceKey)
+      }
+      startup.content.addSubview(destination); startup.arrange = { destination.frame = $0 }
+      content.flow.add(startup) { _ in 58 }
+    }
     let language = EDGroup(NL("语言"))
     let row = EDChoiceRow(title: NL("界面语言"), options: [(NL("跟随系统"), "system"), ("简体中文", "zh-CN"), ("繁體中文", "zh-TW"), ("English", "en")], value: browser?.defaults.string(forKey: "language") ?? "system") { [weak self] in self?.browser?.changeLanguage($0) }
     language.content.addSubview(row)
@@ -912,7 +921,7 @@ private final class EDSettingsBody: EDView {
       let layout = EDChoiceRow(title: NL("默认布局"), options: layouts, value: selectedLayout) { [weak self] value in
         guard let self else { return }; let parts = value.split(separator: ":"); self.folderDefaults["view"] = String(parts[0]); if parts.count == 2 { self.folderDefaults["iconSize"] = String(parts[1]) }; self.onFolderDefaults?(self.folderDefaults)
       }
-      let sort = EDChoiceRow(title: NL("默认排序"), options: [(NL("名称"), "name"), (NL("修改日期"), "modified"), (NL("类型"), "kind"), (NL("大小"), "size")], value: folderDefaults["sort"] ?? "name") { [weak self] value in guard let self else { return }; self.folderDefaults["sort"] = value; self.onFolderDefaults?(self.folderDefaults) }
+      let sort = EDChoiceRow(title: NL("默认排序"), options: [(NL("名称"), "name"), (NL("修改日期"), "modified"), (NL("创建日期"), "created"), (NL("类型"), "kind"), (NL("大小"), "size")], value: folderDefaults["sort"] ?? "name") { [weak self] value in guard let self else { return }; self.folderDefaults["sort"] = value; self.onFolderDefaults?(self.folderDefaults) }
       let direction = EDChoiceRow(title: NL("排序方向"), options: [(NL("递增"), "true"), (NL("递减"), "false")], value: folderDefaults["ascending"] ?? "true") { [weak self] value in guard let self else { return }; self.folderDefaults["ascending"] = value; self.onFolderDefaults?(self.folderDefaults) }
       let reset = EDButton(title: NL("重置所有文件夹"), style: .secondary); reset.onPress = { [weak self] in self?.onResetFolders?() }
       [layout, sort, direction, reset].forEach(group.content.addSubview)
