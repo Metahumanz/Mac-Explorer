@@ -229,6 +229,8 @@ public final class NativeVersionControl: @unchecked Sendable {
       return NativeVCSStatus(root: repo.root, kind: repo.kind, branch: snapshot.branch, statesByPath: states, error: nil)
     } catch {
       if !isEnabled { return nil }
+      if repo.kind == .git, let failure = error as? NativeCommandError,
+        failure.result.status == 128, failure.result.errorText.hasPrefix("fatal: not a git repository") { return nil }
       return NativeVCSStatus(root: repo.root, kind: repo.kind, branch: "", statesByPath: [:], error: error.localizedDescription)
     }
   }
