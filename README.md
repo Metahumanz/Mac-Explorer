@@ -46,13 +46,21 @@ brew install --cask qixiaoyu27/tap/mac-explorer
 > **首次打开**
 > 当前版本尚未经过 Apple 公证。若 macOS 阻止打开，请确认下载来源为本仓库，再到「系统设置 → 隐私与安全性」允许打开。若系统明确提示恶意软件，请勿继续运行。
 
+**已经通过 DMG 或旧脚本安装过？** 如果 `brew install` 提示应用已存在，先确认现有应用是当前正式版，再让 Homebrew 接管：
+
+```sh
+brew install --cask --adopt qixiaoyu27/tap/mac-explorer
+```
+
+接管会保留应用文件和偏好设置，只补齐 Homebrew 安装记录；旧版本请先通过应用内更新或 DMG 升级。接管成功后才能使用下面的更新命令，详情见 [迁移说明](https://github.com/qixiaoyu27/homebrew-tap#安装)。
+
 **后续更新：** 退出应用后执行以下命令，也可以在「设置 → 关于」中检查更新。
 
 ```sh
 brew update && brew upgrade --cask --greedy qixiaoyu27/tap/mac-explorer
 ```
 
-**已经安装过？** 从 DMG 或旧脚本安装的用户，转用 Homebrew 前请先阅读 [迁移说明](https://github.com/qixiaoyu27/homebrew-tap#安装)，避免已有应用冲突。卸载方法见 [Homebrew 安装指南](https://github.com/qixiaoyu27/homebrew-tap#readme)。
+卸载方法见 [Homebrew 安装指南](https://github.com/qixiaoyu27/homebrew-tap#readme)。
 
 <details>
 <summary>也可以手动安装 DMG</summary>
