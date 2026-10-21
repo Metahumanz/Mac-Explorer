@@ -133,13 +133,15 @@ public struct TrashStore: Sendable {
     }
     return FileActionResult(succeeded: succeeded, errors: errors, changes: [])
   }
-  public func restore(_ inputs: [URL], to directory: URL? = nil) -> FileActionResult {
+  public func restore(_ inputs: [URL], to directory: URL? = nil, control: FileTransferControl? = nil) -> FileActionResult {
     var succeeded: [URL] = [], errors: [String] = [], unique: [URL] = []
+    var transfers: [FileTransferItem] = []
     for input in inputs {
       do { let url = try validate(input); if !unique.contains(where: { $0.path == url.path }) { unique.append(url) } }
       catch { errors.append("\(input.path)：\(error.localizedDescription)") }
     }
     for url in unique where !unique.contains(where: { $0.path != url.path && url.path.hasPrefix($0.path + "/") }) {
+      if control?.isCancelled == true { if errors.isEmpty { errors.append(NL("已取消")) }; break }
       do {
         let origin = origin(url), original = origin.map { URL(fileURLWithPath: $0.path) }
         guard let target = try directory.map({ try local($0).appendingPathComponent(original?.lastPathComponent ?? url.lastPathComponent) }) ?? original else { throw failure(NL("无法确定原位置，请使用“还原到…”选择文件夹。")) }
@@ -150,12 +152,13 @@ public struct TrashStore: Sendable {
         guard try !roots.map(local).contains(where: { inside((try? realPath($0)) ?? $0.path, parent.path) }) else { throw failure(NL("请选择回收站之外的还原位置。")) }
         let change = FileActionChange(source: target, destination: url, kind: .trash)
         if let origin { guard change.destinationIdentity == origin.identity else { throw failure(NL("项目已发生变化，已跳过；请刷新后重试。")) } }
-        let result = FileActions.undo([change])
-        if result.errors.isEmpty { try? FileManager.default.removeItem(at: record(url)); succeeded.append(url) }
+        let result = FileActions.undo([change], control: control)
+        if !result.succeeded.isEmpty { try? FileManager.default.removeItem(at: record(url)); succeeded.append(url) }
         errors += result.errors
+        transfers += result.transfers
       } catch { errors.append("\(url.path)：\(error.localizedDescription)") }
     }
-    return FileActionResult(succeeded: succeeded, errors: errors, changes: [])
+    return FileActionResult(succeeded: succeeded, errors: errors, changes: [], transfers: transfers)
   }
   private func failure(_ text: String) -> NSError { NSError(domain: "NativeTrash", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
 }
