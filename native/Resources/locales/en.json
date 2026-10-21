@@ -904,5 +904,17 @@
   "永久删除 {0} 个网络项目，并将 {1} 个本地项目移到回收站？网络项目无法撤销删除。": "Permanently delete {0} network items and move {1} local items to the Recycle Bin? Network deletions cannot be undone.",
   "删除未完成，部分内容可能已删除。": "Deletion did not finish. Some contents may already have been deleted.",
   "启动位置": "Startup location",
-  "默认打开": "Open File Explorer to"
+  "默认打开": "Open File Explorer to",
+  "附近设备": "Nearby devices",
+  "正在查找附近设备…": "Looking for nearby devices…",
+  "未发现附近设备": "No nearby devices found",
+  "无法查找附近设备": "Unable to find nearby devices",
+  "未命名设备": "Unnamed device",
+  "{0} 台设备": "{0} devices",
+  "终端": "Terminal",
+  "终端应用": "Terminal application",
+  "自动选择": "Automatic",
+  "{0}（未安装）": "{0} (not installed)",
+  "所选终端不可用": "Selected terminal unavailable",
+  "所选终端未安装，请在设置中重新选择。": "The selected terminal is not installed. Choose another in Settings."
 }

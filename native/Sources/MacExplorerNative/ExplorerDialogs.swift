@@ -810,7 +810,6 @@ private final class EDSettingsBody: EDView {
   private var savedShortcuts: [String]
   private var shortcutError: NSTextField?
   private var shortcutSave: EDButton?
-  private var shortcutList: EDScrollingBody?
   private var shortcutReset: EDButton?
   private let allTools = ["cut", "copy", "paste", "rename", "share", "trash", "airdrop", "terminal", "undo", "refresh"]
   private let toolLabels = ["cut": NL("剪切"), "copy": NL("复制"), "paste": NL("粘贴"), "rename": NL("重命名"), "share": NL("共享"), "trash": NL("移到回收站"), "airdrop": NL("隔空投送"), "terminal": NL("在终端中打开"), "undo": NL("撤销"), "refresh": NL("刷新")]
@@ -869,7 +868,7 @@ private final class EDSettingsBody: EDView {
     content.flow.clear()
     content.flow.gap = 16
     shortcutError = nil
-    shortcutSave = nil; shortcutList = nil; shortcutReset = nil
+    shortcutSave = nil; shortcutReset = nil
     switch index {
     case 0: general()
     case 1: toolbarContent()
@@ -927,6 +926,11 @@ private final class EDSettingsBody: EDView {
     language.arrange = { rect in row.frame = rect }
     content.flow.add(language) { _ in 58 }
     if let browser {
+      let terminal = EDGroup(NL("终端"))
+      let selected = browser.defaults.string(forKey: NativeTerminal.preferenceKey) ?? ""
+      let application = EDChoiceRow(title: NL("终端应用"), options: NativeTerminal.options(selected: selected), value: selected) { [weak browser] in browser?.defaults.set($0, forKey: NativeTerminal.preferenceKey) }
+      terminal.content.addSubview(application); terminal.arrange = { application.frame = $0 }
+      content.flow.add(terminal) { _ in 58 }
       let search = EDGroup(NL("文件搜索"))
       let mode = EDChoiceRow(title: NL("搜索模式"), options: [(NL("普通文本"), "text"), (NL("通配符"), "wildcard"), (NL("正则表达式"), "regex")], value: FileSearchMode(rawValue: browser.defaults.string(forKey: "searchMode") ?? "")?.rawValue ?? "text") { [weak browser] in browser?.defaults.set($0, forKey: "searchMode") }
       search.content.addSubview(mode); search.arrange = { mode.frame = $0 }
@@ -1012,8 +1016,8 @@ private final class EDSettingsBody: EDView {
       return
     }
     content.flow.add(edLabel(NL("文件操作快捷键"), size: 13, weight: .semibold)) { _ in 22 }
-    let list = EDScrollingBody(); list.flow.padding = 0; list.flow.gap = 0; shortcutList = list
-    content.flow.add(list) { [weak self] _ in max(88, (self?.content.bounds.height ?? 500) - 150) }
+    let list = EDFlow(); list.padding = 0; list.gap = 0
+    content.flow.add(list) { width in list.reflow(width: width, minimumHeight: 0); return list.frame.height }
     for (index, pair) in shortcutRows.enumerated() {
       let row = EDShortcutRow(title: pair.0, value: shortcutValues[index], editable: onShortcut != nil)
       row.recorder.captureChanged = { [weak integration = browser?.systemIntegration] active in integration?.captureShortcut(active) }
@@ -1043,7 +1047,7 @@ private final class EDSettingsBody: EDView {
         guard let self, let value = self.shortcutDefaults[pair.0] else { return }
         self.shortcutValues[index] = value; row?.recorder.value = value; row?.reset.isEnabled = false; self.updateShortcutSave()
       }
-      list.flow.add(row) { _ in 44 }
+      list.add(row) { _ in 44 }
     }
     if onShortcut != nil {
       let footer = EDView()

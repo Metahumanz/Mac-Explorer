@@ -50,6 +50,7 @@ enum NativeVCSEditingChecks {
       browser.executeAction("rename")
       guard let field = (browser.table.view(atColumn: 0, row: index, makeIfNecessary: true) as? NameCell)?.nameLabel,
             let editor = field.currentEditor() as? NSTextView else { throw NativeSmoke.Failure(description: "VCS editing fixture starts an actual inline editor (\(scenario))") }
+      window.makeKeyAndOrderFront(nil); window.makeFirstResponder(editor)
       try await until { window.isKeyWindow && window.firstResponder === editor && field.currentEditor() === editor }
       let draft = "unsaved-\(scenario).txt"; editor.string = draft
       browser.setVersionControl(scenario != "disable")
@@ -69,8 +70,8 @@ enum NativeVCSEditingChecks {
     print("VCS EDIT \(value ? "PASS" : "FAIL"): \(message)")
     if value { checks.append(message) } else { failures.append(message) }
   }
-  private static func until(_ condition: () -> Bool) async throws {
+  private static func until(line: UInt = #line, _ condition: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(10)
-    while !condition() { guard Date() < deadline else { throw NativeSmoke.Failure(description: "VCS editor check timed out") }; try await Task.sleep(nanoseconds: 20_000_000) }
+    while !condition() { guard Date() < deadline else { throw NativeSmoke.Failure(description: "VCS editor check timed out at line \(line)") }; try await Task.sleep(nanoseconds: 20_000_000) }
   }
 }

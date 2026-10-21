@@ -98,7 +98,7 @@ Apple Silicon（M 系列）· macOS 13+。默认安装到 `/Applications/Mac Exp
 - 每个更新项就地署名。PR 使用 `（[#编号](PR链接)，[@作者](作者链接)）`；无 PR 的直接提交使用 `（[@作者](作者链接)，[短哈希](提交链接)）`。
 - 从上次正式版本到本次 tag 的 commits / merged PR 核实作者；不能只署名合并人，不重复算旧贡献，不虚构 PR 编号。
 - 反馈者放单独的“贡献者”段落，不能写成代码作者。
-- 如提供命令行安装示例，将 raw installer URL 固定到本次 `refs/tags/v版本/scripts/install.sh`。安装脚本仍按官方 latest 校验清单选择最新安装包，不应声称这是强制安装某历史版本的入口。
+- 面向用户的命令行安装入口统一使用 `brew install --cask qixiaoyu27/tap/mac-explorer`，注明需要预先安装 Homebrew，并提供 DMG 备用方式。不再在 README 或新发布说明中推广旧 curl 安装命令。底层安装脚本仍服务于应用内更新、打包与历史入口兼容，不能随文档入口调整删除；已发布 tag 不修改。
 
 ## GitHub Release
 
@@ -124,3 +124,15 @@ gh release view "$release_tag" --repo qixiaoyu27/Mac-Explorer \
 发布后重新打开 Release，确认保存的说明和署名链接正确，且为正式 latest。匿名读取官方 latest API，实际下载公开的 DMG、ZIP 和校验文件，对比本地与公开附件哈希；核对本次 tag 下 installer 与源码一致。失败时修复并复查，不能用“上传成功”代替“下载可用”。
 
 恢复被中断的流程时先查看 tag、Release 的 draft 状态及已上传附件。正式版本已存在时按实际状态继续核对，不重复发布、不覆盖已有附件。完成后简短告知版本、Release 链接及已授权交付状态；只补充影响用户的实际限制。
+
+
+## 同步 Homebrew Tap
+
+Mac Explorer 的 Homebrew 安装渠道是 `qixiaoyu27/homebrew-tap`，Cask 位于 `Casks/mac-explorer.rb`。正式发布完成后必须同步该仓库；仅改文档或日常开发时不要递增 Cask 版本。
+
+1. 核对正式 Release 的版本、原生 ZIP 下载地址与 `SHA256SUMS-native.txt`，实际下载并计算 ZIP 的 SHA-256。
+2. 更新 Cask 的 `version` 和 `sha256`；文件命名变化时同步 `url`。保留 Apple Silicon/macOS 要求和未公证说明，不使用 `:no_check`、强制覆盖或移除隔离标记。
+3. 使用 `brew style`、`brew audit --cask`、`brew livecheck --cask` 和 `brew fetch --cask` 检查新定义。需要实装时使用临时 `--appdir`，避免替换用户的日常安装。
+4. 仅提交并推送 Tap 的本次改动，回读远端 Cask，确认版本与校验值一致。应用自带更新，因此文档中的 Homebrew 更新命令使用 `brew upgrade --cask --greedy qixiaoyu27/tap/mac-explorer`。
+
+Tap 当前按正式发布流程同步，没有后台自动更新任务；不要声称 GitHub Release 会自动更新 Homebrew。只授权应用仓库源码推送时，不额外修改 Tap。

@@ -1346,10 +1346,12 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private func sendAirDrop() { let urls = selectedEntries().map(\.url); guard !urls.isEmpty else { return }; NSSharingService(named: .sendViaAirDrop)?.perform(withItems: urls) }
   private func openTerminal(at url: URL? = nil) {
     let selected = selectedEntries(); let target = url ?? (selected.count == 1 && selected[0].isDirectory ? selected[0].url : directory)
-    guard target.isFileURL, let app = NSWorkspace.shared.urlForApplication(toOpen: UTType.unixExecutable) else { lastError = NL("没有可用的终端应用"); render(); return }
-    NSWorkspace.shared.open([target], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
-      if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription; self?.render() } }
-    }
+    do {
+      let request = try NativeTerminal.request(directory: target, selected: defaults.string(forKey: NativeTerminal.preferenceKey) ?? "")
+      NSWorkspace.shared.open([request.directory], withApplicationAt: request.application, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+        if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription; self?.render() } }
+      }
+    } catch { lastError = error.localizedDescription; render() }
   }
   private func shareSelected() { let urls = selectedEntries().map(\.url); guard !urls.isEmpty, let button = commands["share"] else { return }; NSSharingServicePicker(items: urls).show(relativeTo: button.bounds, of: button, preferredEdge: .minY) }
   private func openSystemLocation(_ name: String) {

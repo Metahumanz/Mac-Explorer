@@ -34,6 +34,22 @@ enum NativeSmoke {
         try expect(Bundle.main.bundleIdentifier == "local.macexplorer.native-fork", "Fork bundle uses an independent preference identity")
         try expect(NativeAppProfile.supportDirectory.lastPathComponent == "Mac Explorer Fork", "Fork support files are separated from the original application")
       }
+      if ProcessInfo.processInfo.arguments.contains("--smoke-vcs-edit") {
+        checks += try await NativeVCSEditingChecks.run()
+        try write(["passed": true, "checks": checks], to: report)
+        NSApp.terminate(nil); return
+      }
+      if ProcessInfo.processInfo.arguments.contains("--smoke-integrations") {
+        checks += try await NativeTerminalChecks.run(browser: browser, output: report.deletingLastPathComponent())
+        checks += try await NativeAirDropUIChecks.run()
+        try write(["passed": true, "checks": checks, "fixtureDevices": true], to: report)
+        NSApp.terminate(nil); return
+      }
+      if ProcessInfo.processInfo.arguments.contains("--smoke-airdrop") {
+        checks += try await NativeAirDropUIChecks.run()
+        try write(["passed": true, "checks": checks, "fixtureDevices": true], to: report)
+        NSApp.terminate(nil); return
+      }
       try await until { !browser.loading && browser.snapshot != nil && browser.entries.count == 10_003 }
       window.contentView?.layoutSubtreeIfNeeded()
       checks += try await NativeInputNavigationChecks.runBrowser(browser: browser, window: window)
@@ -126,10 +142,14 @@ enum NativeSmoke {
       try expect(browser.entries[0].url.deletingLastPathComponent().lastPathComponent == "Folder 2", "search submission searches descendants without following folder links")
       browser.search.stringValue = ""; browser.searchBox.onClear?()
       try await until { !browser.loading && browser.entries.count == 10_003 }
-      browser.sort = .name; browser.ascending = false; browser.recompute()
+      func chooseSort(_ title: String) throws {
+        guard let action = browser.sortMenu().first(where: { $0.title == NL(title) })?.action else { throw Failure(description: "Missing sort menu action: " + title) }
+        action()
+      }
+      try chooseSort("名称"); try chooseSort("递减")
       try await until { browser.entries.last?.name == "file-0.txt" }
       try expect(browser.entries.first?.isDirectory == true, "descending sorting retains folders first")
-      browser.ascending = true; browser.recompute()
+      try chooseSort("递增")
       try await until { browser.entries.first?.name == "Folder 2" }
       let folderRow = browser.entries.firstIndex { $0.name == "Folder 2" }!
       browser.table.selectRowIndexes(IndexSet(integer: folderRow), byExtendingSelection: false)
@@ -201,6 +221,8 @@ enum NativeSmoke {
       checks += try NativeShortcutChecks.run()
       checks += try await NativePrivacyChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeNetworkDeleteChecks.run(output: report.deletingLastPathComponent())
+      checks += try await NativeTerminalChecks.run(browser: browser, output: report.deletingLastPathComponent())
+      checks += try await NativeAirDropUIChecks.run()
       browser.navigate(to: root)
       try await until { !browser.loading && browser.entries.count == 10_003 }
       metrics["iconLoadsAfterAllInteractions"] = IconLoader.shared.loads

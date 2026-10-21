@@ -59,7 +59,7 @@ info = {
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",
     "CFBundleDocumentTypes": [{"CFBundleTypeName": "Files and Folders", "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Alternate", "LSItemContentTypes": ["public.data", "public.folder", "public.volume", "public.text", "public.image", "public.audio", "public.movie", "public.archive", "com.adobe.pdf", "com.apple.package"]}],
-    "NSLocalNetworkUsageDescription": "发现并连接局域网中的共享电脑和文件服务器。",
+    "NSLocalNetworkUsageDescription": "查找附近设备并连接局域网共享电脑和文件服务器。",
     "NSBonjourServices": ["_smb._tcp"],
     "NSDesktopFolderUsageDescription": "浏览桌面中的文件。",
     "NSDocumentsFolderUsageDescription": "浏览文稿中的文件。",
