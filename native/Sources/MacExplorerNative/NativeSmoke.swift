@@ -122,10 +122,10 @@ enum NativeSmoke {
       try expect(browser.entries[0].url.deletingLastPathComponent().lastPathComponent == "Folder 2", "search submission searches descendants without following folder links")
       browser.search.stringValue = ""; browser.searchBox.onClear?()
       try await until { !browser.loading && browser.entries.count == 10_003 }
-      browser.sort = .name; browser.ascending = false; browser.recompute()
+      browser.sortMenu()[0].action?(); browser.sortMenu()[5].action?()
       try await until { browser.entries.last?.name == "file-0.txt" }
       try expect(browser.entries.first?.isDirectory == true, "descending sorting retains folders first")
-      browser.ascending = true; browser.recompute()
+      browser.sortMenu()[4].action?()
       try await until { browser.entries.first?.name == "Folder 2" }
       let folderRow = browser.entries.firstIndex { $0.name == "Folder 2" }!
       browser.table.selectRowIndexes(IndexSet(integer: folderRow), byExtendingSelection: false)
