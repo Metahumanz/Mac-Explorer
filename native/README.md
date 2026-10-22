@@ -62,6 +62,8 @@ open 'native/output/validation/Mac Explorer.app'
 - 复制和跨卷移动使用系统复制，恢复并读回创建/修改日期；属性无法保留时提供重试、继续、跳过和取消。SMB 不支持排他提交时，排他创建目标并经描述符复制；只有目标及来源复核通过后才清理来源，不覆盖已有目标，不增加应用层全文件哈希。取消或失败无法清理的本次副本会报告实际路径。
 - 跨卷复制/移动不是原子事务；网络断线、外部并发改写和操作间竞争无法只靠临时目录检查完成全部实机验收。
 
+复制/跨共享移动的窗口显示当前文件字节数和已确认字节速率，并单独显示属性处理、验证和提交阶段。同服务器跨共享主数据可使用独立 SMB 客户端的服务端复制；详见[实现与验收记录](../docs/SERVER_SIDE_TRANSFER.md)。每次操作完成时后台写入不含路径或凭据的阶段耗时报告，最多保留 20 份；验证版位于 `native/output/validation/transfer-logs/`，日常版位于 `~/Library/Caches/<Bundle ID>/transfer-logs/`。
+
 ## 检查入口
 
 无需 XCTest 的核心检查，所有破坏性夹具限定在新建临时目录：
@@ -83,6 +85,8 @@ python3 -I scripts/check-homebrew-install.py
 ```sh
 python3 -I native/scripts/smoke.py --validation
 ```
+
+检查脚本默认通过 macOS 正常前台启动应用，满足活动窗口相关断言；可用 `--direct-launch` 单独诊断直接进程启动。
 
 测试构建使用独立 Bundle ID；文件操作使用临时目录、模拟回收站和命名剪贴板。检查包含真实 AppKit 控件及独立窗口的生命周期、视图设置、操作快捷键等入口。应用内事件驱动不等同于外部辅助功能或真实 Finder 操作；根目录旧的 `native/output/smoke/` 报告不代表本轮新检查结果。普通构建也可运行 `smoke.py`，但应先关闭对应原型实例。
 
@@ -120,3 +124,9 @@ Electron 对照入口需要已安装依赖并构建；`EXPLORER_REFERENCE_ROOT` 
 ## 源码位置
 
 `Sources/ExplorerCore/` 管理目录、搜索、文件操作、回收站、属性、监听、归档、Git/SVN、更新验证和本地化。`Sources/MacExplorerNative/` 管理 AppKit 主界面、窗口、设置、对话框、系统集成和界面检查。`Helpers/ArchiveReader.c` 为归档 helper；`scripts/` 提供构建、隔离检查、对照和原生打包工具。SVG 图标许可见 `ICON-LICENSE.txt`。
+
+## 同服务器跨共享传输
+
+设置中的“网络传输”可启用服务端复制。适用的 SMB 跨共享操作使用独立登录，支持可选钥匙串保存、分块进度、取消及安全回退；主数据复制完成后继续原有日期和权限验证，再处理移动的来源。不同端点、账号、别名、子目录挂载或无法绑定文件身份时使用普通传输。默认要求签名和 SMB3 加密，可在登录框调整加密要求。
+
+依赖从 `Vendor/libsmb2/` 固定源码构建，许可及来源随应用提供。独立回环协议检查为 `scripts/check-smb-server-copy.py`，测试依赖见 `scripts/smb-test-requirements.txt`。已完成的隔离检查及真实 NAS 验收边界见 [服务端传输记录](../docs/SERVER_SIDE_TRANSFER.md)。

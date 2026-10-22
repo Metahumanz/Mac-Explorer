@@ -893,6 +893,31 @@ private final class EDSettingsBody: EDView {
       let mode = EDChoiceRow(title: NL("搜索模式"), options: [(NL("普通文本"), "text"), (NL("通配符"), "wildcard"), (NL("正则表达式"), "regex")], value: FileSearchMode(rawValue: browser.defaults.string(forKey: "searchMode") ?? "")?.rawValue ?? "text") { [weak browser] in browser?.defaults.set($0, forKey: "searchMode") }
       search.content.addSubview(mode); search.arrange = { mode.frame = $0 }
       content.flow.add(search) { _ in 58 }
+      let serverTransfer = EDGroup(NL("网络传输"))
+      let offload = EDButton(title: NL("启用同服务器跨共享传输优化"), style: .checkbox)
+      offload.checked = browser.defaults.object(forKey: "serverSideTransfer") as? Bool ?? true
+      offload.onPress = { [weak offload, weak browser] in
+        guard let offload else { return }; offload.checked.toggle(); browser?.defaults.set(offload.checked, forKey: "serverSideTransfer")
+      }
+      let forget = EDButton(title: NL("清除服务端传输登录信息"), style: .secondary)
+      forget.onPress = { [weak browser] in
+        guard let window = browser?.view.window else { return }
+        let alert = NSAlert(); alert.messageText = NL("清除服务端传输登录信息？")
+        alert.addButton(withTitle: NL("清除")); alert.addButton(withTitle: NL("取消"))
+        alert.beginSheetModal(for: window) { response in
+          guard response == .alertFirstButtonReturn else { return }
+          let code = NativeSMBAccounts.shared.forgetAll()
+          if code != 0 {
+            let failure = NSAlert(); failure.messageText = NL("无法清除登录信息"); failure.informativeText = NL("钥匙串错误码：{0}", String(code)); failure.beginSheetModal(for: window)
+          }
+        }
+      }
+      serverTransfer.content.addSubview(offload); serverTransfer.content.addSubview(forget)
+      serverTransfer.arrange = { rect in
+        offload.frame = NSRect(x: 0, y: 0, width: rect.width, height: 28)
+        forget.frame = NSRect(x: 0, y: 34, width: 240, height: 34)
+      }
+      content.flow.add(serverTransfer) { _ in 94 }
       let favorites = EDGroup(NL("快速访问")), extra = NativeSettingsView(browser: browser)
       favorites.content.addSubview(extra); favorites.arrange = { extra.frame = $0 }
       extra.onHeightChange = { [weak self] in self?.content.needsLayout = true }

@@ -38,6 +38,36 @@ struct MetadataTransferChecks {
     }
     func clean(_ target:URL) throws -> Bool { try !fm.contentsOfDirectory(atPath:target.path).contains { $0.hasPrefix(".mac-explorer-") } }
     do {
+      var raw = stat()
+      raw.st_dev = 1; raw.st_ino = 42; raw.st_mode = S_IFLNK | 0o700; raw.st_size = 14
+      let linkText = TransferStamp(raw, precision: 100)
+      raw.st_size = 1067
+      try check(linkText.unchanged(TransferStamp(raw, precision: 100)), "SMB symlink reparse-record length is not treated as changed link content")
+      raw.st_mode = S_IFREG | 0o600; raw.st_size = 14
+      let regular = TransferStamp(raw, precision: 100)
+      raw.st_size = 1067
+      try check(!regular.unchanged(TransferStamp(raw, precision: 100)), "regular-file length remains part of the unchanged-object guard")
+      raw.st_mode = S_IFLNK | 0o700; raw.st_size = 14; raw.st_ino = 43
+      try check(!linkText.unchanged(TransferStamp(raw, precision: 100)), "symlink replacement still fails identity validation")
+      raw.st_ino = 42; raw.st_mtimespec.tv_sec = 1
+      try check(!linkText.unchanged(TransferStamp(raw, precision: 100)), "symlink metadata changes still fail validation")
+    }
+    for descriptor in [false, true] {
+      let (file, target, _) = try fixture("retargeted-link-\(descriptor)")
+      let link = file.deletingLastPathComponent().appendingPathComponent("link")
+      try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "missing-before")
+      var hooks = TransferHooks(); hooks.descriptorCopy = descriptor
+      hooks.checkpoint = { stage, _, payload in
+        if stage == .afterCopy {
+          try fm.removeItem(at: payload)
+          try fm.createSymbolicLink(atPath: payload.path, withDestinationPath: "missing-after")
+        }
+      }
+      let result = transfer(link, target, hooks: hooks)
+      try check(!result.errors.isEmpty && exists(link), "changed link text cannot consume the source")
+      try check(try fm.destinationOfSymbolicLink(atPath: link.path) == "missing-before", "retargeted-copy failure leaves the source link intact")
+    }
+    do {
       let(file,target,dest)=try fixture("copy"), before=try dates(file)
       let result=transfer(file,target,move:false)
       try check(result.errors.isEmpty && result.changes.count==1,"ordinary copy completes")
@@ -437,6 +467,84 @@ struct MetadataTransferChecks {
       let result=transfer(file,target,hooks:hooks)
       try check(result.errors.isEmpty && !exists(file) && (try Data(contentsOf:dest))==Data("OK".utf8),"descriptor copying also supports an exclusively published private payload")
       try check(try dates(dest)==before && clean(target),"descriptor staging preserves dates and cleans its private payload")
+    }
+    // Simulate a transient xattr syscall failure through the real copyfile callback.
+    // DATA is real; only the first metadata syscall is injected.
+    for behavior in ["retry", "source-change", "target-replace", "sync-failure"] {
+      let (file,target,dest) = try fixture("metadata-order-" + behavior)
+      var hooks = unsupported(), dataCalls = 0, metadataCalls = 0, syncCalls = 0, prompts = 0
+      var order: [String] = []
+      hooks.nativeCopy.synchronizedMetadata = true
+      hooks.nativeCopy.synchronize = { fd in
+        syncCalls += 1; order.append("sync")
+        if behavior == "sync-failure" { errno = EIO; return -1 }
+        return fsync(fd)
+      }
+      hooks.nativeCopy.descriptorCopy = { from,to,state,flags in
+        if flags & copyfile_flags_t(COPYFILE_DATA) != 0 { dataCalls += 1; order.append("data") }
+        if flags & copyfile_flags_t(COPYFILE_XATTR) != 0 {
+          metadataCalls += 1; order.append("metadata")
+          if metadataCalls == 1 {
+            var function: UnsafeRawPointer?, context: UnsafeMutableRawPointer?
+            guard copyfile_state_get(state, UInt32(COPYFILE_STATE_STATUS_CB), &function) == 0,
+              copyfile_state_get(state, UInt32(COPYFILE_STATE_STATUS_CTX), &context) == 0, let function else { errno = EINVAL; return -1 }
+            let callback = unsafeBitCast(function, to: copyfile_callback_t.self)
+            errno = EIO
+            _ = callback(COPYFILE_COPY_XATTR, COPYFILE_ERR, state, nil, nil, context)
+            errno = EIO
+            return -1
+          }
+        }
+        return fcopyfile(from,to,state,flags)
+      }
+      hooks.control = FileTransferControl(onProblem: { problem in
+        prompts += 1
+        if !problem.propertyLoss { return .skip }
+        if behavior == "source-change" { try? Data("changed".utf8).write(to: file) }
+        if behavior == "target-replace" {
+          try? fm.moveItem(at: dest, to: target.appendingPathComponent("owned-original"))
+          try? Data("external".utf8).write(to: dest)
+        }
+        return prompts == 1 ? .retry : .skip
+      })
+      let before = try dates(file), result = transfer(file,target,hooks:hooks)
+      try check(dataCalls == 1 && syncCalls == 1, "metadata retries and flush failures never perform a second DATA pass")
+      try check(order.prefix(2).elementsEqual(["data","sync"]), "data is synchronized before any metadata writes")
+      if behavior == "retry" {
+        try check(result.errors.isEmpty && metadataCalls == 2 && prompts == 1 && !exists(file), "Retry really retries the metadata syscall without a second generic prompt")
+        try check(try dates(dest) == before && Data(contentsOf: dest) == Data("OK".utf8), "retried metadata retains dates and payload before removing source")
+      } else {
+        try check(!result.errors.isEmpty && exists(file) && result.consumedMoveSources.isEmpty, "concurrent source/target changes and flush errors still retain the source")
+        if behavior == "source-change" { try check(metadataCalls == 1, "a changed source stops before the metadata retry") }
+        if behavior == "target-replace" { try check(try Data(contentsOf: dest) == Data("external".utf8), "metadata retry never overwrites the replacement path") }
+        if behavior == "sync-failure" { try check(metadataCalls == 0, "failed data synchronization prevents metadata writes") }
+      }
+    }
+    do {
+      let (file,target,dest) = try fixture("path-property-retry")
+      var hooks = TransferHooks(), attempts = 0, prompts = 0
+      hooks.copy = { from,to in
+        attempts += 1
+        try fm.copyItem(at: from, to: to)
+        if attempts == 1 { throw NativeTransferCopy.Retry() }
+      }
+      hooks.control = FileTransferControl(onProblem: { _ in prompts += 1; return .skip })
+      let result = transfer(file,target,hooks:hooks)
+      try check(result.errors.isEmpty && attempts == 2 && prompts == 0 && !exists(file) && exists(dest), "path-copy property retry cleans its private stage and restarts without another prompt")
+      try check(try clean(target), "path-copy property retry leaves no extra stage")
+    }
+    do {
+      let (file,target,dest) = try fixture("read-only-loss")
+      guard chmod(file.path,0o400)==0 else {throw VerifiedTransfer.posix()}
+      var hooks=TransferHooks(),problems=0
+      hooks.copy={from,to in try fm.copyItem(at:from,to:to);guard chmod(to.path,0o600)==0 else {throw VerifiedTransfer.posix()}}
+      hooks.control=FileTransferControl(onProblem:{problem in
+        if problem.propertyLoss && problem.message.contains("只读") {problems+=1}
+        return .skip
+      })
+      let result=transfer(file,target,hooks:hooks)
+      try check(problems==1 && result.succeeded.isEmpty && exists(file) && !exists(dest),"a destination gaining write permission on a read-only source requires explicit property-loss consent")
+      try check(result.consumedMoveSources.isEmpty && (try clean(target)),"read-only loss keeps its cut source and cleans only its owned target")
     }
     print("MetadataTransferChecks: \(count) assertions passed; Windows-style decisions use local fixtures only, no real cross-volume or NAS operations.")
   }

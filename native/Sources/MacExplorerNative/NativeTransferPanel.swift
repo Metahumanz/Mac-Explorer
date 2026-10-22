@@ -7,19 +7,30 @@ final class NativeTransferPanel: NSObject, NSWindowDelegate {
   let window: NSPanel
   let label = NSTextField(labelWithString: NL("正在准备…"))
   let progress = NSProgressIndicator()
+  let statistics = NSTextField(labelWithString: "")
   let cancel = NSButton(title: NL("取消"), target: nil, action: nil)
   private var finished = false
   private var lastUpdate = Date.distantPast
+  private var lastMode: FileTransferMode?
+  private var phase: FileTransferPhase = .preparing
+  private var latest: FileTransferProgress?
+  private var speedTimer: Timer?
   var control: FileTransferControl?
   init(parent: NSWindow?) {
-    window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 140), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+    window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 176), styleMask: [.titled, .closable], backing: .buffered, defer: false)
     super.init()
     window.title = NL("传输文件"); window.isReleasedWhenClosed = false; window.delegate = self
-    label.frame = NSRect(x: 20, y: 90, width: 400, height: 22); label.lineBreakMode = .byTruncatingMiddle
-    progress.frame = NSRect(x: 20, y: 62, width: 400, height: 16); progress.style = .bar; progress.isIndeterminate = true; progress.startAnimation(nil)
+    label.frame = NSRect(x: 20, y: 126, width: 400, height: 22); label.lineBreakMode = .byTruncatingMiddle
+    progress.frame = NSRect(x: 20, y: 98, width: 400, height: 16); progress.style = .bar; progress.isIndeterminate = true; progress.startAnimation(nil)
     cancel.frame = NSRect(x: 330, y: 16, width: 90, height: 30); cancel.bezelStyle = .rounded; cancel.target = self; cancel.action = #selector(cancelTransfer)
-    for view in [label, progress, cancel] { window.contentView?.addSubview(view) }
-    if let parent { window.setFrameOrigin(NSPoint(x: parent.frame.midX - 220, y: parent.frame.midY - 70)) } else { window.center() }
+    statistics.frame = NSRect(x: 20, y: 66, width: 400, height: 22)
+    statistics.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular); statistics.textColor = .secondaryLabelColor
+    statistics.setAccessibilityLabel(NL("传输速度"))
+    speedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.renderStatistics() }
+    }
+    for view in [label, progress, statistics, cancel] { window.contentView?.addSubview(view) }
+    if let parent { window.setFrameOrigin(NSPoint(x: parent.frame.midX - 220, y: parent.frame.midY - 88)) } else { window.center() }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
       guard let self, !self.finished else { return }; self.window.orderFront(nil)
     }
@@ -29,11 +40,39 @@ final class NativeTransferPanel: NSObject, NSWindowDelegate {
   func update(_ value: FileTransferProgress) {
     guard !finished, control?.isCancelled != true else { return }
     let now = Date()
-    guard now.timeIntervalSince(lastUpdate) > 0.1 || value.completedBytes >= value.totalBytes else { return }; lastUpdate = now
-    label.stringValue = value.source.lastPathComponent; label.toolTip = value.source.path
-    progress.isIndeterminate = false; progress.maxValue = Double(max(1, value.totalBytes)); progress.doubleValue = Double(value.completedBytes)
+    guard value.mode != lastMode || now.timeIntervalSince(lastUpdate) > 0.1 || value.completedBytes >= value.totalBytes else { return }; lastUpdate = now; lastMode = value.mode
+    latest = value
+    if phase == .preparing { setPhase(.copying) }
+    if phase != .copying { renderStatistics(); return }
+    label.stringValue = value.mode == .serverSide ? NL("服务端复制：{0}", value.source.lastPathComponent) : value.source.lastPathComponent; label.toolTip = value.source.path
+    progress.stopAnimation(nil); progress.isIndeterminate = false; progress.maxValue = Double(max(1, value.totalBytes)); progress.doubleValue = Double(value.completedBytes)
+    renderStatistics()
   }
-  func close() { finished = true; window.close(); control = nil }
+  func setPhase(_ value: FileTransferPhase) {
+    guard !finished, control?.isCancelled != true else { return }
+    phase = value
+    switch value {
+    case .preparing: label.stringValue = NL("正在读取文件清单…")
+    case .connecting: label.stringValue = NL("正在连接共享…")
+    case .copying: break
+    case .properties: label.stringValue = NL("正在保留属性…")
+    case .verifying: label.stringValue = NL("正在验证文件…")
+    case .publishing: label.stringValue = NL("正在提交…")
+    case .removingSource: label.stringValue = NL("正在清理来源…")
+    case .finishing: label.stringValue = NL("正在收尾…")
+    }
+    if value != .copying { progress.isIndeterminate = true; progress.startAnimation(nil) }
+    renderStatistics()
+  }
+  private func renderStatistics() {
+    guard phase == .copying, let value = latest else { statistics.stringValue = ""; return }
+    var speed = "—"
+    if ProcessInfo.processInfo.systemUptime - value.observedAt <= 2, let rate = value.bytesPerSecond, rate.isFinite, rate > 0 {
+      speed = ExplorerFormat.size(Int64(min(rate, Double(Int64.max / 2)))) + "/s"
+    }
+    statistics.stringValue = ExplorerFormat.size(value.completedBytes) + " / " + ExplorerFormat.size(value.totalBytes) + " · " + NL("速度：{0}", speed)
+  }
+  func close() { finished = true; speedTimer?.invalidate(); speedTimer = nil; window.close(); control = nil }
   func problem(_ value: FileTransferProblem, completion: @escaping (FileTransferDecision) -> Void) {
     guard !finished, control?.isCancelled != true else { completion(.cancel); return }
     window.orderFront(nil)
@@ -62,6 +101,7 @@ final class NativeTransferPanel: NSObject, NSWindowDelegate {
 private final class TransferDecisionReply: @unchecked Sendable {
   let semaphore = DispatchSemaphore(value: 0)
   var decision: FileTransferDecision = .cancel
+  var credential: NativeSMBCredential?
 }
 
 extension BrowserController {
@@ -69,6 +109,26 @@ extension BrowserController {
     guard !busy else { return }
     let panel = NativeTransferPanel(parent: view.window)
     let smoke = ProcessInfo.processInfo.arguments.contains("--smoke-test")
+    let diagnostics = smoke ? nil : TransferDiagnostics()
+    let logDirectory = Bundle.main.bundleIdentifier == "local.macexplorer.native-validation"
+      ? Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("transfer-logs")
+      : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.macexplorer").appendingPathComponent("transfer-logs")
+    let provider: NativeSMBDataCopier? = smoke || defaults.object(forKey: "serverSideTransfer") as? Bool == false ? nil : NativeSMBDataCopier(login: { [weak panel] server, account, previous, error in
+      let reply = TransferDecisionReply()
+      DispatchQueue.main.async {
+        guard let panel else { reply.semaphore.signal(); return }
+        panel.login(server: server, account: account, previous: previous, error: error) { value in reply.credential = value; reply.semaphore.signal() }
+      }
+      reply.semaphore.wait(); return reply.credential
+    }, saveFailure: { [weak panel] code in
+      let reply = TransferDecisionReply()
+      DispatchQueue.main.async {
+        guard let panel else { reply.semaphore.signal(); return }
+        let alert = NSAlert(); alert.messageText = NL("无法保存登录信息"); alert.informativeText = NL("钥匙串错误码：{0}", String(code))
+        alert.beginSheetModal(for: panel.window) { _ in reply.semaphore.signal() }
+      }
+      reply.semaphore.wait()
+    })
     let control = FileTransferControl(onProblem: { [weak panel] value in
       // Existing regression fixtures choose Skip; dialog controls have separate UI checks.
       if smoke { return .skip }
@@ -78,10 +138,18 @@ extension BrowserController {
         panel.problem(value) { choice in reply.decision = choice; reply.semaphore.signal() }
       }
       reply.semaphore.wait(); return reply.decision
-    }, onProgress: { [weak panel] value in DispatchQueue.main.async { panel?.update(value) } })
+    }, onProgress: { [weak panel] value in
+      diagnostics?.progress(value); DispatchQueue.main.async { panel?.update(value) }
+    }, serverSideCopy: provider, onPhase: { [weak panel] phase in
+      DispatchQueue.main.async { panel?.setPhase(phase) }
+    }, onTiming: { diagnostics?.record($0) })
     panel.control = control
     runAsyncOperation(recordUndo: recordUndo, completion: { result in panel.close(); completion?(result) }) {
-      await Task.detached { operation(control) }.value
+      await Task.detached {
+        let result = operation(control)
+        _ = try? diagnostics?.finish(result, directory: logDirectory)
+        return result
+      }.value
     }
   }
 }
@@ -100,6 +168,17 @@ enum NativeTransferPanelChecks {
     let source = URL(fileURLWithPath: "/private/tmp/transfer-ui-fixture")
     panel.update(FileTransferProgress(source: source, completedBytes: 25, totalBytes: 100))
     try expect(panel.label.stringValue == source.lastPathComponent && panel.progress.doubleValue == 25, "Transfer progress displays actual bytes without full-file verification reads")
+    panel.update(FileTransferProgress(source: source, completedBytes: 100, totalBytes: 100, bytesPerSecond: 1024))
+    try expect(panel.statistics.stringValue.contains("/s"), "Local copy displays a measured byte rate")
+    panel.update(FileTransferProgress(source: source, completedBytes: 100, totalBytes: 100, mode: .serverSide, bytesPerSecond: 2048))
+    try expect(panel.label.stringValue == NL("服务端复制：{0}", source.lastPathComponent) && panel.statistics.stringValue.contains("/s"), "Server-side copy displays its acknowledged logical byte rate")
+    panel.setPhase(.properties)
+    try expect(panel.progress.isIndeterminate && panel.statistics.stringValue.isEmpty && panel.label.stringValue == NL("正在保留属性…"), "Metadata processing never leaves a misleading 100-percent data bar or speed")
+    panel.setPhase(.verifying)
+    try expect(panel.label.stringValue == NL("正在验证文件…"), "Verification remains visible after copying finishes")
+    panel.setPhase(.copying)
+    panel.update(FileTransferProgress(source: source, completedBytes: 100, totalBytes: 100, bytesPerSecond: 1024, observedAt: ProcessInfo.processInfo.systemUptime - 3))
+    try expect(!panel.statistics.stringValue.contains("/s"), "Stale progress does not display a stale transfer speed")
     var answer: FileTransferDecision?
     panel.problem(FileTransferProblem(source: source, destination: source.appendingPathExtension("copy"), message: "fixture", propertyLoss: true, moving: true)) { answer = $0 }
     try await NativeSmoke.until { panel.window.attachedSheet != nil }
