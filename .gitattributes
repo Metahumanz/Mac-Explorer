@@ -1,0 +1,7 @@
+# Preserve byte-identical upstream sources and collapse them during PR review.
+native/Vendor/libsmb2/lib/** -whitespace linguist-vendored
+native/Vendor/libsmb2/include/** -whitespace linguist-vendored
+# Local integration files remain visible and keep normal whitespace checks.
+native/Vendor/libsmb2/include/config.h whitespace -linguist-vendored
+native/Vendor/libsmb2/include/module.modulemap whitespace -linguist-vendored
+native/Vendor/libsmb2/include/MacExplorerSMB2Includes.h whitespace -linguist-vendored
