@@ -1,0 +1,2 @@
+# Test-only independent SMB2 server; never linked into or shipped with the application.
+impacket==0.13.0

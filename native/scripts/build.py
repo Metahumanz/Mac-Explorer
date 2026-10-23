@@ -35,6 +35,9 @@ archive_helper = helpers / "archive-reader"
 subprocess.run(["xcrun", "clang", "-target", f"{platform.machine()}-apple-macos13.0", "-O2", "-Wall", "-Wextra", str(root / "Helpers" / "ArchiveReader.c"), "-larchive.2", "-o", str(archive_helper)], check=True)
 subprocess.run(["codesign", "--force", "--sign", "-", str(archive_helper)], check=True)
 
+shutil.copy2(root / "Vendor" / "libsmb2" / "LICENCE-LGPL-2.1.txt", contents / "Resources" / "libsmb2-LICENSE.txt")
+shutil.copy2(root / "Vendor" / "libsmb2" / "COPYING", contents / "Resources" / "libsmb2-COPYING.txt")
+shutil.copy2(root / "Vendor" / "libsmb2" / "README.mac-explorer.md", contents / "Resources" / "libsmb2-SOURCE.txt")
 shutil.copy2(root / "ICON-LICENSE.txt", contents / "Resources" / "ICON-LICENSE.txt")
 shutil.copytree(root.parent / "electron" / "templates", contents / "Resources" / "templates", dirs_exist_ok=True)
 shutil.copy2(bin_dir / "MacExplorerNative", contents / "MacOS" / "MacExplorerNative")

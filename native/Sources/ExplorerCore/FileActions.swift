@@ -151,6 +151,7 @@ public enum FileActions {
         break
       } catch {
         let typed = error as? FileTransferFailure
+        if typed?.retryRequested == true, hooks.control?.isCancelled != true { continue }
         let canRetry = typed == nil || typed?.item.outcome == .failed
         if canRetry, typed?.handled != true, hooks.control?.isCancelled != true, !(error is CancellationError) {
           let candidate = directory.appendingPathComponent(destinationName)

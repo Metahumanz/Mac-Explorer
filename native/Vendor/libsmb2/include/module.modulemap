@@ -1,0 +1,4 @@
+module CSMB2 {
+ header "MacExplorerSMB2Includes.h"
+ export *
+}

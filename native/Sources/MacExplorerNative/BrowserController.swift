@@ -1232,7 +1232,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       if recordUndo && !result.changes.isEmpty { self.undoChanges.append(result.changes) }
       completion?(result)
       self.operationError = result.errors.isEmpty ? nil : result.errors.joined(separator: "\n")
-      self.busy = false; self.message = result.errors.isEmpty ? NL("已完成") : result.errors.prefix(2).joined(separator: "；")
+      self.busy = false; self.message = result.errors.isEmpty ? (result.transfers.contains { $0.method == .serverSideCopy } ? NL("已完成（服务端复制）") : NL("已完成")) : result.errors.prefix(2).joined(separator: "；")
       if let index = self.tabs.firstIndex(where: { $0.id == origin }), self.tabs[index].directory == originDirectory { self.tabs[index].selectedPaths = Set(result.succeeded.map(\.path)) }
       if self.tabs[self.activeTab].id == origin && self.directory == originDirectory { self.reload() } else { self.updateStatus() }
     }

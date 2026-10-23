@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 public enum FileTransferOutcome: String, Sendable { case copied, moved, failed, sourceRetained, cleanupIncomplete, cancelled }
-public enum FileTransferMethod: String, Sendable { case rename, systemCopy, noOp }
+public enum FileTransferMethod: String, Sendable { case rename, systemCopy, serverSideCopy, noOp }
 
 /// contentVerified is false for system copies: no application-level checksum is implied.
 public struct FileTransferItem: Sendable {
@@ -20,6 +20,7 @@ public struct FileTransferItem: Sendable {
 struct FileTransferFailure: LocalizedError {
   let item: FileTransferItem
   var handled = false
+  var retryRequested = false
   var errorDescription: String? { item.message }
 }
 
@@ -34,6 +35,7 @@ struct TransferHooks {
   var copy: ((URL, URL) throws -> Void)?
   var exclusiveRename: ((URL, URL) throws -> Void)?
   var descriptorCopy = false
+  var nativeCopy = NativeTransferCopy.Hooks()
 }
 
 struct TransferMoment: Equatable {
@@ -69,7 +71,10 @@ struct TransferStamp: Equatable {
     // SMB servers may expose ChangeTime as LastWriteTime after an attribute refresh,
     // while the client's recent setattr cache reports "now". It is not a stable
     // change token. Identity, mode, size, mtime, and tree membership still apply.
-    sameObject(other) && mode == other.mode && (type == S_IFDIR || size == other.size) && modified.matches(other.modified, precision: max(precision, other.precision)) && (ignoreChangeTime || precision == 100 && other.precision == 100 || changed.matches(other.changed, precision: max(precision, other.precision)))
+    // SMB may first report a symlink's text length, then its on-disk reparse
+    // record length after reopening. Link text is compared by sameLayout; only
+    // regular-file size is a stable content guard across these attribute refreshes.
+    sameObject(other) && mode == other.mode && (type != S_IFREG || size == other.size) && modified.matches(other.modified, precision: max(precision, other.precision)) && (ignoreChangeTime || precision == 100 && other.precision == 100 || changed.matches(other.changed, precision: max(precision, other.precision)))
   }
 }
 
@@ -224,6 +229,9 @@ private struct TransferTree {
         try tree.withParent(node.relative, expected: sourceIndex) { directory, name in
           let from = try TransferFD(openat(directory, name, flags))
           guard try node.stamp.unchanged(from.stamp) else { throw VerifiedTransfer.failure("项目在传输期间发生变化，已停止操作。") }
+          if node.stamp.type != S_IFLNK, node.stamp.mode & 0o222 == 0, try file.stamp.mode & 0o222 != 0 {
+            throw VerifiedTransfer.failure("无法保留只读权限，来源已保留。")
+          }
           if let expected = try NativeTransferCopy.explicitACL(from.raw), try NativeTransferCopy.explicitACL(file.raw) != expected {
             throw VerifiedTransfer.failure("目标校验失败，来源已保留。")
           }
@@ -270,7 +278,7 @@ private struct TransferTree {
           defer { if let stamp = try? to.stamp { owned[node.relative] = TransferNode(relative: node.relative, stamp: stamp, link: node.link, companion: try? AppleDoubleCompanion.stamp(in: directory, primary: name)) } }
           let fromURL = node.relative.isEmpty ? source.url : source.url.appendingPathComponent(node.relative)
           let toURL = node.relative.isEmpty ? url : url.appendingPathComponent(node.relative)
-          if try NativeTransferCopy.copyDescriptors(from.raw, to: to.raw, sourceURL: fromURL, destinationURL: toURL, total: node.stamp.type == S_IFREG ? node.stamp.size : 0, control: hooks.control, moving: moving, link: node.stamp.type == S_IFLNK) { lost = true }
+          if try NativeTransferCopy.copyDescriptors(from.raw, to: to.raw, sourceURL: fromURL, destinationURL: toURL, total: node.stamp.type == S_IFREG ? node.stamp.size : 0, control: hooks.control, moving: moving, link: node.stamp.type == S_IFLNK, hooks: hooks.nativeCopy) { lost = true }
         }
       }
     }
@@ -418,13 +426,14 @@ enum VerifiedTransfer {
 
   static func perform(_ input: URL, to output: URL, move: Bool, hooks: TransferHooks = TransferHooks()) throws -> FileTransferItem {
     try hooks.control?.check()
+    hooks.control?.setPhase(.preparing)
     let source = TransferTree(parent: try TransferAnchor(input.deletingLastPathComponent()), name: input.lastPathComponent)
     let destination = TransferTree(parent: try TransferAnchor(output.deletingLastPathComponent()), name: output.lastPathComponent)
     try destination.parent.requireAbsent(destination.name)
     if try AppleDoubleCompanion.usesSidecars(destination.parent.fd.raw) { try destination.parent.requireAbsent("._" + destination.name) }
     if move && !hooks.forceCopyMove {
       do {
-        try rename(source, destination, hooks: hooks)
+        try FileTransferControl.measure(hooks.control, "publish.rename", phase: .publishing) { try rename(source, destination, hooks: hooks) }
         return FileTransferItem(source: input, destination: output, outcome: .moved, method: .rename, contentVerified: false, datesVerified: false, recoveryLocations: [], message: nil)
       } catch {
         let error = error as NSError
@@ -438,14 +447,16 @@ enum VerifiedTransfer {
     var direct = false
     var owned: [String: TransferNode] = [:]
     func item(_ outcome: FileTransferOutcome, _ message: String? = nil, _ recovery: [URL] = []) -> FileTransferItem {
-      FileTransferItem(source: input, destination: output, outcome: outcome, method: .systemCopy, contentVerified: false, datesVerified: datesVerified, recoveryLocations: recovery, message: message)
+      FileTransferItem(source: input, destination: output, outcome: outcome, method: hooks.control?.usedServerSideCopy(under: input) == true ? .serverSideCopy : .systemCopy, contentVerified: false, datesVerified: datesVerified, recoveryLocations: recovery, message: message)
     }
-    func cleanupStage() throws {
+    func cleanupStage(removePayload: Bool = true) throws {
       guard let stage else { return }
       try stage.validate()
-      var info = stat()
-      if fstatat(stage.fd.raw, "payload", &info, AT_SYMLINK_NOFOLLOW) == 0 { try TransferTree(parent: stage, name: "payload").discard() }
-      else if errno != ENOENT { throw posix() }
+      if removePayload {
+        var info = stat()
+        if fstatat(stage.fd.raw, "payload", &info, AT_SYMLINK_NOFOLLOW) == 0 { try TransferTree(parent: stage, name: "payload").discard() }
+        else if errno != ENOENT { throw posix() }
+      }
       try destination.parent.validate()
       let companion = try AppleDoubleCompanion.stamp(in: destination.parent.fd.raw, primary: stage.url.lastPathComponent)
       guard try stage.original.sameObject(destination.parent.entry(stage.url.lastPathComponent)) else { throw failure("文件夹已发生变化，已停止操作。") }
@@ -453,25 +464,27 @@ enum VerifiedTransfer {
       try AppleDoubleCompanion.remove(in: destination.parent.fd.raw, primary: stage.url.lastPathComponent, expected: companion)
     }
     do {
-      let before = try source.capture(control: hooks.control)
+      let before = try FileTransferControl.measure(hooks.control, "capture.source.initial", phase: .preparing) { try source.capture(control: hooks.control) }
       let stageName = ".mac-explorer-transfer-" + UUID().uuidString
       try destination.parent.validate()
       guard mkdirat(destination.parent.fd.raw, stageName, 0o700) == 0 else { throw posix() }
       stage = try TransferAnchor(destination.parent.url.appendingPathComponent(stageName))
       guard let stage else { throw posix(EIO) }
-      direct = try !canPublish(in: stage, hooks: hooks)
+      direct = try !FileTransferControl.measure(hooks.control, "publish.probe", phase: .preparing) { try canPublish(in: stage, hooks: hooks) }
       let payload = direct ? destination : TransferTree(parent: stage, name: "payload")
       try hooks.checkpoint?(.beforeCopy, source.url, payload.url)
       try source.parent.validate(); try stage.validate()
       // A recursive path copy would also copy SMB's raw AppleDouble entries onto
       // APFS as extra files. Copy the captured logical entries through descriptors.
-      let sourceUsesSidecars = try AppleDoubleCompanion.usesSidecars(source.parent.fd.raw)
-      if direct || hooks.descriptorCopy || sourceUsesSidecars {
-        if try payload.copyReserved(source, nodes: before, hooks: hooks, moving: move, owned: &owned) { warning = NL("部分文件属性无法保留：{0}", output.path) }
-      } else if let copy = hooks.copy { try copy(source.url, payload.url) }
-      else if try NativeTransferCopy.copy(source.url, to: payload.url, total: before.filter { $0.stamp.type == S_IFREG }.reduce(0) { $0 + $1.stamp.size }, control: hooks.control, moving: move) { warning = NL("部分文件属性无法保留：{0}", output.path) }
+      try FileTransferControl.measure(hooks.control, "copy.entries", phase: .copying) {
+        let sourceUsesSidecars = try AppleDoubleCompanion.usesSidecars(source.parent.fd.raw)
+        if direct || hooks.descriptorCopy || sourceUsesSidecars || hooks.control?.serverSideCopy?.isCandidate(source: source.url, destination: payload.url) == true {
+          if try payload.copyReserved(source, nodes: before, hooks: hooks, moving: move, owned: &owned) { warning = NL("部分文件属性无法保留：{0}", output.path) }
+        } else if let copy = hooks.copy { try copy(source.url, payload.url) }
+        else if try NativeTransferCopy.copy(source.url, to: payload.url, total: before.filter { $0.stamp.type == S_IFREG }.reduce(0) { $0 + $1.stamp.size }, control: hooks.control, moving: move) { warning = NL("部分文件属性无法保留：{0}", output.path) }
+      }
       try hooks.checkpoint?(.afterCopy, source.url, payload.url)
-      let copied = try payload.capture(control: hooks.control)
+      let copied = try FileTransferControl.measure(hooks.control, "capture.target.copied", phase: .verifying) { try payload.capture(control: hooks.control) }
       guard sameLayout(before, copied) else { throw failure("文件内容校验失败，来源已保留。") }
       guard owned.isEmpty || sourceUnchanged(before.compactMap { owned[$0.relative] }, copied) else { throw failure("目标校验失败，来源已保留。") }
       // Only our metadata writes may update this baseline; rereading the path would trust a replacement.
@@ -481,12 +494,14 @@ enum VerifiedTransfer {
       let fsName = withUnsafePointer(to: &filesystem.f_fstypename) { $0.withMemoryRebound(to: CChar.self, capacity: 16) { String(cString: $0) } }
       while true {
         do {
-          try payload.restore(before, from: source, target: before.compactMap { expectedTarget[$0.relative] }, hooks: hooks, updated: {
-            expectedTarget[$0.relative] = $0
-            if direct { owned[$0.relative] = $0 }
-          })
+          try FileTransferControl.measure(hooks.control, "properties.restore", phase: .properties) {
+            try payload.restore(before, from: source, target: before.compactMap { expectedTarget[$0.relative] }, hooks: hooks, updated: {
+              expectedTarget[$0.relative] = $0
+              if direct { owned[$0.relative] = $0 }
+            })
+          }
           try hooks.checkpoint?(.afterDates, source.url, payload.url)
-          datesVerified = datesMatch(before, try payload.capture(control: hooks.control), filesystem: fsName)
+          datesVerified = datesMatch(before, try FileTransferControl.measure(hooks.control, "capture.target.dates", phase: .verifying) { try payload.capture(control: hooks.control) }, filesystem: fsName)
           guard datesVerified else { throw failure("文件日期校验失败，来源已保留。") }
           break
         } catch {
@@ -502,23 +517,26 @@ enum VerifiedTransfer {
           break
         }
       }
-      guard try sourceUnchanged(before, source.capture(control: hooks.control)) else { throw failure("项目在传输期间发生变化，已停止操作。") }
+      // One final source snapshot after the checkpoint covers the same changes as the
+      // former back-to-back snapshots, without another complete metadata walk on SMB.
       try hooks.checkpoint?(.beforePublish, source.url, payload.url)
       try hooks.control?.check()
-      guard try sourceUnchanged(before, source.capture(control: hooks.control)) else { throw failure("项目在传输期间发生变化，已停止操作。") }
-      let staged = try payload.capture(control: hooks.control)
+      guard try sourceUnchanged(before, FileTransferControl.measure(hooks.control, "capture.source.before_publish", phase: .verifying) { try source.capture(control: hooks.control) }) else { throw failure("项目在传输期间发生变化，已停止操作。") }
+      let staged = try FileTransferControl.measure(hooks.control, "capture.target.before_publish", phase: .verifying) { try payload.capture(control: hooks.control) }
       guard sameLayout(before, staged), sourceUnchanged(before.compactMap { expectedTarget[$0.relative] }, staged), !datesVerified || datesMatch(before, staged, filesystem: fsName) else { throw failure("文件内容校验失败，来源已保留。") }
-      if !direct { try rename(payload, destination, hooks: hooks) }
+      try FileTransferControl.measure(hooks.control, "publish", phase: .publishing) { if !direct { try rename(payload, destination, hooks: hooks) } }
       published = true
       try hooks.checkpoint?(.afterPublish, source.url, destination.url)
-      let final = try destination.capture(control: hooks.control)
+      let final = try FileTransferControl.measure(hooks.control, "capture.target.final", phase: .verifying) { try destination.capture(control: hooks.control) }
       guard sameLayout(staged, final), zip(staged, final).allSatisfy({ $0.stamp.unchanged($1.stamp, ignoreChangeTime: !direct && $0.relative.isEmpty) }), !datesVerified || datesMatch(before, final, filesystem: fsName) else { throw failure("目标校验失败，来源已保留。") }
       if move {
         while true {
           do {
             try hooks.control?.check()
             try hooks.checkpoint?(.beforeCleanup, source.url, destination.url)
-            guard try sourceUnchanged(before, source.capture(control: hooks.control)), try sourceUnchanged(final, destination.capture(control: hooks.control)) else { throw failure("项目在传输期间发生变化，已停止操作。") }
+            try FileTransferControl.measure(hooks.control, "capture.before_remove", phase: .verifying) {
+              guard try sourceUnchanged(before, source.capture(control: hooks.control)), try sourceUnchanged(final, destination.capture(control: hooks.control)) else { throw failure("项目在传输期间发生变化，已停止操作。") }
+            }
             break
           } catch {
             if error is CancellationError { throw error }
@@ -530,25 +548,30 @@ enum VerifiedTransfer {
             }
           }
         }
-        try source.removeVerified(before, hooks: hooks, destination: destination, target: final, removed: &removed)
+        try FileTransferControl.measure(hooks.control, "source.remove", phase: .removingSource) { try source.removeVerified(before, hooks: hooks, destination: destination, target: final, removed: &removed) }
       }
-      do { try cleanupStage() }
+      do { try FileTransferControl.measure(hooks.control, "stage.cleanup", phase: .finishing) { try cleanupStage() } }
       catch { return item(move ? .moved : .copied, NL("操作已完成，但暂存记录无法清理：{0}", stage.recoveryURL.path) + " " + error.localizedDescription, [stage.recoveryURL]) }
       return item(move ? .moved : .copied, warning)
     } catch {
       var recovery = [URL]()
       if published { recovery.append(output); datesVerified = false }
-      if direct && !published && !owned.isEmpty {
+      let uncertain = (error as? ServerSideCopyError)?.isUncertain == true
+      if uncertain { recovery.append(direct ? output : stage?.recoveryURL ?? output) }
+      if !uncertain && direct && !published && !owned.isEmpty {
         do { try destination.discardReserved(owned) }
         catch { recovery.append(destination.parent.recoveryURL.appendingPathComponent(destination.name)) }
       }
-      do { try cleanupStage() } catch { if let stage { recovery.append(stage.recoveryURL) } }
-      let outcome: FileTransferOutcome = error is CancellationError ? .cancelled : removed > 0 ? .cleanupIncomplete : published && move ? .sourceRetained : .failed
+      // In the direct path the server can only write output, never this unused
+      // stage. Remove its empty directory only; unknown children must be retained
+      // and reported rather than traversed during uncertain-status cleanup.
+      if !uncertain || direct { do { try cleanupStage(removePayload: !uncertain) } catch { if let stage { recovery.append(stage.recoveryURL) } } }
+      let outcome: FileTransferOutcome = uncertain ? .cleanupIncomplete : error is CancellationError ? .cancelled : removed > 0 ? .cleanupIncomplete : published && move ? .sourceRetained : .failed
       let detail = error is CancellationError ? NL("已取消") : error.localizedDescription
       let recoveryText = recovery.isEmpty ? "" : NL("恢复位置：{0}", recovery.map(\.path).joined(separator: "；"))
       var failed = item(outcome, NL("操作未完成，请检查来源和目标。") + " " + detail + (recoveryText.isEmpty ? "" : " " + recoveryText), recovery)
       failed.diagnostic = (error as NSError).userInfo[NSDebugDescriptionErrorKey] as? String
-      throw FileTransferFailure(item: failed, handled: handled || (error as? NativeTransferCopy.Failure)?.handled == true)
+      throw FileTransferFailure(item: failed, handled: handled || (error as? NativeTransferCopy.Failure)?.handled == true, retryRequested: error is NativeTransferCopy.Retry && recovery.isEmpty && !published && removed == 0)
     }
   }
 }
