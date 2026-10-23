@@ -1,6 +1,7 @@
 <div align="center">
   <img src="design/icon-selected-mirrored.png" width="88" alt="Mac Explorer 图标">
   <h1>Mac Explorer</h1>
+  <p><strong>简体中文</strong> &nbsp;·&nbsp; <a href="README.zh-TW.md">繁體中文</a> &nbsp;·&nbsp; <a href="README.en.md">English</a></p>
   <h3>熟悉的操作，Mac 的体验。</h3>
   <p>一款原生 macOS 文件管理器，让熟悉的 Windows 文件管理习惯，在 Mac 上继续。<br>从工作文档到生活照片，为每天与文件打交道的你而做。</p>
   <p>
