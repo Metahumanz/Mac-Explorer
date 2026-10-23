@@ -308,6 +308,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemVali
     edit.addItem(withTitle: NL("粘贴"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
     edit.addItem(withTitle: NL("全选"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     edit.addItem(.separator())
+    edit.addItem(withTitle: NL("撤销"), action: #selector(BrowserController.undo(_:)), keyEquivalent: "z")
+    edit.addItem(withTitle: NL("重做"), action: #selector(BrowserController.redo(_:)), keyEquivalent: "z")
+    edit.items.last?.keyEquivalentModifierMask = [.command, .shift]
+    edit.addItem(.separator())
     item(NL("复制路径"), #selector(BrowserController.copyPaths), "", in: edit)
     addMenu(NL("编辑"), submenu: edit, to: main)
     let navigation = NSMenu(title: NL("前往"))
