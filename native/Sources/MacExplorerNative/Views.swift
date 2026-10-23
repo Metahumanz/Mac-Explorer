@@ -277,6 +277,15 @@ final class FileTableView: NSTableView {
   }
 }
 final class FileCollectionView: NSCollectionView {
+  override func setFrameSize(_ newSize: NSSize) {
+    var size = newSize
+    if let layout = collectionViewLayout as? ExplorerCollectionLayout, layout.mode == .list {
+      // NSCollectionView can propose the viewport width during relayout. Horizontal
+      // List content must keep its full document width for NSClipView to scroll it.
+      size.width = max(size.width, layout.collectionViewContentSize.width)
+    }
+    super.setFrameSize(size)
+  }
   var openSelection: (() -> Void)?; var previewSelection: (() -> Void)?; var showContext: ((NSEvent) -> Void)?; var renameSelection: (() -> Void)?; var trashSelection: (() -> Void)?
   private var marquee: NativeMarqueeSelection?
   private var selectionCursor: Int?

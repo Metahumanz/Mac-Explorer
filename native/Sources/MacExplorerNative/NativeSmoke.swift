@@ -18,6 +18,11 @@ enum NativeSmoke {
         try await NativeQuitChecks.child(browser: browser, window: window, root: root, suite: CommandLine.arguments[index + 1], report: report)
         return
       }
+      if ProcessInfo.processInfo.arguments.contains("--smoke-navigation-state") {
+        checks += try await NativeNavigationStateChecks.run()
+        try write(["passed": true, "checks": checks], to: report)
+        NSApp.terminate(nil); return
+      }
       if ProcessInfo.processInfo.arguments.contains("--smoke-vcs-edit") {
         checks += try await NativeVCSEditingChecks.run()
         try write(["passed": true, "checks": checks], to: report)
@@ -199,6 +204,7 @@ enum NativeSmoke {
       checks += try await NativeLatestChecks.run(parent: window)
       checks += try await NativeFinderServersChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeQuitChecks.run(output: report.deletingLastPathComponent())
+      checks += try await NativeNavigationStateChecks.run()
       checks += try await NativeLifecycleChecks.run(source: browser)
       checks += try await NativeStartLocationChecks.run(output: report.deletingLastPathComponent())
       checks += try await NativeVCSUIChecks.run(parent: window)

@@ -3,11 +3,22 @@ import ExplorerCore
 import Quartz
 import UniformTypeIdentifiers
 
+struct BrowserLocationState: Codable {
+  var selection = Set<String>()
+  var origin = NSPoint.zero
+  var layout = ""
+  var anchor: String?
+  var anchorOffset = NSPoint.zero
+  var revealPath: String?
+}
+
 struct BrowserTab: Codable {
   var id = UUID()
   var history: [URL]
   var index = 0
   var selectedPaths = Set<String>()
+  var locationStates: [Int: BrowserLocationState] = [:]
+  enum CodingKeys: String, CodingKey { case id, history, index, selectedPaths }
   var directory: URL { history[index] }
 }
 
@@ -28,6 +39,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private(set) var loading = false
   private(set) var lastError: String?
   private(set) var displayedMilliseconds = 0.0
+  private var pendingLocationState: BrowserLocationState?
   var directory: URL { tabs[activeTab].directory }
   private var viewingTrash: Bool { directory.absoluteString == "explorer://trash" || directory.isFileURL && (directory.path == home.appendingPathComponent(".Trash").path || directory.path.hasPrefix(home.appendingPathComponent(".Trash").path + "/") || directory.pathComponents.contains(".Trashes")) }
   private var writable: Bool { directory.isFileURL && !searchActive && !viewingTrash }
@@ -109,7 +121,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   let errorClose = ExplorerButton(icon: "close"), exitSearch = ExplorerButton(title: NL("退出搜索"))
   let privacySettings = ExplorerButton(title: NL("前往设置"))
   let emptyIcon = NSImageView()
-  let collectionLayout = ExplorerCollectionLayout()
+  private(set) var collectionLayout = ExplorerCollectionLayout()
   let addTabButton = ExplorerButton(icon: "plus")
   let backButton = ExplorerButton(icon: "arrowLeft"), forwardButton = ExplorerButton(icon: "arrowRight"), upButton = ExplorerButton(icon: "arrowUp"), refreshButton = ExplorerButton(icon: "refresh")
   let newButton = ExplorerButton(title: NL("新建"), icon: "plus", dropdown: true)
@@ -346,7 +358,8 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     specialView.frame = content.bounds; loadingView.frame = content.bounds
     tableScroll.frame = NSRect(x: 14, y: 0, width: max(0, content.bounds.width - 38), height: content.bounds.height)
     collectionScroll.frame = content.bounds
-    collection.frame.size.width = collectionScroll.contentView.bounds.width; collectionLayout.invalidateLayout()
+    collectionLayout.invalidateLayout(); collectionLayout.prepare()
+    collection.frame.size = collectionLayout.collectionViewContentSize
     let available = max(0, tableScroll.contentView.bounds.width)
     let dateWidth: CGFloat = width <= 900 ? 150 : width <= 1100 ? 153 : 165
     let metadata: [String: CGFloat] = ["modified": dateWidth, "created": dateWidth, "kind": width <= 1100 ? 110 : 132, "size": width <= 900 ? 80 : width <= 1100 ? 85 : 100]
@@ -560,13 +573,93 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     }
   }
 
+  private func sameLocation(_ left: URL, _ right: URL) -> Bool {
+    left.isFileURL && right.isFileURL ? left.standardizedFileURL.path == right.standardizedFileURL.path : left == right
+  }
+  private var locationLayout: String { "\(mode.rawValue):\(Int(iconSize)):\(compact)" }
+  private func itemFrame(_ index: Int) -> NSRect? {
+    guard entries.indices.contains(index) else { return nil }
+    return mode == .details ? table.rect(ofRow: index) : collectionLayout.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame
+  }
+  private func rememberLocationState() {
+    guard isViewLoaded, !loading, !searchActive, pendingLocationState == nil, lastError == nil, snapshot.map({ sameLocation($0.directory, directory) }) == true else { return }
+    let scroll = mode == .details ? tableScroll : collectionScroll
+    let origin = scroll.contentView.bounds.origin
+    let first: Int?
+    if mode == .details {
+      let rows = table.rows(in: table.visibleRect)
+      first = rows.length > 0 && entries.indices.contains(rows.location) ? rows.location : nil
+    } else {
+      first = collectionLayout.layoutAttributesForElements(in: collection.visibleRect).first?.indexPath?.item
+    }
+    var state = BrowserLocationState(selection: selectedPaths, origin: origin, layout: locationLayout)
+    if let first, let frame = itemFrame(first) { state.anchor = entries[first].id; state.anchorOffset = NSPoint(x: frame.minX - origin.x, y: frame.minY - origin.y) }
+    let current = tabs[activeTab].index
+    tabs[activeTab].locationStates[current] = state
+    // Transient state belongs to the tab, not global folder preferences or restart persistence.
+    if tabs[activeTab].locationStates.count > 128 {
+      for key in tabs[activeTab].locationStates.keys.sorted().filter({ $0 != current }).prefix(tabs[activeTab].locationStates.count - 128) { tabs[activeTab].locationStates.removeValue(forKey: key) }
+    }
+  }
+  private func prepareLocationState(_ state: BrowserLocationState) {
+    pendingLocationState = state; selectedPaths = state.selection
+  }
+  private func childLocation(from source: URL, in parent: URL) -> URL? {
+    guard source.isFileURL, parent.isFileURL, source != parent else { return nil }
+    let prefix = parent.path == "/" ? "/" : parent.path + "/"
+    guard source.path.hasPrefix(prefix), let component = source.path.dropFirst(prefix.count).split(separator: "/").first else { return nil }
+    return parent.appendingPathComponent(String(component), isDirectory: true)
+  }
+  private func travelHistory(_ delta: Int) {
+    let next = tabs[activeTab].index + delta
+    guard tabs[activeTab].history.indices.contains(next) else { return }
+    let source = directory; rememberLocationState(); tabs[activeTab].index = next
+    var state = tabs[activeTab].locationStates[next] ?? BrowserLocationState()
+    if let child = childLocation(from: source, in: directory) { state.selection = [child.path]; state.revealPath = child.path }
+    prepareLocationState(state)
+    search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload()
+  }
+  private func restoreLocationState() {
+    guard let state = pendingLocationState, !loading else { return }
+    pendingLocationState = nil
+    view.layoutSubtreeIfNeeded(); collection.layoutSubtreeIfNeeded()
+    let scroll = mode == .details ? tableScroll : collectionScroll
+    var point = state.layout == locationLayout ? state.origin : .zero
+    if state.layout == locationLayout, let anchor = state.anchor, let index = entries.firstIndex(where: { $0.id == anchor }), let frame = itemFrame(index) {
+      point = NSPoint(x: frame.minX - state.anchorOffset.x, y: frame.minY - state.anchorOffset.y)
+    }
+    if let document = scroll.documentView {
+      point.x = min(max(0, point.x), max(0, document.bounds.width - scroll.contentSize.width))
+      point.y = min(max(0, point.y), max(0, document.bounds.height - scroll.contentSize.height))
+      scroll.contentView.scroll(to: point); scroll.reflectScrolledClipView(scroll.contentView)
+      if let path = state.revealPath, let index = entries.firstIndex(where: { $0.id == path }), let frame = itemFrame(index), !scroll.contentView.bounds.contains(frame) { document.scrollToVisible(frame) }
+    }
+  }
+
   func navigate(to url: URL, addHistory: Bool = true) {
     let target = url.standardizedFileURL
-    if addHistory && target != directory { tabs[activeTab].history = Array(tabs[activeTab].history.prefix(tabs[activeTab].index + 1)) + [target]; tabs[activeTab].index = tabs[activeTab].history.count - 1; selectedPaths = [] }
+    let source = directory
+    if addHistory && !sameLocation(target, source) {
+      rememberLocationState()
+      var state = BrowserLocationState()
+      if let child = childLocation(from: source, in: target) {
+        if let previous = tabs[activeTab].history.indices.reversed().first(where: { sameLocation(tabs[activeTab].history[$0], target) && tabs[activeTab].locationStates[$0] != nil }) { state = tabs[activeTab].locationStates[previous]! }
+        state.selection = [child.path]; state.revealPath = child.path
+      }
+      let end = tabs[activeTab].index
+      tabs[activeTab].history = Array(tabs[activeTab].history.prefix(end + 1)) + [target]
+      tabs[activeTab].locationStates = tabs[activeTab].locationStates.filter { $0.key <= end }
+      tabs[activeTab].index = tabs[activeTab].history.count - 1
+      prepareLocationState(state)
+    }
     operationError = nil; needsFullDiskAccess = false; search.stringValue = ""; searchActive = false; virtualLocation = ""; restoreView(target, touch: true); reload()
   }
   @objc func reload() {
     guard !stopped else { return }
+    if pendingLocationState == nil {
+      rememberLocationState()
+      prepareLocationState(tabs[activeTab].locationStates[tabs[activeTab].index] ?? BrowserLocationState(selection: selectedPaths))
+    }
     automaticRead?.cancel(); automaticRead = nil; refreshWork?.cancel(); refreshWork = nil; refreshPending = false
     directoryWatcher.watch(directory.isFileURL && !searchActive ? directory : nil) { [weak self] in self?.scheduleAutomaticRefresh() }
     cancelInlineRename()
@@ -672,7 +765,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     let task = Task.detached(priority: .userInitiated) { EntryQuery.apply(snapshot.entries, showHidden: hidden, query: query, sort: order, ascending: direction) }; queryTask = task
     Task { @MainActor [weak self] in
       let result = await task.value; guard let self, self.queryGeneration == token, self.generation == navigation else { return }
-      self.entries = result.map { entry in var value = entry; value.vcsMark = self.vcsStatus?.statesByPath[entry.id]?.mark; return value }; self.selectedPaths.formIntersection(Set(result.map(\.id))); self.loading = false; self.displayedMilliseconds = Date().timeIntervalSince(self.startedAt) * 1000; self.render()
+      self.entries = result.map { entry in var value = entry; value.vcsMark = self.vcsStatus?.statesByPath[entry.id]?.mark; return value }; self.selectedPaths.formIntersection(Set(result.map(\.id))); self.loading = false; self.displayedMilliseconds = Date().timeIntervalSince(self.startedAt) * 1000; self.render(); self.restoreLocationState()
     }
   }
   private func render() {
@@ -724,8 +817,18 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     if !directory.isFileURL { status.stringValue = locationLabel(directory) }
     newButton.isEnabled = !busy && writable; detailViewButton.active = mode == .details; iconViewButton.active = mode == .icons; previewButton.active = paneMode == "preview"
   }
+  private func configureCollectionLayout() {
+    collection.autoresizingMask = mode == .list ? [.height] : [.width]
+    // Give each layout organization its own instance, as recommended by AppKit.
+    if collectionLayout.mode != mode {
+      collectionLayout = ExplorerCollectionLayout()
+      collectionLayout.mode = mode
+      if isViewLoaded { collection.collectionViewLayout = collectionLayout }
+    }
+    collectionLayout.mode = mode; collectionLayout.iconSize = iconSize; collectionLayout.compact = compact
+  }
   func updateMode(persist: Bool = true) {
-    collectionLayout.mode = mode; collectionLayout.iconSize = iconSize; collectionLayout.compact = compact; table.rowHeight = compact ? 28 : 36
+    configureCollectionLayout(); table.rowHeight = compact ? 28 : 36
     collectionLayout.invalidateLayout(); sizeSlider.doubleValue = Double(iconSize); sizeValue.stringValue = "\(Int(iconSize))"
     if persist { saveView() }; render(); view.window?.makeFirstResponder(mode == .details ? table : collection)
   }
@@ -773,7 +876,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     sort = EntrySort(rawValue: global["sort"] as? String ?? "name") ?? .name; ascending = global["ascending"] as? Bool ?? true
     if let view = saved["view"] as? String, let layout = ExplorerLayoutMode(rawValue: view), let size = saved["iconSize"] as? Int, (32...128).contains(size) { mode = layout; iconSize = CGFloat(size) }
     if let order = saved["sort"] as? String, let key = EntrySort(rawValue: order), let direction = saved["ascending"] as? Bool { sort = key; ascending = direction }
-    collectionLayout.mode = mode; collectionLayout.iconSize = iconSize
+    configureCollectionLayout()
   }
   func selectedEntries() -> [FileEntry] { entries.filter { selectedPaths.contains($0.id) } }
   private func displayName(_ entry: FileEntry) -> String { if entry.isPackage { return entry.url.deletingPathExtension().lastPathComponent }; return extensions || entry.isDirectory || entry.url.pathExtension.isEmpty ? entry.name : entry.url.deletingPathExtension().lastPathComponent }
@@ -815,16 +918,18 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     guard canDetachTab, let index = tabs.firstIndex(where: { $0.id == id }), let window = view.window else { return false }
     ExplorerMenu.dismiss()
     if tabs.count == 1 { ApplicationDelegate.position(window, at: point); window.makeKeyAndOrderFront(nil); return true }
+    if index == activeTab { rememberLocationState() }
     guard onDetachTab?(tabs[index], point) == true else { return false }
     closeTab(at: index)
     return true
   }
   func adopt(_ tab: BrowserTab) {
     guard !tab.history.isEmpty, tab.history.indices.contains(tab.index) else { return }
-    tabs = [tab]; activeTab = 0; restoreView(tab.directory, touch: true)
+    tabs = [tab]; activeTab = 0; prepareLocationState(tab.locationStates[tab.index] ?? BrowserLocationState(selection: tab.selectedPaths)); restoreView(tab.directory, touch: true)
   }
   func openTab(at url: URL) {
-    tabs.append(BrowserTab(history: [url])); activeTab = tabs.count - 1; search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload()
+    rememberLocationState()
+    tabs.append(BrowserTab(history: [url])); activeTab = tabs.count - 1; prepareLocationState(BrowserLocationState()); search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload()
     view.layoutSubtreeIfNeeded(); tabsDocument.subviews.last?.scrollToVisible(tabsDocument.subviews.last!.bounds)
   }
   @objc func newTab() { openTab(at: NativeStartLocation.load(defaults).url(home: home)) }
@@ -833,13 +938,19 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     guard tabs.indices.contains(index) else { return }
     if tabs.count == 1 { view.window?.close(); return }
     let wasActive = index == activeTab
+    rememberLocationState()
     tabs.remove(at: index)
     if index < activeTab || wasActive { activeTab = max(0, activeTab - 1) }
-    if wasActive { search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload() } else { rebuildTabs() }
+    if wasActive { prepareLocationState(tabs[activeTab].locationStates[tabs[activeTab].index] ?? BrowserLocationState(selection: selectedPaths)); search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload() } else { rebuildTabs() }
   }
-  func switchTab(to index: Int) { guard tabs.indices.contains(index), index != activeTab else { return }; activeTab = index; search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload() }
-  @objc func back() { guard tabs[activeTab].index > 0 else { return }; tabs[activeTab].index -= 1; search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload() }
-  @objc func forward() { guard tabs[activeTab].index + 1 < tabs[activeTab].history.count else { return }; tabs[activeTab].index += 1; search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload() }
+  func switchTab(to index: Int) {
+    guard tabs.indices.contains(index), index != activeTab else { return }
+    rememberLocationState(); activeTab = index
+    prepareLocationState(tabs[activeTab].locationStates[tabs[activeTab].index] ?? BrowserLocationState(selection: selectedPaths))
+    search.stringValue = ""; searchActive = false; restoreView(directory, touch: true); reload()
+  }
+  @objc func back() { travelHistory(-1) }
+  @objc func forward() { travelHistory(1) }
   @objc func up() { navigate(to: directory.deletingLastPathComponent()) }
   @objc func focusAddress() { addressBar.beginEditing() }
   @objc func focusSearch() { view.window?.makeFirstResponder(search); search.selectText(nil) }
@@ -1534,7 +1645,9 @@ extension BrowserController {
 extension BrowserController {
   func changeLanguage(_ mode: String) { onLanguageChange?(mode) }
   func copySession(from source: BrowserController) {
+    source.rememberLocationState()
     tabs = source.tabs; activeTab = source.activeTab; home = source.home
+    prepareLocationState(tabs[activeTab].locationStates[tabs[activeTab].index] ?? BrowserLocationState(selection: selectedPaths))
     testTrashDirectory = source.testTrashDirectory; filePasteboard = source.filePasteboard
     undoChanges = source.undoChanges; paneMode = source.paneMode; operationError = source.operationError
     restoreView(directory)
@@ -1609,7 +1722,7 @@ extension BrowserController {
     var seen = Set<String>()
     let urls = [home] + locations.compactMap(NativeSessions.validLocation).filter { $0 != home }
     tabs = urls.filter { seen.insert($0.absoluteString).inserted }.map { BrowserTab(history: [$0]) }
-    activeTab = 0; restoreView(home, touch: true)
+    activeTab = 0; prepareLocationState(BrowserLocationState()); restoreView(home, touch: true)
     if isViewLoaded { reload() }
   }
 }
