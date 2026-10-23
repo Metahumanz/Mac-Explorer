@@ -95,7 +95,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   let table = FileTableView(), collection = FileCollectionView()
   let tableScroll = NSScrollView(), collectionScroll = NSScrollView()
   let content = SurfaceView()
-  let specialView = ExplorerSpecialView()
+  lazy var specialView = ExplorerSpecialView(defaults: defaults)
   let addressBar = ExplorerAddressBar(), searchBox = ExplorerSearchBox()
   var address: NSTextField { addressBar.field }
   var search: NSTextField { searchBox.field }
@@ -1467,6 +1467,11 @@ extension BrowserController {
     let count = places.merge(result.places, defaultPaths: defaultPlaces.map { $0.0.path }, excludedPaths: Set([home.path, cloudDrive?.path].compactMap { $0 }))
     savePlaces()
     return (count > 0 ? NL("已导入 {0} 项", count) : result.places.isEmpty ? NL("未找到收藏夹") : NL("没有新增收藏夹")) + (result.skipped > 0 ? NL(" · 跳过 {0} 项", result.skipped) : "")
+  }
+  func importFinderServers() async throws -> String {
+    let result = try await Task.detached { try FinderServersReader.read() }.value
+    let count = try NativeServerFavorites.merge(result.servers, into: defaults)
+    return (count > 0 ? NL("已导入 {0} 项", count) : result.servers.isEmpty ? NL("未找到收藏的 SMB 服务器") : NL("没有新增服务器")) + (result.skipped > 0 ? NL(" · 跳过 {0} 项", result.skipped) : "")
   }
   private func openWithMenu(_ urls: [URL]) -> ExplorerMenuItem {
     guard !urls.isEmpty else { return ExplorerMenuItem(title: NL("打开方式"), enabled: false) }

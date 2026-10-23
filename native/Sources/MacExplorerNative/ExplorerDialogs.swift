@@ -257,6 +257,7 @@ fileprivate final class EDPresentation {
       }
       if modifiers.contains(.command) {
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        if key == "q" && modifiers == .command { return event }
         if key == "w" && modifiers == .command { self.close(); return nil }
         // Keep text editing native, but never dispatch an Explorer/menu command
         // behind the modal (including shortcuts such as Command+Delete).
@@ -875,8 +876,18 @@ private final class EDSettingsBody: EDView {
         guard let location = NativeStartLocation(rawValue: value) else { return }
         browser?.defaults.set(location.rawValue, forKey: NativeStartLocation.preferenceKey)
       }
-      startup.content.addSubview(destination); startup.arrange = { destination.frame = $0 }
-      content.flow.add(startup) { _ in 58 }
+      let restore = EDButton(title: NL("退出后恢复窗口和标签页"), style: .checkbox)
+      restore.checked = browser.defaults.object(forKey: NativeSessions.restoreAfterQuitKey) as? Bool ?? false
+      restore.onPress = { [weak restore, weak browser] in
+        guard let restore else { return }; restore.checked.toggle()
+        browser?.defaults.set(restore.checked, forKey: NativeSessions.restoreAfterQuitKey)
+      }
+      startup.content.addSubview(destination); startup.content.addSubview(restore)
+      startup.arrange = { rect in
+        destination.frame = NSRect(x: 0, y: 0, width: rect.width, height: 32)
+        restore.frame = NSRect(x: 0, y: 40, width: rect.width, height: 28)
+      }
+      content.flow.add(startup) { _ in 94 }
     }
     let language = EDGroup(NL("语言"))
     let row = EDChoiceRow(title: NL("界面语言"), options: [(NL("跟随系统"), "system"), ("简体中文", "zh-CN"), ("繁體中文", "zh-TW"), ("English", "en")], value: browser?.defaults.string(forKey: "language") ?? "system") { [weak self] in self?.browser?.changeLanguage($0) }
