@@ -10,6 +10,7 @@ enum NativeNetworkDeleteChecks {
     while !predicate() { guard Date() < deadline else { throw NativeSmoke.Failure(description: "Network delete UI timed out") }; try await Task.sleep(nanoseconds: 20_000_000) }
   }
   static func run(output: URL) async throws -> [String] {
+#if EXPLORER_DELETION_TESTS
     let fm = FileManager.default, root = fm.temporaryDirectory.appendingPathComponent("native-network-delete-" + UUID().uuidString)
     try fm.createDirectory(at: root, withIntermediateDirectories: true)
     let suite = "native-network-delete." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
@@ -21,7 +22,20 @@ enum NativeNetworkDeleteChecks {
     var recycleCalls = 0
     browser.deletionNetworkLocation = { $0.lastPathComponent.hasPrefix("remote") }
     browser.fileErrorNetworkLocation = browser.deletionNetworkLocation
-    browser.prepareNetworkDeletion = { try NetworkDeletion($0, network: { _ in true }) }
+    browser.prepareDeletionItems = { sources in
+      try sources.flatMap { source in
+        let plans = try PreparedDeletion.fixtures([source], root: root, classification: { parent in
+          if source.lastPathComponent == "remote-unknown" { return nil }
+          return source.lastPathComponent.hasPrefix("remote") || parent.lastPathComponent == "remote-parent" ? .network : .local
+        })
+        if source.lastPathComponent == "remote-partial" {
+          plans.first?.network?.auditHook = { stage, path in
+            if stage == .afterUnlink && path.lastPathComponent == "a-first" { try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: source.appendingPathComponent("z-denied").path) }
+          }
+        }
+        return plans
+      }
+    }
     browser.recycleItem = { source, _, _ in
       recycleCalls += 1
       let trash = root.appendingPathComponent("simulated-trash")
@@ -33,6 +47,7 @@ enum NativeNetworkDeleteChecks {
       ExplorerDialogs.close(in: window); browser.stopObserving(); window.close(); browser.filePasteboard.releaseGlobally()
       defaults.removePersistentDomain(forName: suite)
       try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.appendingPathComponent("remote-denied").path)
+      try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.appendingPathComponent("remote-partial/z-denied").path)
       try? fm.removeItem(at: root)
     }
     var checks: [String] = []
@@ -107,5 +122,8 @@ enum NativeNetworkDeleteChecks {
     try await select([localOnly]); browser.executeAction("trash"); try await until { !browser.busy && !browser.loading && !fm.fileExists(atPath: localOnly.path) }
     try check(recycleCalls == 2 && !ExplorerDialogs.isPresenting(in: window), "Local deletion retains the existing skip-confirmation Trash preference")
     return checks
+#else
+    return ["SKIP network deletion injection: validation build required"]
+#endif
   }
 }

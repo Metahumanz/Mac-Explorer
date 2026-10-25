@@ -1337,80 +1337,99 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   }
   // Cached mount classification keeps menu/selection updates free of network I/O.
   var deletionNetworkLocation: (URL) -> Bool? = NativeFileFailure.networkLocation
-  var prepareNetworkDeletion: @Sendable (URL) throws -> NetworkDeletion = { try NetworkDeletion($0) }
+#if EXPLORER_DELETION_TESTS
+  var prepareDeletionItems: @Sendable ([URL]) throws -> [PreparedDeletion] = PreparedDeletion.prepare
+#endif
   private var deletionTitle: String {
     selectedEntries().contains { deletionNetworkLocation($0.url) == true } ? NL("删除") : NL("移到回收站")
   }
   private func trashSelected() {
     let sources = selectedEntries().map(\.url)
     guard !busy, !sources.isEmpty, !viewingTrash, let window = view.window else { return }
-    let networkSources = Set(sources.filter { deletionNetworkLocation($0) == true })
-    let perform: ([URL: NetworkDeletion]) -> Void = { [weak self, weak window] prepared in
+    let origin = tabs[activeTab].id, originDirectory = directory
+    let perform: ([PreparedDeletion]) -> Void = { [weak self, weak window] plans in
       guard let self, let window else { return }
-      if !prepared.isEmpty { self.redoChanges.removeAll() }
       self.readClipboard(); let version = self.clipboardChange
       let store = self.trashStore, cloud = self.cloudDrive, testTrash = self.testTrashDirectory
-      let origin = self.tabs[self.activeTab].id, originDirectory = self.directory
-      var removed = Set<String>()
+      var removed = Set<String>(), irreversibleMutation = false
       self.runAsyncOperation(selectResults: false, completion: { [weak self] result in
         guard let self else { return }
+        if irreversibleMutation { self.redoChanges.removeAll() }
         if self.clipboardChange == version, self.filePasteboard.changeCount == version {
           self.clipboard.removeAll { removed.contains($0.path) }
           if self.clipboard.isEmpty { self.isCut = false }
           if !removed.isEmpty { self.writeClipboard() }
         }
-        // A successful irreversible deletion has no destination to select.
         if let index = self.tabs.firstIndex(where: { $0.id == origin }), self.tabs[index].directory == originDirectory {
-          self.tabs[index].selectedPaths = Set(sources.filter { !removed.contains($0.path) && !result.changes.compactMap(\.source).contains($0) }.map(\.path))
+          self.tabs[index].selectedPaths = Set(sources.filter { !removed.contains($0.path) }.map(\.path))
         }
       }) {
         var succeeded: [URL] = [], errors: [String] = [], changes: [FileActionChange] = []
-        for source in sources {
+        for plan in plans {
+          let source = plan.source
           do {
-            if let deletion = prepared[source] {
-              try await Task.detached { try deletion.remove() }.value
-              removed.insert(source.path)
+            if let deletion = plan.network {
+              let outcome = try await Task.detached { try deletion.remove() }.value
+              irreversibleMutation = irreversibleMutation || outcome.mutated
+              if outcome.rootRemoved { removed.insert(source.path) }
             } else {
-              // A local item becoming remote requires a fresh destructive confirmation.
-              guard self.deletionNetworkLocation(source) != true else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ESTALE), userInfo: [NSFilePathErrorKey: source.path]) }
+              // The cached menu hint is never consulted for an operational decision.
+              let actual = try await Task.detached { try plan.validateForRecycle() }.value
               let trashed: URL
               if let testTrash {
-                let result = await Task.detached { FileActions.trash([source], testTrash: testTrash) }.value
+                let result = await Task.detached { FileActions.trash([actual], testTrash: testTrash) }.value
                 guard let change = result.changes.first else { throw NSError(domain: "NativeRecycle", code: 1, userInfo: [NSLocalizedDescriptionKey: result.errors.joined(separator: "\n")]) }
                 trashed = change.destination
-              } else { trashed = try await self.recycleItem(source, cloud, window) }
+              } else { trashed = try await self.recycleItem(actual, cloud, window) }
               changes.append(FileActionChange(source: source, destination: trashed, kind: .trash)); succeeded.append(trashed); removed.insert(source.path)
-              do { try store.remember(trashed, original: source) } catch { errors.append(NL("文件已移入回收站，但无法保存原位置。请使用“还原到…”恢复。")) }
+              do { try store.remember(trashed, original: actual) } catch { errors.append(NL("文件已移入回收站，但无法保存原位置。请使用“还原到…”恢复。")) }
             }
           } catch {
-            var message = (error as NSError).code == NSUserCancelledError ? NL("已取消") : self.errorMessage(error, at: source)
-            if prepared[source] != nil { message = NL("删除未完成，部分内容可能已删除。") + " " + message }
+            let described = NativeFileFailure.deletion(error, at: source, volume: plan.volume)
+            self.needsFullDiskAccess = described.offersPrivacySettings
+            var message = described.message
+            if let failure = error as? NetworkDeletionFailure {
+              irreversibleMutation = irreversibleMutation || failure.outcome.mutated
+              if failure.outcome.rootRemoved { removed.insert(source.path) }
+              message = (failure.outcome.mutated ? NL("删除未完成，已永久删除 {0} 个条目。", failure.outcome.deletedEntries) : NL("未删除任何项目。")) + " " + message
+            }
             errors.append(message.contains(source.lastPathComponent) ? message : message + "：" + source.lastPathComponent)
-            if (error as NSError).code == NSUserCancelledError { break }
+            if error is CancellationError || (error as? NetworkDeletionFailure)?.underlying is CancellationError || (error as NSError).code == NSUserCancelledError { break }
           }
         }
         return FileActionResult(succeeded: succeeded, errors: errors, changes: changes)
       }
     }
-    if !networkSources.isEmpty {
-      // Bind the confirmation to metadata captured off the UI thread, before deletion.
-      let prepare = prepareNetworkDeletion, origin = tabs[activeTab].id, originDirectory = directory
-      busy = true; operationError = nil; needsFullDiskAccess = false; updateStatus()
-      Task { @MainActor [weak self, weak window] in
-        do {
-          let prepared = try await Task.detached { try Dictionary(uniqueKeysWithValues: networkSources.map { ($0, try prepare($0)) }) }.value
-          guard let self else { return }; self.busy = false
-          guard let window, !self.stopped else { self.updateStatus(); return }
-          guard self.tabs[self.activeTab].id == origin, self.directory == originDirectory else { self.updateStatus(); return }
-          self.updateStatus()
-          let detail = sources.count == networkSources.count
-            ? NL("永久删除网络驱动器上的 {0} 个项目？这些项目不会进入回收站，此操作无法撤销。", networkSources.count)
-            : NL("永久删除 {0} 个网络项目，并将 {1} 个本地项目移到回收站？网络项目无法撤销删除。", networkSources.count, sources.count - networkSources.count)
-          ExplorerDialogs.confirm(in: window, title: NL("删除"), detail: detail + "\n\n" + sources.prefix(5).map(\.path).joined(separator: "\n"), confirmTitle: NL("永久删除"), destructive: true) { perform(prepared) }
-        } catch { self?.busy = false; self?.operationError = self?.errorMessage(error, at: sources.first); self?.render() }
+#if EXPLORER_DELETION_TESTS
+    let prepare = prepareDeletionItems
+#else
+    let prepare: @Sendable ([URL]) throws -> [PreparedDeletion] = PreparedDeletion.prepare
+#endif
+    busy = true; operationError = nil; needsFullDiskAccess = false; updateStatus()
+    Task { @MainActor [weak self, weak window] in
+      do {
+        let plans = try await Task.detached { try prepare(sources) }.value
+        guard let self else { return }; self.busy = false
+        guard let window, !self.stopped, self.tabs[self.activeTab].id == origin, self.directory == originDirectory else { self.updateStatus(); return }
+        self.updateStatus()
+        let networkCount = plans.filter { $0.volume == .network }.count
+        if networkCount > 0 {
+          let detail = plans.count == networkCount
+            ? NL("永久删除网络驱动器上的 {0} 个项目？这些项目不会进入回收站，此操作无法撤销。", networkCount)
+            : NL("永久删除 {0} 个网络项目，并将 {1} 个本地项目移到回收站？网络项目无法撤销删除。", networkCount, plans.count - networkCount)
+          ExplorerDialogs.confirm(in: window, title: NL("删除"), detail: detail + "\n" + NL("其他程序同时替换文件时，仍存在误删风险。") + "\n\n" + sources.prefix(5).map(\.path).joined(separator: "\n"), confirmTitle: NL("永久删除"), destructive: true) { perform(plans) }
+        } else if self.defaults.bool(forKey: "skipTrashConfirmation") { perform(plans) }
+        else { ExplorerDialogs.confirm(in: window, title: NL("移到回收站"), detail: NL("将 {0} 个项目移到回收站？", sources.count), confirmTitle: NL("移到回收站"), remember: { [weak self] in self?.defaults.set($0, forKey: "skipTrashConfirmation") }) { perform(plans) } }
+      } catch {
+        guard let self else { return }; self.busy = false
+        let e = error as NSError
+        if e.domain == NSPOSIXErrorDomain && e.code == Int(ENXIO) { self.operationError = NL("无法确认删除目标所在的文件系统，已停止。") }
+        else if e.domain == NSPOSIXErrorDomain && e.code == Int(E2BIG) { self.operationError = NL("所选项目过多或文件夹过大，已停止删除。") }
+        else if e.domain == NSPOSIXErrorDomain && e.code == Int(ELOOP) { self.operationError = NL("目录过深，已停止删除。") }
+        else { let described = NativeFileFailure.deletion(error, at: sources.first, volume: nil); self.needsFullDiskAccess = described.offersPrivacySettings; self.operationError = described.message }
+        self.render()
       }
-    } else if defaults.bool(forKey: "skipTrashConfirmation") { perform([:]) }
-    else { ExplorerDialogs.confirm(in: window, title: NL("移到回收站"), detail: NL("将 {0} 个项目移到回收站？", sources.count), confirmTitle: NL("移到回收站"), remember: { [weak self] in self?.defaults.set($0, forKey: "skipTrashConfirmation") }) { perform([:]) } }
+    }
   }
   private func recordChanges(_ changes: [FileActionChange]) {
     guard !changes.isEmpty else { return }

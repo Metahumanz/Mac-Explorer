@@ -953,5 +953,11 @@
   "选择单个项目查看权限": "Select one item to view permissions",
   "重做": "Redo",
   "链接目标": "Link target",
-  "项目已被其他文件替换，无法修改属性。": "This item has been replaced by another file. Its properties cannot be changed."
+  "项目已被其他文件替换，无法修改属性。": "This item has been replaced by another file. Its properties cannot be changed.",
+  "删除未完成，已永久删除 {0} 个条目。": "Deletion did not finish. {0} entries were permanently deleted.",
+  "未删除任何项目。": "No items were deleted.",
+  "无法确认删除目标所在的文件系统，已停止。": "Cannot identify the target filesystem. Deletion stopped.",
+  "所选项目过多或文件夹过大，已停止删除。": "Too many selected items or the folder is too large. Deletion stopped.",
+  "目录过深，已停止删除。": "The folder tree is too deep. Deletion stopped.",
+  "其他程序同时替换文件时，仍存在误删风险。": "Concurrent file replacement by another program can still cause the wrong item to be deleted."
 }

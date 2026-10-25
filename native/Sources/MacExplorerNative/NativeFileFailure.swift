@@ -31,6 +31,12 @@ struct NativeFileFailure {
     return Self(message: missing ? NL("文件夹不存在") : error.localizedDescription, offersPrivacySettings: false)
   }
 
+  /// Deletion diagnostics use the prepared FD classification. Unknown preparation failures
+  /// must not guess that granting local privacy access will fix a server-side denial.
+  static func deletion(_ error: Error, at context: URL?, volume: DeletionVolume?) -> Self {
+    describe(error, at: context, networkLocation: { _ in volume.map { $0 == .network } })
+  }
+
   /// Cached mount information only; no network metadata reads or path-name guesses.
   static func networkLocation(_ url: URL) -> Bool? {
     guard url.isFileURL else { return url.scheme?.lowercased() == "smb" ? true : nil }
