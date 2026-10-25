@@ -28,3 +28,6 @@ with tempfile.TemporaryDirectory(prefix="explorer-native-checks-") as temporary:
             *map(str, sources + extra), str(root / "scripts" / f"{name}.swift"), "-o", str(executable),
         ], check=True)
         subprocess.run([str(executable)] + ([str(root / "Resources" / "locales")] if name == "LatestCoreChecks" else []), check=True)
+
+if "NetworkDeletionChecks" in selected:
+    subprocess.run([sys.executable, "-I", str(root / "scripts/check-deletion-api.py")], check=True)

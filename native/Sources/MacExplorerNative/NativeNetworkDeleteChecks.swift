@@ -121,6 +121,39 @@ enum NativeNetworkDeleteChecks {
     let localOnly = try file("local-only.txt")
     try await select([localOnly]); browser.executeAction("trash"); try await until { !browser.busy && !browser.loading && !fm.fileExists(atPath: localOnly.path) }
     try check(recycleCalls == 2 && !ExplorerDialogs.isPresenting(in: window), "Local deletion retains the existing skip-confirmation Trash preference")
+    func redoEnabled() -> Bool {
+      let selected = browser.selectedPaths; browser.selectedPaths = []; defer { browser.selectedPaths = selected }
+      return browser.contextItems().contains { $0.title == NL("重做") && $0.enabled }
+    }
+    browser.executeAction("undo"); try await until { !browser.busy && !browser.loading && fm.fileExists(atPath: localOnly.path) }
+    try check(redoEnabled(), "Fixture establishes a genuine redo branch before failed deletion")
+    let unknown = try file("remote-unknown")
+    try await select([unknown]); browser.executeAction("trash")
+    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
+    try check(!ExplorerDialogs.isPresenting(in: window) && recycleCalls == 2 && fm.fileExists(atPath: unknown.path) && redoEnabled(), "Unknown mount classification refuses both deletion routes and preserves redo")
+    let zero = try file("remote-zero-mutation")
+    try await present([zero]); try fm.moveItem(at: zero, to: root.appendingPathComponent("kept-zero")); try Data("replacement".utf8).write(to: zero)
+    try button(NL("永久删除")).onPress?(); try await until { !browser.busy && !browser.loading && browser.lastError != nil }
+    try check(redoEnabled() && browser.lastError?.contains(NL("未删除任何项目。")) == true, "A zero-mutation network failure reports no deletion and preserves redo")
+    let partial = root.appendingPathComponent("remote-partial"), deniedChild = partial.appendingPathComponent("z-denied")
+    try fm.createDirectory(at: deniedChild, withIntermediateDirectories: true)
+    try Data("first".utf8).write(to: partial.appendingPathComponent("a-first")); try Data("keep".utf8).write(to: deniedChild.appendingPathComponent("keep"))
+    try await present([partial]); try button(NL("永久删除")).onPress?()
+    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
+    try check(!redoEnabled() && browser.lastError?.contains(NL("删除未完成，已永久删除 {0} 个条目。", 1)) == true, "A real partial deletion invalidates redo and reports its exact completed count")
+    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: deniedChild.path)
+    try check(fm.fileExists(atPath: deniedChild.appendingPathComponent("keep").path) && browser.selectedPaths == [partial.path], "Partial deletion retains the root selection and untouched child")
+    let snapshot = root.appendingPathComponent("remote-snapshot")
+    try fm.createDirectory(at: snapshot, withIntermediateDirectories: true); try Data("original".utf8).write(to: snapshot.appendingPathComponent("original"))
+    try await present([snapshot]); try Data("new".utf8).write(to: snapshot.appendingPathComponent("new")); try button(NL("永久删除")).onPress?()
+    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
+    try check(fm.fileExists(atPath: snapshot.appendingPathComponent("new").path) && fm.fileExists(atPath: snapshot.appendingPathComponent("original").path) && browser.lastError?.contains(NL("未删除任何项目。")) == true, "A changed directory manifest fails before removing any confirmed or new item")
+    let remoteParent = root.appendingPathComponent("remote-parent"), alias = root.appendingPathComponent("local-alias")
+    try fm.createDirectory(at: remoteParent, withIntermediateDirectories: true); try Data("keep alias".utf8).write(to: remoteParent.appendingPathComponent("item")); try fm.createSymbolicLink(at: alias, withDestinationURL: remoteParent)
+    browser.navigate(to: alias); try await until { !browser.loading && browser.entries.count == 1 }
+    try await present([alias.appendingPathComponent("item")])
+    try check(recycleCalls == 2 && fm.fileExists(atPath: remoteParent.appendingPathComponent("item").path), "Local-looking alias uses actual parent-FD classification and requires network confirmation")
+    try button(NL("取消")).onPress?()
     return checks
 #else
     return ["SKIP network deletion injection: validation build required"]

@@ -22,6 +22,10 @@ enum NativeSmoke {
         checks += try await NativeColumnChecks.restore(root: root, suite: CommandLine.arguments[index + 1], window: window)
         try write(["passed": true, "checks": checks], to: report); NSApp.terminate(nil); return
       }
+      if ProcessInfo.processInfo.arguments.contains("--smoke-network-delete") {
+        checks += try await NativeNetworkDeleteChecks.run(output: report.deletingLastPathComponent())
+        try write(["passed": true, "checks": checks], to: report); NSApp.terminate(nil); return
+      }
       if ProcessInfo.processInfo.arguments.contains("--smoke-file-parity") {
         checks += try await NativeColumnChecks.run(output: report.deletingLastPathComponent())
         checks += try await NativeNetworkDeleteChecks.run(output: report.deletingLastPathComponent())

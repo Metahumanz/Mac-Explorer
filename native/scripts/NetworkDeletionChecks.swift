@@ -68,6 +68,82 @@ import Darwin
     try fm.removeItem(at: marker)
     try rejects("changed mount classification rejected") { try remounted.remove() }
     try check(fm.fileExists(atPath: changed.path), "item survives a simulated change to local classification")
+    func failure(_ action: () throws -> NetworkDeletionOutcome) throws -> NetworkDeletionFailure {
+      do { _ = try action() } catch let error as NetworkDeletionFailure { return error }
+      fatalError("Expected structured deletion failure")
+    }
+    let local = try file("local-source")
+    let actualLocal = try PreparedDeletion.prepare([local])[0]
+    try check(actualLocal.volume == .local && actualLocal.network == nil, "production preparation classifies the real local parent FD")
+    try check(try actualLocal.validateForRecycle().resolvingSymlinksInPath().path == local.resolvingSymlinksInPath().path, "local Trash plan binds its resolved source")
+    try rejects("unknown classification rejects preparation") { _ = try PreparedDeletion.fixtures([local], root: root, classification: { _ in nil }) }
+    try check(fm.fileExists(atPath: local.path), "unknown classification has no file side effects")
+    let remoteParent = root.appendingPathComponent("remote-parent"), localAlias = root.appendingPathComponent("local-looking-alias")
+    try fm.createDirectory(at: remoteParent, withIntermediateDirectories: true)
+    _ = try file("remote-parent/item"); try fm.createSymbolicLink(at: localAlias, withDestinationURL: remoteParent)
+    let aliasPlan = try PreparedDeletion.fixtures([localAlias.appendingPathComponent("item")], root: root, classification: { actual in actual.lastPathComponent == "remote-parent" ? .network : .local })[0]
+    try check(aliasPlan.volume == .network && aliasPlan.network != nil, "classification follows opened parent FD, not lexical alias prefix")
+    try rejects("network item cannot use local recycle validation") { _ = try aliasPlan.validateForRecycle() }
+    let localSwap = try PreparedDeletion.prepare([local])[0]
+    try fm.moveItem(at: local, to: root.appendingPathComponent("kept-local")); _ = try file("local-source")
+    try rejects("local recycle rejects replacement identity") { _ = try localSwap.validateForRecycle() }
+    let deniedAncestor = root.appendingPathComponent("denied-ancestor"), inner = deniedAncestor.appendingPathComponent("inner")
+    try fm.createDirectory(at: inner, withIntermediateDirectories: true); _ = try file("denied-ancestor/inner/item")
+    let deniedParent = try plan(inner.appendingPathComponent("item"))
+    try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: deniedAncestor.path)
+    if getuid() != 0 {
+      let result = try failure { try deniedParent.remove() }
+      try check((result.underlying as NSError).code == Int(EACCES) && result.outcome.deletedEntries == 0, "parent lstat failure preserves EACCES rather than ESTALE with zero mutations")
+    }
+    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: deniedAncestor.path)
+    let snapshot = root.appendingPathComponent("snapshot"); try fm.createDirectory(at: snapshot, withIntermediateDirectories: true)
+    _ = try file("snapshot/original"); let snapshotPlan = try plan(snapshot); _ = try file("snapshot/added")
+    let changedTree = try failure { try snapshotPlan.remove() }
+    try check(!changedTree.outcome.mutated && fm.fileExists(atPath: snapshot.appendingPathComponent("added").path) && fm.fileExists(atPath: snapshot.appendingPathComponent("original").path), "new child after confirmation rejects whole manifest before any unlink")
+    let changedFile = try file("changed-file"), changedPlan = try plan(changedFile)
+    try Data("different content".utf8).write(to: changedFile)
+    try check(try failure { try changedPlan.remove() }.outcome.deletedEntries == 0 && fm.fileExists(atPath: changedFile.path), "in-place file change is detected before unlink")
+    let partial = root.appendingPathComponent("partial"), deniedChild = partial.appendingPathComponent("z-denied")
+    try fm.createDirectory(at: deniedChild, withIntermediateDirectories: true)
+    _ = try file("partial/a-first"); _ = try file("partial/z-denied/keep")
+    let partialPlan = try plan(partial)
+    partialPlan.auditHook = { stage, path in if stage == .afterUnlink && path.lastPathComponent == "a-first" { try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: deniedChild.path) } }
+    if getuid() != 0 {
+      let failed = try failure { try partialPlan.remove() }
+      try check(failed.outcome.deletedEntries == 1 && !failed.outcome.rootRemoved && (failed.underlying as NSError).code == Int(EACCES), "partial directory deletion reports exact completed count and real permission failure")
+      try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: deniedChild.path)
+      try check(fm.fileExists(atPath: deniedChild.appendingPathComponent("keep").path), "partial failure preserves untouched subtree")
+    }
+    let during = root.appendingPathComponent("during"); try fm.createDirectory(at: during, withIntermediateDirectories: true)
+    _ = try file("during/a"); _ = try file("during/b"); let duringPlan = try plan(during)
+    duringPlan.auditHook = { stage, path in if stage == .afterUnlink && path.lastPathComponent == "a" { try Data("preserve new".utf8).write(to: during.appendingPathComponent("new")) } }
+    let duringResult = try failure { try duringPlan.remove() }
+    try check(duringResult.outcome.deletedEntries == 2 && fm.fileExists(atPath: during.appendingPathComponent("new").path), "new names during execution are never visited and remaining directory is reported partial")
+    let limited = root.appendingPathComponent("limited"); try fm.createDirectory(at: limited, withIntermediateDirectories: true)
+    for i in 0..<10 { _ = try file("limited/\(i)") }
+    try rejects("entry resource limit fails during preparation") { _ = try PreparedDeletion.fixtures([limited], root: root, classification: { _ in .network }, maximumEntries: 5) }
+    try check(try fm.contentsOfDirectory(atPath: limited.path).count == 10, "resource failure occurs without deleting any fixture")
+    try rejects("top-level descriptor budget rejects large batch") { _ = try PreparedDeletion.prepare(Array(repeating: local, count: 65)) }
+    let deep = root.appendingPathComponent("deep"); try fm.createDirectory(at: deep, withIntermediateDirectories: true)
+    var deepFD = open(deep.path, O_RDONLY | O_DIRECTORY)
+    guard deepFD >= 0 else { fatalError("deep fixture open") }
+    var createdLevels = 0
+    do {
+      defer {
+        for _ in 0..<createdLevels { let parentFD = openat(deepFD, "..", O_RDONLY | O_DIRECTORY); precondition(parentFD >= 0); close(deepFD); precondition(unlinkat(parentFD, "d", AT_REMOVEDIR) == 0); deepFD = parentFD }
+        close(deepFD)
+      }
+      for _ in 0..<512 { guard mkdirat(deepFD, "d", 0o700) == 0 else { fatalError("deep fixture mkdir") }; let next = openat(deepFD, "d", O_RDONLY | O_DIRECTORY); guard next >= 0 else { fatalError("deep fixture child") }; close(deepFD); deepFD = next; createdLevels += 1 }
+      try rejects("512-level tree is rejected by bounded preparation") { _ = try plan(deep) }
+      try check(createdLevels == 512, "depth fixture really contains 512 levels without leaking traversal FDs")
+    }
+    let late = try file("late-race"), retained = root.appendingPathComponent("race-retained"), latePlan = try plan(late)
+    latePlan.auditHook = { stage, path in
+      if stage == .beforeUnlink { try fm.moveItem(at: path, to: retained); try Data("replacement".utf8).write(to: path) }
+    }
+    let lateResult = try latePlan.remove()
+    print("KNOWN LIMIT: deterministic replacement after the final check is still unlinkable; this is not an atomic deletion guarantee.")
+    try check(lateResult.deletedEntries == 1 && !fm.fileExists(atPath: late.path) && (try String(contentsOf: retained)) == "keep", "KNOWN LIMIT reproduced: last-check/unlink gap can delete a replacement; not an atomic identity guarantee")
     print("NetworkDeletionChecks: \(count) assertions passed.")
   }
 }
