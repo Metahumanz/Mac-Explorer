@@ -94,7 +94,7 @@ enum ExplorerDialogs {
     }
   }
 
-  static func confirm(in window: NSWindow, title: String, detail: String, confirmTitle: String, remember: ((Bool) -> Void)? = nil, rememberWhenCancelled: Bool = false, action: @escaping () -> Void) {
+  static func confirm(in window: NSWindow, title: String, detail: String, confirmTitle: String, remember: ((Bool) -> Void)? = nil, rememberWhenCancelled: Bool = false, destructive: Bool = false, action: @escaping () -> Void) {
     let body = EDScrollingBody()
     body.flow.padding = 0
     let detailLabel = edLabel(detail, size: 13, wraps: true, selectable: true)
@@ -111,7 +111,7 @@ enum ExplorerDialogs {
       dialog.close()
       action()
     }
-    dialog.present(focus: dialog.surface.primary)
+    dialog.present(focus: destructive ? dialog.surface.cancel : dialog.surface.primary)
   }
 
   static func offerFileViewer(in window: NSWindow, viewer: NativeFileViewer, suppress: @escaping () -> Void) {
