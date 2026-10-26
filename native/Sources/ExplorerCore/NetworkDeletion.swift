@@ -20,6 +20,10 @@ public final class PreparedDeletion: @unchecked Sendable {
   public static func prepare(_ sources: [URL]) throws -> [PreparedDeletion] {
     try batch(sources, classifier: { fd in try DeletionAnchor.volume(fd) })
   }
+  /// The application must obtain explicit permanent-delete confirmation for network plans.
+  public static func prepareIncludingNetwork(_ sources: [URL]) throws -> [PreparedDeletion] {
+    try batch(sources, classifier: { fd in try DeletionAnchor.volume(fd) }, allowNetwork: true)
+  }
   private static func batch(_ sources: [URL], classifier: @escaping DeletionClassifier, limits: DeletionLimits = .init(), allowNetwork: Bool = false) throws -> [PreparedDeletion] {
     guard !sources.isEmpty else { throw deletionError(URL(fileURLWithPath: "/"), EINVAL) }
     let budget = DeletionBudget(limits)
