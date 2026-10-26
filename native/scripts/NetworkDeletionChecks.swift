@@ -123,7 +123,47 @@ import Darwin
     for i in 0..<10 { _ = try file("limited/\(i)") }
     try rejects("entry resource limit fails during preparation") { _ = try PreparedDeletion.fixtures([limited], root: root, classification: { _ in .network }, maximumEntries: 5) }
     try check(try fm.contentsOfDirectory(atPath: limited.path).count == 10, "resource failure occurs without deleting any fixture")
-    try rejects("top-level descriptor budget rejects large batch") { _ = try PreparedDeletion.prepare(Array(repeating: local, count: 65)) }
+    var localBatch: [URL] = []
+    for i in 0..<512 { localBatch.append(try file("local-batch-\(i)")) }
+    let beforeFD = open("/dev/null", O_RDONLY); guard beforeFD >= 0 else { fatalError("FD fixture") }; close(beforeFD)
+    let localPlans = try PreparedDeletion.prepare(localBatch)
+    let afterFD = open("/dev/null", O_RDONLY); guard afterFD >= 0 else { fatalError("FD fixture") }; close(afterFD)
+    try check(localPlans.count == 512 && beforeFD == afterFD, "large local Trash batches retain no per-item descriptors")
+    for prepared in localPlans { _ = try prepared.validateForRecycle() }
+    try check(localBatch.allSatisfy { fm.fileExists(atPath: $0.path) }, "all 512 local plans revalidate without file mutations")
+    try rejects("network descriptor budget still rejects more than 64 roots") { _ = try PreparedDeletion.fixtures(Array(localBatch.prefix(65)), root: root, classification: { _ in .network }) }
+    do { _ = try PreparedDeletion.fixtures([outside], root: root, classification: { _ in .network }, allowNetwork: false); fatalError("disabled network deletion was prepared") }
+    catch { try check((error as NSError).code == Int(ENOTSUP) && fm.fileExists(atPath: outside.path), "ordinary preparation policy refuses network deletion before mutation") }
+    let linkedFolder = root.appendingPathComponent("linked-folder"); try fm.createDirectory(at: linkedFolder, withIntermediateDirectories: true)
+    let linkedA = try file("linked-folder/a"), linkedB = linkedFolder.appendingPathComponent("b")
+    try fm.linkItem(at: linkedA, to: linkedB)
+    let linkedOutcome = try plan(linkedFolder).remove()
+    try check(linkedOutcome.deletedEntries == 3 && linkedOutcome.rootRemoved && !fm.fileExists(atPath: linkedFolder.path), "own unlink ctime changes do not interrupt a hardlinked directory")
+    let batchA = try file("batch-link-a"), batchB = root.appendingPathComponent("batch-link-b")
+    try fm.linkItem(at: batchA, to: batchB)
+    let linkedPlans = try PreparedDeletion.fixtures([batchA, batchB], root: root, classification: { _ in .network })
+    for prepared in linkedPlans { try prepared.network!.remove() }
+    try check(!fm.fileExists(atPath: batchA.path) && !fm.fileExists(atPath: batchB.path), "hardlink stamp updates span separately prepared roots in the same batch")
+    let unreadable = root.appendingPathComponent("unreadable-links"); try fm.createDirectory(at: unreadable, withIntermediateDirectories: true)
+    let unreadableA = try file("unreadable-links/a"); try fm.linkItem(at: unreadableA, to: unreadable.appendingPathComponent("b")); try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: unreadableA.path)
+    try check(try plan(unreadable).remove().rootRemoved, "unlinking hardlinks does not require file read permission")
+    let changedLinks = root.appendingPathComponent("changed-links"); try fm.createDirectory(at: changedLinks, withIntermediateDirectories: true)
+    let changedA = try file("changed-links/a"), changedB = changedLinks.appendingPathComponent("b"); try fm.linkItem(at: changedA, to: changedB)
+    let externallyChanged = try plan(changedLinks)
+    externallyChanged.auditHook = { stage, path in if stage == .afterUnlink && path.lastPathComponent == "a" { try Data("external change".utf8).write(to: changedB, options: []) } }
+    let changedOutcome = try failure { try externallyChanged.remove() }
+    try check(changedOutcome.outcome.deletedEntries == 1 && fm.fileExists(atPath: changedB.path), "external writes after an own hardlink unlink still stop deletion")
+
+    let localParent = root.appendingPathComponent("local-parent"), localAliasPath = root.appendingPathComponent("local-parent-alias")
+    try fm.createDirectory(at: localParent, withIntermediateDirectories: true); _ = try file("local-parent/item")
+    try fm.createSymbolicLink(at: localAliasPath, withDestinationURL: localParent)
+    let boundLocal = try PreparedDeletion.prepare([localAliasPath.appendingPathComponent("item")])[0]
+    try fm.removeItem(at: localAliasPath); try fm.createSymbolicLink(at: localAliasPath, withDestinationURL: aliasOther)
+    try rejects("local recycle reopens and rejects a retargeted parent alias") { _ = try boundLocal.validateForRecycle() }
+    let stableLocal = try PreparedDeletion.prepare([localParent.appendingPathComponent("item")])[0]
+    try fm.moveItem(at: localParent, to: root.appendingPathComponent("local-parent-old")); try fm.createDirectory(at: localParent, withIntermediateDirectories: true); _ = try file("local-parent/item")
+    try rejects("local recycle reopens and rejects a replaced parent directory") { _ = try stableLocal.validateForRecycle() }
+    try check(fm.fileExists(atPath: localParent.appendingPathComponent("item").path) && fm.fileExists(atPath: root.appendingPathComponent("local-parent-old/item").path), "reopening local descriptors preserves both parent occupants")
     let deep = root.appendingPathComponent("deep"); try fm.createDirectory(at: deep, withIntermediateDirectories: true)
     var deepFD = open(deep.path, O_RDONLY | O_DIRECTORY)
     guard deepFD >= 0 else { fatalError("deep fixture open") }

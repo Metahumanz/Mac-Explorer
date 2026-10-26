@@ -33,7 +33,7 @@ enum ExplorerDialogs {
     form.field.selectText(nil)
   }
 
-  static func confirm(in window: NSWindow, title: String, detail: String, confirmTitle: String, remember: ((Bool) -> Void)? = nil, destructive: Bool = false, action: @escaping () -> Void) {
+  static func confirm(in window: NSWindow, title: String, detail: String, confirmTitle: String, remember: ((Bool) -> Void)? = nil, action: @escaping () -> Void) {
     let body = EDScrollingBody()
     body.flow.padding = 0
     let detailLabel = edLabel(detail, size: 13, wraps: true, selectable: true)
@@ -49,7 +49,7 @@ enum ExplorerDialogs {
       dialog.close()
       action()
     }
-    dialog.present(focus: destructive ? dialog.surface.cancel : dialog.surface.primary)
+    dialog.present(focus: dialog.surface.primary)
   }
 
   static func properties(in window: NSWindow, title: String, icon: NSImage?, values: [(String, String)], rename: ((String) -> Void)? = nil, load: (() async throws -> EDPropertyValues)? = nil) {

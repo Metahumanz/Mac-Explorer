@@ -3,11 +3,9 @@ import ExplorerCore
 
 @MainActor
 enum NativeNetworkDeleteChecks {
-  private static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-  private static func children(_ window: NSWindow) -> [NSWindow] { (window.childWindows ?? []).flatMap { [$0] + children($0) } }
   private static func until(_ predicate: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(10)
-    while !predicate() { guard Date() < deadline else { throw NativeSmoke.Failure(description: "Network delete UI timed out") }; try await Task.sleep(nanoseconds: 20_000_000) }
+    while !predicate() { guard Date() < deadline else { throw NativeSmoke.Failure(description: "Network deletion policy timed out") }; try await Task.sleep(nanoseconds: 20_000_000) }
   }
   static func run(output: URL) async throws -> [String] {
 #if EXPLORER_DELETION_TESTS
@@ -18,142 +16,59 @@ enum NativeNetworkDeleteChecks {
     let browser = BrowserController(initial: root, defaults: defaults)
     browser.home = root; browser.filePasteboard = NSPasteboard(name: .init(suite))
     let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 1050, height: 700), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false; window.contentViewController = browser; window.makeKeyAndOrderFront(nil)
+    window.isReleasedWhenClosed = false; window.contentViewController = browser
+    let trash = root.appendingPathComponent("simulated-trash"); try fm.createDirectory(at: trash, withIntermediateDirectories: true)
     var recycleCalls = 0
     browser.deletionNetworkLocation = { $0.lastPathComponent.hasPrefix("remote") }
-    browser.fileErrorNetworkLocation = browser.deletionNetworkLocation
     browser.prepareDeletionItems = { sources in
       try sources.flatMap { source in
-        let plans = try PreparedDeletion.fixtures([source], root: root, classification: { parent in
+        try PreparedDeletion.fixtures([source], root: root, classification: { parent in
           if source.lastPathComponent == "remote-unknown" { return nil }
           return source.lastPathComponent.hasPrefix("remote") || parent.lastPathComponent == "remote-parent" ? .network : .local
         })
-        if source.lastPathComponent == "remote-partial" {
-          plans.first?.network?.auditHook = { stage, path in
-            if stage == .afterUnlink && path.lastPathComponent == "a-first" { try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: source.appendingPathComponent("z-denied").path) }
-          }
-        }
-        return plans
       }
     }
     browser.recycleItem = { source, _, _ in
       recycleCalls += 1
-      let trash = root.appendingPathComponent("simulated-trash")
-      try fm.createDirectory(at: trash, withIntermediateDirectories: true)
-      let destination = trash.appendingPathComponent(source.lastPathComponent)
-      try fm.moveItem(at: source, to: destination); return destination
+      let result = FileActions.trash([source], testTrash: trash)
+      guard let destination = result.changes.first?.destination else { throw NativeSmoke.Failure(description: result.errors.joined(separator: "\n")) }
+      return destination
     }
-    defer {
-      ExplorerDialogs.close(in: window); browser.stopObserving(); window.close(); browser.filePasteboard.releaseGlobally()
-      defaults.removePersistentDomain(forName: suite)
-      try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.appendingPathComponent("remote-denied").path)
-      try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.appendingPathComponent("remote-partial/z-denied").path)
-      try? fm.removeItem(at: root)
-    }
+    defer { browser.stopObserving(); window.close(); browser.filePasteboard.releaseGlobally(); defaults.removePersistentDomain(forName: suite); try? fm.removeItem(at: root) }
     var checks: [String] = []
-    func check(_ ok: Bool, _ title: String) throws { guard ok else { throw NativeSmoke.Failure(description: title) }; checks.append(title); print("PASS network delete: " + title) }
+    func check(_ value: Bool, _ text: String) throws { guard value else { throw NativeSmoke.Failure(description: text) }; checks.append(text) }
     func file(_ name: String) throws -> URL { let url = root.appendingPathComponent(name); try Data(name.utf8).write(to: url); return url }
     func select(_ sources: [URL]) async throws {
       browser.reload(); try await until { !browser.loading && sources.allSatisfy { source in browser.entries.contains { $0.url.path == source.path } } }
       browser.selectedPaths = Set(sources.map(\.path)); browser.updateMode(persist: false)
     }
-    func button(_ title: String) throws -> EDButton {
-      guard let button = children(window).compactMap(\.contentView).flatMap(descendants).compactMap({ $0 as? EDButton }).first(where: { $0.title == title }) else { throw NativeSmoke.Failure(description: "Missing network delete button: " + title) }; return button
+    func rejected(_ sources: [URL]) async throws {
+      try await select(sources); browser.executeAction("trash")
+      try await until { !browser.busy && !browser.loading && browser.lastError != nil }
+      try check(!ExplorerDialogs.isPresenting(in: window) && sources.allSatisfy { fm.fileExists(atPath: $0.path) }, "Network deletion opens no confirmation and preserves every selected item")
     }
-    func present(_ sources: [URL]) async throws {
-      try await select(sources); browser.executeAction("trash"); try await until { ExplorerDialogs.isPresenting(in: window) }
-    }
-    let remote = try file("remote-中文 空格.txt")
-    try await select([remote]); browser.executeAction("cut")
-    try check(descendants(browser.commandBar).contains { ($0 as? ExplorerButton)?.toolTip?.hasPrefix(NL("删除")) == true }, "Network selection labels the toolbar action Delete instead of Move to Trash")
-    let version = browser.filePasteboard.changeCount
-    try await present([remote])
-    let confirm = try button(NL("永久删除")), cancel = try button(NL("取消"))
-    try check(fm.fileExists(atPath: remote.path) && recycleCalls == 0, "Network delete always confirms before mutation despite skipped Trash confirmation")
-    try check(cancel.window?.firstResponder === cancel, "Permanent deletion initially focuses Cancel")
-    let labels = children(window).compactMap(\.contentView).flatMap(descendants).compactMap { ($0 as? NSTextField)?.stringValue }
-    try check(labels.contains { $0.contains(NL("永久删除网络驱动器上的 {0} 个项目？这些项目不会进入回收站，此操作无法撤销。", 1)) }, "Network confirmation states item count, no Recycle Bin and no undo")
-    try check(!children(window).compactMap(\.contentView).flatMap(descendants).contains { ($0 as? NSButton)?.title == NL("不再询问") }, "Permanent confirmation has no suppression checkbox")
-    if let view = confirm.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-      view.cacheDisplay(in: view.bounds, to: bitmap)
-      if let data = bitmap.representation(using: .png, properties: [:]) { try data.write(to: output.appendingPathComponent("native-network-delete-confirm.png")) }
-    }
-    cancel.onPress?()
-    try check(fm.fileExists(atPath: remote.path) && browser.filePasteboard.changeCount == version, "Cancel leaves the source and clipboard unchanged")
-    try await present([remote]); try button(NL("永久删除")).onPress?()
-    try await until { !browser.busy && !browser.loading && !fm.fileExists(atPath: remote.path) }
-    try check(recycleCalls == 0 && !browser.contextItems().contains(where: { $0.title == NL("撤销") && $0.enabled }), "Confirmed network deletion bypasses Trash and creates no undo record")
-    try check(browser.filePasteboard.readObjects(forClasses: [NSURL.self], options: nil)?.isEmpty != false, "Only successfully deleted source is consumed from the clipboard")
-    let stale = try file("remote-stale.txt")
-    try await present([stale])
-    try fm.moveItem(at: stale, to: root.appendingPathComponent("retained-old")); try Data("replacement".utf8).write(to: stale)
-    try button(NL("永久删除")).onPress?()
-    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
-    try check(try String(contentsOf: stale) == "replacement", "Replacing the confirmed path prevents deletion of its new occupant")
-    try check(browser.selectedPaths == [stale.path] && recycleCalls == 0, "Failed network deletion retains selection without falling back to Trash")
-    let denied = root.appendingPathComponent("remote-denied")
-    try fm.createDirectory(at: denied, withIntermediateDirectories: true); try Data("keep".utf8).write(to: denied.appendingPathComponent("child"))
-    try await present([denied]); try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: denied.path)
-    try button(NL("永久删除")).onPress?()
-    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
-    try check(browser.lastError?.contains("EACCES (13)") == true && browser.privacySettings.isHidden && browser.selectedPaths == [denied.path], "Network permission denial retains code and selection without macOS Settings recovery")
-    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: denied.path)
-    try check(fm.fileExists(atPath: denied.appendingPathComponent("child").path), "Denied deletion does not alter permissions or contents")
-    let batchGood = try file("remote-batch-good.txt"), batchStale = try file("remote-batch-stale.txt")
-    try await select([batchGood, batchStale]); browser.executeAction("cut")
-    try await present([batchGood, batchStale])
-    try fm.moveItem(at: batchStale, to: root.appendingPathComponent("retained-batch-old")); try Data("batch replacement".utf8).write(to: batchStale)
-    try button(NL("永久删除")).onPress?(); try await until { !browser.busy && !browser.loading && browser.lastError != nil }
-    try check(!fm.fileExists(atPath: batchGood.path) && fm.fileExists(atPath: batchStale.path), "A partially failed network batch deletes only its unchanged confirmed item")
-    try check(browser.selectedPaths == [batchStale.path], "A partial network failure selects only the remaining failed item")
-    let remainingClipboard = (browser.filePasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
-    try check(remainingClipboard.map(\.path) == [batchStale.path], "Partial network deletion consumes only successful clipboard sources")
-    try check(try String(contentsOf: batchStale) == "batch replacement", "A partial batch preserves the replacement occupant")
-    let mixedRemote = try file("remote-mixed.txt"), local = try file("local.txt")
-    try await present([local, mixedRemote])
-    let mixedLabels = children(window).compactMap(\.contentView).flatMap(descendants).compactMap { ($0 as? NSTextField)?.stringValue }
-    try check(mixedLabels.contains { $0.contains(NL("永久删除 {0} 个网络项目，并将 {1} 个本地项目移到回收站？网络项目无法撤销删除。", 1, 1)) }, "Mixed confirmation distinguishes permanent network deletion from local Trash")
-    try button(NL("永久删除")).onPress?(); try await until { !browser.busy && !browser.loading && !fm.fileExists(atPath: mixedRemote.path) }
-    try check(recycleCalls == 1 && fm.fileExists(atPath: root.appendingPathComponent("simulated-trash/local.txt").path), "Mixed selection recycles only the local item")
-    try check(browser.contextItems().contains(where: { $0.title == NL("撤销") && $0.enabled }), "Only local Trash contributes a reversible change")
-    browser.executeAction("undo"); try await until { !browser.busy && !browser.loading && fm.fileExists(atPath: local.path) }
-    try check(!fm.fileExists(atPath: mixedRemote.path), "Undo restores the local Trash item while leaving the network deletion irreversible")
-    let localOnly = try file("local-only.txt")
-    try await select([localOnly]); browser.executeAction("trash"); try await until { !browser.busy && !browser.loading && !fm.fileExists(atPath: localOnly.path) }
-    try check(recycleCalls == 2 && !ExplorerDialogs.isPresenting(in: window), "Local deletion retains the existing skip-confirmation Trash preference")
-    func redoEnabled() -> Bool {
-      let selected = browser.selectedPaths; browser.selectedPaths = []; defer { browser.selectedPaths = selected }
-      return browser.contextItems().contains { $0.title == NL("重做") && $0.enabled }
-    }
-    browser.executeAction("undo"); try await until { !browser.busy && !browser.loading && fm.fileExists(atPath: localOnly.path) }
-    try check(redoEnabled(), "Fixture establishes a genuine redo branch before failed deletion")
-    let unknown = try file("remote-unknown")
-    try await select([unknown]); browser.executeAction("trash")
-    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
-    try check(!ExplorerDialogs.isPresenting(in: window) && recycleCalls == 2 && fm.fileExists(atPath: unknown.path) && redoEnabled(), "Unknown mount classification refuses both deletion routes and preserves redo")
-    let zero = try file("remote-zero-mutation")
-    try await present([zero]); try fm.moveItem(at: zero, to: root.appendingPathComponent("kept-zero")); try Data("replacement".utf8).write(to: zero)
-    try button(NL("永久删除")).onPress?(); try await until { !browser.busy && !browser.loading && browser.lastError != nil }
-    try check(redoEnabled() && browser.lastError?.contains(NL("未删除任何项目。")) == true, "A zero-mutation network failure reports no deletion and preserves redo")
-    let partial = root.appendingPathComponent("remote-partial"), deniedChild = partial.appendingPathComponent("z-denied")
-    try fm.createDirectory(at: deniedChild, withIntermediateDirectories: true)
-    try Data("first".utf8).write(to: partial.appendingPathComponent("a-first")); try Data("keep".utf8).write(to: deniedChild.appendingPathComponent("keep"))
-    try await present([partial]); try button(NL("永久删除")).onPress?()
-    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
-    try check(!redoEnabled() && browser.lastError?.contains(NL("删除未完成，已永久删除 {0} 个条目。", 1)) == true, "A real partial deletion invalidates redo and reports its exact completed count")
-    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: deniedChild.path)
-    try check(fm.fileExists(atPath: deniedChild.appendingPathComponent("keep").path) && browser.selectedPaths == [partial.path], "Partial deletion retains the root selection and untouched child")
-    let snapshot = root.appendingPathComponent("remote-snapshot")
-    try fm.createDirectory(at: snapshot, withIntermediateDirectories: true); try Data("original".utf8).write(to: snapshot.appendingPathComponent("original"))
-    try await present([snapshot]); try Data("new".utf8).write(to: snapshot.appendingPathComponent("new")); try button(NL("永久删除")).onPress?()
-    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
-    try check(fm.fileExists(atPath: snapshot.appendingPathComponent("new").path) && fm.fileExists(atPath: snapshot.appendingPathComponent("original").path) && browser.lastError?.contains(NL("未删除任何项目。")) == true, "A changed directory manifest fails before removing any confirmed or new item")
+    let remote = try file("remote-file"), local = try file("local-file")
+    try await select([remote]); browser.executeAction("cut"); let version = browser.filePasteboard.changeCount
+    try check(browser.contextItems().first { $0.title == NL("删除") }?.enabled == false, "Known network selections disable the context-menu Delete action")
+    try await rejected([remote])
+    try check(recycleCalls == 0 && browser.filePasteboard.changeCount == version, "Keyboard deletion cannot bypass the policy or consume the clipboard")
+    try await rejected([local, remote]); try check(recycleCalls == 0, "Mixed selections stop before moving any local item")
+    let unknown = try file("remote-unknown"); try await rejected([unknown]); try check(recycleCalls == 0, "Unknown classification cannot fall back to Trash")
+    try await select([local]); browser.executeAction("trash")
+    try await until { !browser.busy && !browser.loading && !fm.fileExists(atPath: local.path) }
+    try check(recycleCalls == 1 && fm.fileExists(atPath: trash.appendingPathComponent(local.lastPathComponent).path), "Local items still move into the simulated Trash")
     let remoteParent = root.appendingPathComponent("remote-parent"), alias = root.appendingPathComponent("local-alias")
-    try fm.createDirectory(at: remoteParent, withIntermediateDirectories: true); try Data("keep alias".utf8).write(to: remoteParent.appendingPathComponent("item")); try fm.createSymbolicLink(at: alias, withDestinationURL: remoteParent)
+    try fm.createDirectory(at: remoteParent, withIntermediateDirectories: true); try Data("keep".utf8).write(to: remoteParent.appendingPathComponent("item")); try fm.createSymbolicLink(at: alias, withDestinationURL: remoteParent)
     browser.navigate(to: alias); try await until { !browser.loading && browser.entries.count == 1 }
-    try await present([alias.appendingPathComponent("item")])
-    try check(recycleCalls == 2 && fm.fileExists(atPath: remoteParent.appendingPathComponent("item").path), "Local-looking alias uses actual parent-FD classification and requires network confirmation")
-    try button(NL("取消")).onPress?()
+    try await rejected([alias.appendingPathComponent("item")]); try check(recycleCalls == 1, "A local-looking alias cannot bypass actual-parent network classification")
+    browser.navigate(to: root); try await until { !browser.loading }
+    var large: [URL] = []
+    for i in 0..<65 { large.append(try file("batch-\(i)")) }
+    browser.prepareDeletionItems = PreparedDeletion.prepare
+    try await select(large); browser.executeAction("trash")
+    try await until { !browser.busy && !browser.loading }
+    try check(large.allSatisfy { !fm.fileExists(atPath: $0.path) } && recycleCalls == 66, "Actual preparation and AppKit workflow recycle 65 local files in one operation")
+    try check(!window.isVisible, "Deletion policy checks never display or focus a window")
     return checks
 #else
     return ["SKIP network deletion injection: validation build required"]

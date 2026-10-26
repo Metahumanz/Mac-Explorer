@@ -959,5 +959,6 @@
   "无法确认删除目标所在的文件系统，已停止。": "Cannot identify the target filesystem. Deletion stopped.",
   "所选项目过多或文件夹过大，已停止删除。": "Too many selected items or the folder is too large. Deletion stopped.",
   "目录过深，已停止删除。": "The folder tree is too deep. Deletion stopped.",
-  "其他程序同时替换文件时，仍存在误删风险。": "Concurrent file replacement by another program can still cause the wrong item to be deleted."
+  "其他程序同时替换文件时，仍存在误删风险。": "Concurrent file replacement by another program can still cause the wrong item to be deleted.",
+  "暂不支持删除网络项目。": "Deleting network items is temporarily unavailable."
 }
