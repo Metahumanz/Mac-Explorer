@@ -68,7 +68,8 @@ public final class PreparedDeletion: @unchecked Sendable {
 public struct NetworkDeletionOutcome: Sendable {
   public let deletedEntries: Int
   public let rootRemoved: Bool
-  public var mutated: Bool { deletedEntries > 0 }
+  public var uncertain = false
+  public var mutated: Bool { deletedEntries > 0 || uncertain }
 }
 public struct NetworkDeletionFailure: Error, CustomNSError, LocalizedError {
   public let underlying: Error
@@ -100,7 +101,7 @@ public final class NetworkDeletion: @unchecked Sendable {
     guard anchor.volume == .network else { throw deletionError(source, EPERM) }
     try self.init(anchor: anchor, budget: DeletionBudget(.init()))
   }
-  @discardableResult public func remove() throws -> NetworkDeletionOutcome {
+  @discardableResult public func remove(using provider: NetworkDeletionHandleProvider? = nil) throws -> NetworkDeletionOutcome {
     hardLinks.lock.lock(); defer { hardLinks.lock.unlock() }
     let already = consumed; consumed = true
     var count = 0, rootRemoved = false
@@ -110,9 +111,31 @@ public final class NetworkDeletion: @unchecked Sendable {
       let budget = DeletionBudget(limits)
       // Validate the whole manifest before the first unlink. This is not a filesystem transaction.
       try verify(anchor.descriptor, manifest, source, budget: budget, depth: 0)
-      try walk(anchor.descriptor, manifest, source, budget: DeletionBudget(limits), depth: 0, count: &count, rootRemoved: &rootRemoved)
+      var handles: NetworkDeletionHandles?
+      if let provider {
+        var entries: [NetworkDeletionEntry] = []
+        func collect(_ node: DeletionNode, _ path: String) throws {
+          guard entries.count < 256 else { throw deletionError(source, E2BIG) }
+          entries.append(NetworkDeletionEntry(path: path, stamp: node.original))
+          for child in node.children { try collect(child, path + "/" + child.name) }
+        }
+        try collect(manifest, source.lastPathComponent)
+        handles = try provider.prepare(source: source, parentDescriptor: anchor.descriptor, entries: entries)
+      } else {
+#if EXPLORER_DELETION_TESTS
+        // Legacy POSIX experiments are limited to genuine local temporary fixtures.
+        guard try DeletionAnchor.volume(anchor.descriptor) == .local else { throw deletionError(source, ENOTSUP) }
+#else
+        throw deletionError(source, ENOTSUP)
+#endif
+      }
+      defer { handles?.finish() }
+      // Revalidate after authentication/opening handles, before any mutation.
+      try anchor.validate()
+      try verify(anchor.descriptor, manifest, source, budget: DeletionBudget(limits), depth: 0)
+      try walk(anchor.descriptor, manifest, source, handles: handles, budget: DeletionBudget(limits), depth: 0, relative: source.lastPathComponent, count: &count, rootRemoved: &rootRemoved)
       return NetworkDeletionOutcome(deletedEntries: count, rootRemoved: true)
-    } catch { throw NetworkDeletionFailure(underlying: error, outcome: NetworkDeletionOutcome(deletedEntries: count, rootRemoved: rootRemoved)) }
+    } catch { throw NetworkDeletionFailure(underlying: error, outcome: NetworkDeletionOutcome(deletedEntries: count, rootRemoved: rootRemoved, uncertain: (error as? NetworkDeletionHandleFailure)?.uncertain == true)) }
   }
   private static func capture(_ parent: Int32, _ name: String, _ path: URL, anchor: DeletionAnchor, budget: DeletionBudget, depth: Int) throws -> DeletionNode {
     try budget.visit(path, depth: depth)
@@ -139,7 +162,7 @@ public final class NetworkDeletion: @unchecked Sendable {
       guard node.original.unchanged(try Self.stamp(parent, node.name, path)) else { throw deletionError(path, ESTALE) }
     } else if !(hardLinks.stamps[node.original.identity] ?? node.original).unchanged(before) { throw deletionError(path, ESTALE) }
   }
-  private func walk(_ parent: Int32, _ node: DeletionNode, _ path: URL, budget: DeletionBudget, depth: Int, count: inout Int, rootRemoved: inout Bool) throws {
+  private func walk(_ parent: Int32, _ node: DeletionNode, _ path: URL, handles: NetworkDeletionHandles?, budget: DeletionBudget, depth: Int, relative: String, count: inout Int, rootRemoved: inout Bool) throws {
     try budget.visit(path, depth: depth); try anchor.validateParent()
     let before = try Self.stamp(parent, node.name, path)
     guard node.original.sameObject(before) else { throw deletionError(path, ESTALE) }
@@ -148,7 +171,7 @@ public final class NetworkDeletion: @unchecked Sendable {
       guard node.original.unchanged(before) else { throw deletionError(path, ESTALE) }
       guard Set(try Self.names(fd, path, budget: budget)) == Set(node.children.map(\.name)) else { throw deletionError(path, ESTALE) }
       // Visit only confirmed names. A concurrent new name is preserved and prevents final rmdir.
-      for child in node.children { try walk(fd, child, path.appendingPathComponent(child.name), budget: budget, depth: depth + 1, count: &count, rootRemoved: &rootRemoved) }
+      for child in node.children { try walk(fd, child, path.appendingPathComponent(child.name), handles: handles, budget: budget, depth: depth + 1, relative: relative + "/" + child.name, count: &count, rootRemoved: &rootRemoved) }
       guard try Self.names(fd, path, budget: budget).isEmpty else { throw deletionError(path, ESTALE) }
     }
     try anchor.validateParent()
@@ -157,8 +180,16 @@ public final class NetworkDeletion: @unchecked Sendable {
 #if EXPLORER_DELETION_TESTS
     try auditHook?(.beforeUnlink, path)
 #endif
-    // POSIX has no atomic "unlink only if this inode still matches". Keep this residual race explicit.
-    guard unlinkat(parent, node.name, node.original.type == S_IFDIR ? AT_REMOVEDIR : 0) == 0 else { throw deletionError(path) }
+    if let handles {
+      try handles.remove(path: relative)
+    } else {
+#if EXPLORER_DELETION_TESTS
+      guard try DeletionAnchor.volume(parent) == .local else { throw deletionError(path, EPERM) }
+      guard unlinkat(parent, node.name, node.original.type == S_IFDIR ? AT_REMOVEDIR : 0) == 0 else { throw deletionError(path) }
+#else
+      throw deletionError(path, ENOTSUP)
+#endif
+    }
     count += 1; if depth == 0 { rootRemoved = true }
     try hardLinks.didUnlink(final, links: finalInfo.st_nlink, path: path)
 #if EXPLORER_DELETION_TESTS

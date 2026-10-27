@@ -184,6 +184,54 @@ import Darwin
     let lateResult = try latePlan.remove()
     print("KNOWN LIMIT: deterministic replacement after the final check is still unlinkable; this is not an atomic deletion guarantee.")
     try check(lateResult.deletedEntries == 1 && !fm.fileExists(atPath: late.path) && (try String(contentsOf: retained)) == "keep", "KNOWN LIMIT reproduced: last-check/unlink gap can delete a replacement; not an atomic identity guarantee")
+    // Transport contract: these fakes never authorize actual remote filesystem mutation.
+    final class Handles: NetworkDeletionHandles {
+      var paths: [String] = [], finished = false
+      var action: (String) throws -> Void = { _ in }
+      func remove(path: String) throws { try action(path); paths.append(path) }
+      func finish() { finished = true }
+    }
+    final class Provider: NetworkDeletionHandleProvider, @unchecked Sendable {
+      let handles = Handles()
+      var entries: [NetworkDeletionEntry] = []
+      var binding: () throws -> Void = {}
+      func prepare(source: URL, parentDescriptor: Int32, entries: [NetworkDeletionEntry]) throws -> NetworkDeletionHandles {
+        self.entries = entries; try binding(); return handles
+      }
+    }
+    let bound = try file("bound.txt"), boundProvider = Provider()
+    boundProvider.handles.action = { path in try check(path == "bound.txt", "commit uses the manifest-bound path token"); try fm.removeItem(at: bound) }
+    let boundResult = try plan(bound).remove(using: boundProvider)
+    try check(boundResult.deletedEntries == 1 && boundProvider.handles.finished && boundProvider.entries.first?.inode != 0, "handle deletion binds identity and closes after acknowledged removal")
+    let refused = try file("refused-handle"), refusedProvider = Provider()
+    refusedProvider.binding = { throw NetworkDeletionHandleFailure(code: ENOTSUP) }
+    let refusedResult = try failure { try plan(refused).remove(using: refusedProvider) }
+    try check(!refusedResult.outcome.mutated && fm.fileExists(atPath: refused.path) && refusedProvider.handles.paths.isEmpty, "unsupported handle binding cannot fall back to POSIX or Trash")
+    let uncertainFile = try file("uncertain-handle"), uncertainProvider = Provider()
+    uncertainProvider.handles.action = { _ in throw NetworkDeletionHandleFailure(code: ECONNRESET, uncertain: true) }
+    let unknownResult = try failure { try plan(uncertainFile).remove(using: uncertainProvider) }
+    try check(unknownResult.outcome.uncertain && unknownResult.outcome.mutated && unknownResult.outcome.deletedEntries == 0 && !unknownResult.outcome.rootRemoved && uncertainProvider.handles.finished, "lost deletion reply reports uncertainty, invalidates redo and releases remaining handles")
+    let lateBound = try file("late-bound"), lateBoundPlan = try plan(lateBound), lateProvider = Provider()
+    let retainedBound = root.appendingPathComponent("retained-bound")
+    lateBoundPlan.auditHook = { stage, path in
+      if stage == .beforeUnlink { try fm.moveItem(at: path, to: retainedBound); try Data("new occupant".utf8).write(to: path) }
+    }
+    lateProvider.handles.action = { _ in throw NetworkDeletionHandleFailure(code: ESTALE) }
+    let lateBoundFailure = try failure { try lateBoundPlan.remove(using: lateProvider) }
+    try check(!lateBoundFailure.outcome.mutated && (try String(contentsOf: lateBound)) == "new occupant" && fm.fileExists(atPath: retainedBound.path), "final-check replacement never reaches POSIX deletion when handle backend refuses")
+    let duringAuth = root.appendingPathComponent("binding-tree"); try fm.createDirectory(at: duringAuth, withIntermediateDirectories: true)
+    _ = try file("binding-tree/original"); let authPlan = try plan(duringAuth), authProvider = Provider()
+    authProvider.binding = { _ = try file("binding-tree/new") }
+    let authResult = try failure { try authPlan.remove(using: authProvider) }
+    try check(!authResult.outcome.mutated && authProvider.handles.paths.isEmpty && authProvider.handles.finished, "directory changes during login and handle binding abort before the first deletion")
+    let cancelledFile = try file("cancelled-handle"), cancelledProvider = Provider()
+    cancelledProvider.handles.action = { _ in throw CancellationError() }
+    let cancelResult = try failure { try plan(cancelledFile).remove(using: cancelledProvider) }
+    try check(!cancelResult.outcome.mutated && cancelledProvider.handles.finished && fm.fileExists(atPath: cancelledFile.path), "cancelled handle operation preserves source and releases the group")
+    let oversized = root.appendingPathComponent("handle-budget"); try fm.createDirectory(at: oversized, withIntermediateDirectories: true)
+    for i in 0..<256 { _ = try file("handle-budget/\(i)") }
+    let budgetProvider = Provider(), budgetResult = try failure { try plan(oversized).remove(using: budgetProvider) }
+    try check(!budgetResult.outcome.mutated && budgetProvider.entries.isEmpty && budgetResult.errorCode == Int(E2BIG), "oversized handle manifests fail before transport binding without an unsafe fallback")
     print("NetworkDeletionChecks: \(count) assertions passed.")
   }
 }

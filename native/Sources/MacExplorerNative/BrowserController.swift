@@ -1587,6 +1587,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   var deletionNetworkLocation: (URL) -> Bool? = NativeFileFailure.networkLocation
 #if EXPLORER_DELETION_TESTS
   var prepareDeletionItems: @Sendable ([URL]) throws -> [PreparedDeletion] = PreparedDeletion.prepareIncludingNetwork
+  var deletionHandlesForFixture: NetworkDeletionHandleProvider?
 #endif
   private var networkDeletionHint: Bool { selectedEntries().contains { deletionNetworkLocation($0.url) == true } }
   private var deletionTitle: String { networkDeletionHint ? NL("删除") : NL("移到回收站") }
@@ -1599,7 +1600,16 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       self.readClipboard(); let version = self.clipboardChange
       let store = self.trashStore, cloud = self.cloudDrive, testTrash = self.testTrashDirectory
       var removed = Set<String>(), irreversibleMutation = false
+      let smoke = ProcessInfo.processInfo.arguments.contains("--smoke-test")
+      let control = FileTransferControl()
+      let panel = plans.contains(where: { $0.network != nil }) && !smoke ? NativeTransferPanel(parent: window) : nil
+      panel?.window.title = NL("删除"); panel?.label.stringValue = NL("正在准备删除…"); panel?.statistics.isHidden = true; panel?.control = control
+      var handles: NetworkDeletionHandleProvider? = panel.map { self.networkDeletionProvider(panel: $0, control: control) }
+#if EXPLORER_DELETION_TESTS
+      if let fixture = self.deletionHandlesForFixture { handles = fixture }
+#endif
       self.runAsyncOperation(selectResults: false, completion: { [weak self] result in
+        panel?.close()
         guard let self else { return }
         if irreversibleMutation { self.redoChanges.removeAll() }
         if self.clipboardChange == version, self.filePasteboard.changeCount == version {
@@ -1615,8 +1625,11 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
         for plan in plans {
           let source = plan.source
           do {
+            if control.isCancelled { throw CancellationError() }
             if let deletion = plan.network {
-              let outcome = try await Task.detached { try deletion.remove() }.value
+              panel?.label.stringValue = NL("正在删除：{0}", source.lastPathComponent)
+              let provider = handles
+              let outcome = try await Task.detached { try deletion.remove(using: provider) }.value
               irreversibleMutation = irreversibleMutation || outcome.mutated
               if outcome.rootRemoved { removed.insert(source.path) }
             } else {
@@ -1638,10 +1651,10 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
             if let failure = error as? NetworkDeletionFailure {
               irreversibleMutation = irreversibleMutation || failure.outcome.mutated
               if failure.outcome.rootRemoved { removed.insert(source.path) }
-              message = (failure.outcome.mutated ? NL("删除未完成，已永久删除 {0} 个条目。", failure.outcome.deletedEntries) : NL("未删除任何项目。")) + " " + message
+              message = (failure.outcome.uncertain && failure.outcome.deletedEntries == 0 ? "" : failure.outcome.deletedEntries > 0 ? NL("删除未完成，已永久删除 {0} 个条目。", failure.outcome.deletedEntries) : NL("未删除任何项目。")) + " " + message
             }
             errors.append(message.contains(source.lastPathComponent) ? message : message + "：" + source.lastPathComponent)
-            if error is CancellationError || (error as? NetworkDeletionFailure)?.underlying is CancellationError || (error as NSError).code == NSUserCancelledError { break }
+            if (error as? NetworkDeletionFailure)?.outcome.uncertain == true || error is CancellationError || (error as? NetworkDeletionFailure)?.underlying is CancellationError || (error as NSError).code == NSUserCancelledError { break }
           }
         }
         return FileActionResult(succeeded: succeeded, errors: errors, changes: changes)
@@ -1664,7 +1677,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
           let detail = plans.count == networkCount
             ? NL("永久删除网络驱动器上的 {0} 个项目？这些项目不会进入回收站，此操作无法撤销。", networkCount)
             : NL("永久删除 {0} 个网络项目，并将 {1} 个本地项目移到回收站？网络项目无法撤销删除。", networkCount, plans.count - networkCount)
-          ExplorerDialogs.confirm(in: window, title: NL("删除"), detail: detail + "\n" + NL("其他程序同时替换文件时，仍存在误删风险。") + "\n\n" + sources.prefix(5).map(\.path).joined(separator: "\n"), confirmTitle: NL("永久删除"), destructive: true) { perform(plans) }
+          ExplorerDialogs.confirm(in: window, title: NL("删除"), detail: detail + "\n" + NL("NAS 本机程序绕过 SMB 修改文件时，仍存在误删风险。") + "\n\n" + sources.prefix(5).map(\.path).joined(separator: "\n"), confirmTitle: NL("永久删除"), destructive: true) { perform(plans) }
         } else if self.defaults.bool(forKey: "skipTrashConfirmation") { perform(plans) }
         else { ExplorerDialogs.confirm(in: window, title: NL("移到回收站"), detail: NL("将 {0} 个项目移到回收站？", sources.count), confirmTitle: NL("移到回收站"), remember: { [weak self] in self?.defaults.set($0, forKey: "skipTrashConfirmation") }) { perform(plans) } }
       } catch {

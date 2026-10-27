@@ -155,6 +155,23 @@ enum NativeNetworkDeleteChecks {
     try check(recycleCalls == 2 && fm.fileExists(atPath: remoteParent.appendingPathComponent("item").path), "Local-looking alias uses actual parent-FD classification and requires network confirmation")
     try button(NL("取消")).onPress?()
     browser.navigate(to: root); try await until { !browser.loading }
+    final class UncertainHandles: NetworkDeletionHandles {
+      func remove(path: String) throws { throw NetworkDeletionHandleFailure(code: ECONNRESET, uncertain: true) }
+      func finish() {}
+    }
+    struct UncertainProvider: NetworkDeletionHandleProvider {
+      func prepare(source: URL, parentDescriptor: Int32, entries: [NetworkDeletionEntry]) throws -> NetworkDeletionHandles { UncertainHandles() }
+    }
+    let uncertainFirst = try file("remote-uncertain-first"), uncertainNext = try file("remote-uncertain-next")
+    browser.deletionHandlesForFixture = UncertainProvider()
+    try await select([uncertainFirst, uncertainNext]); browser.executeAction("cut")
+    try await present([uncertainFirst, uncertainNext]); try button(NL("永久删除")).onPress?()
+    try await until { !browser.busy && !browser.loading && browser.lastError != nil }
+    try check(browser.lastError?.contains(NL("删除结果尚未确认，请刷新并检查来源。已停止后续删除。（错误码 {0}）", String(ECONNRESET))) == true
+      && browser.lastError?.contains(NL("未删除任何项目。")) == false, "Lost handle deletion response is reported as uncertain instead of no mutation")
+    try check(browser.selectedPaths == [uncertainFirst.path, uncertainNext.path] && fm.fileExists(atPath: uncertainNext.path)
+      && (browser.filePasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL])?.count == 2, "Uncertain batch stops and retains both selection and unconfirmed clipboard sources")
+    browser.deletionHandlesForFixture = nil
     var batch: [URL] = []
     for i in 0..<65 { batch.append(try file("local-batch-\(i)")) }
     browser.prepareDeletionItems = PreparedDeletion.prepareIncludingNetwork

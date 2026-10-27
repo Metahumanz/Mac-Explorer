@@ -2,7 +2,11 @@
 
 日期：2026-10-25。针对 PR #30 的 `a1d4e04` 后续修复。所有测试只使用本地临时夹具，不操作真实 NAS。
 
-## 2026-10-26 当前状态
+## 2026-10-27 local handle-based implementation
+
+The local branch now uses retained SMB handles with no production POSIX deletion fallback. See [current implementation, limits and evidence](LOCAL_NETWORK_DELETE.md). SMB sharing does not protect against NAS-local writers or server defects. The following sections describe the historical upstream pause and legacy POSIX engine, not the current production path.
+
+## 2026-10-26 upstream policy (historical)
 
 - 应用的网络永久删除入口已暂停：正常准备接口立即拒绝网络项，AppKit 再次检查整个批次；网络项目、混合选择和本地别名均不能触发永久删除或退回本地回收。错误不消耗剪贴板和文件历史。
 - 本地回收不受 64 项网络清单上限约束。准备后释放每项父目录 FD，执行前重新打开并复核父目录、条目、卷类型和 FSID；大批量选择不累积句柄。

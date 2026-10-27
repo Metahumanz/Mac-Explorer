@@ -68,6 +68,13 @@ enum NativeSMBTransferChecks {
     panel.update(FileTransferProgress(source: source, completedBytes: 4, totalBytes: 9, mode: .serverSide))
     try capture(panel.window, "native-smb-progress-fixture.png")
     finished = false
+    panel.login(server: "fixture.invalid:445", account: "DOMAIN;fixture", previous: credential, error: nil, deletion: true) { value in submitted = value; finished = true }
+    try await wait { panel.window.attachedSheet != nil }
+    try expect(panel.pendingAlert?.0.buttons.map(\.title) == [NL("登录"), NL("取消")], "Deletion login offers no ordinary-transfer or unsafe deletion fallback")
+    try press(NL("取消")); try await wait { finished && panel.window.attachedSheet == nil }
+    try expect(submitted == nil && panel.control!.isCancelled, "Cancelling deletion login cancels the operation without a transport fallback")
+    panel.control = FileTransferControl()
+    finished = false
     panel.login(server: "fixture.invalid:445", account: "DOMAIN;fixture", previous: nil, error: nil) { value in submitted = value; finished = true }
     try await wait { panel.window.attachedSheet != nil }
     try press(NL("取消")); try await wait { finished && panel.window.attachedSheet == nil }

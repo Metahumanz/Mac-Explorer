@@ -1036,5 +1036,11 @@
   "清除筛选": "Clear filters",
   "筛选": "Filter",
   "已启用筛选": "Filters on",
-  "应用": "Apply"
+  "应用": "Apply",
+  "删除结果尚未确认，请刷新并检查来源。已停止后续删除。（错误码 {0}）": "Deletion result is unconfirmed. Refresh and check the source. Further deletions stopped. (Error {0})",
+  "无法通过 SMB 文件句柄安全删除，已停止。（错误码 {0}）": "Unable to delete safely using an SMB file handle. Stopped. (Error {0})",
+  "网络删除登录": "Network deletion sign-in",
+  "正在准备删除…": "Preparing deletion…",
+  "正在删除：{0}": "Deleting: {0}",
+  "NAS 本机程序绕过 SMB 修改文件时，仍存在误删风险。": "NAS-local programs changing files outside SMB can still cause unintended deletion."
 }
