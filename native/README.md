@@ -144,3 +144,5 @@ Electron 对照入口需要已安装依赖并构建；`EXPLORER_REFERENCE_ROOT` 
 网络删除暂停策略、核心夹具的资源限制和剩余竞态见 [安全边界](../docs/NETWORK_DELETION_SAFETY.md)。
 
 本轮 Windows 工作流补齐范围及属性写入后续计划见 [文件工作流整理](../docs/FILE_WORKFLOW_PARITY.md)。
+
+Local handle-based SMB deletion and its limits: [implementation and isolated checks](../docs/LOCAL_NETWORK_DELETE.md). The independent wire regression is `scripts/check-smb-handle-delete.py`, using `scripts/smb-test-requirements.txt` in a dedicated venv.

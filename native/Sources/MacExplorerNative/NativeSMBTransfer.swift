@@ -184,20 +184,20 @@ final class NativeSMBLoginFields: NSObject, NSTextFieldDelegate {
 
 @MainActor
 extension NativeTransferPanel {
-  func login(server: String, account: String, previous: NativeSMBCredential?, error: Int32?, completion: @escaping (NativeSMBCredential?) -> Void) {
+  func login(server: String, account: String, previous: NativeSMBCredential?, error: Int32?, deletion: Bool = false, completion: @escaping (NativeSMBCredential?) -> Void) {
     guard control?.isCancelled != true else { completion(nil); return }
-    let alert = NSAlert(); alert.messageText = NL("服务端传输登录")
+    let alert = NSAlert(); alert.messageText = deletion ? NL("网络删除登录") : NL("服务端传输登录")
     alert.informativeText = server + (error.map { "\n" + NL("无法连接共享（错误码 {0}）。", String($0)) } ?? "")
     let fields = NativeSMBLoginFields(account: account, previous: previous); alert.accessoryView = fields.view
-    alert.addButton(withTitle: NL("登录")); alert.addButton(withTitle: NL("使用普通传输")); alert.addButton(withTitle: NL("取消"))
+    alert.addButton(withTitle: NL("登录")); if !deletion { alert.addButton(withTitle: NL("使用普通传输")) }; alert.addButton(withTitle: NL("取消"))
     alert.buttons.last?.keyEquivalent = "\u{1b}"
     alert.buttons.first?.isEnabled = fields.credential != nil
     fields.onChange = { [weak alert, weak fields] in alert?.buttons.first?.isEnabled = fields?.credential != nil }
     present(alert) { [weak self] result in
       if result == .alertFirstButtonReturn {
         if let credential = fields.credential { completion(credential) }
-        else { self?.login(server: server, account: account, previous: nil, error: EINVAL, completion: completion) }
-      } else { if result == .alertThirdButtonReturn { self?.control?.cancel() }; completion(nil) }
+        else { self?.login(server: server, account: account, previous: nil, error: EINVAL, deletion: deletion, completion: completion) }
+      } else { if deletion || result == .alertThirdButtonReturn { self?.control?.cancel() }; completion(nil) }
     }
     alert.window.makeFirstResponder(fields.user.stringValue.isEmpty ? fields.user : fields.password)
   }

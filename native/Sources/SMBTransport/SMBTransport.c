@@ -21,13 +21,14 @@
 #endif
 struct mx_smb_session { struct smb2_context *smb; uint32_t source_tree, destination_tree; int broken, socket_error; mx_smb_metrics metrics; };
 struct mx_remote { smb2_file_id id; };
-enum response_kind { CONNECT, TREE, CREATE, QUERY, RESUME, CHUNK, CLOSE };
+enum response_kind { CONNECT, TREE, CREATE, QUERY, RESUME, CHUNK, CLOSE, DIRECTORY };
 struct reply {
   int done, status; enum response_kind kind; uint32_t tree;
   struct smb2_create_reply create;
   struct smb2_stat_64 stat;
   struct smb2_srv_copychunk_resume_key key;
   struct smb2_srv_copychunk_reply chunk;
+  uint8_t *directory; uint32_t directory_length;
 };
 /* libsmb2 writes immediately while queueing. Configure each socket before its first
    negotiate/authentication write; never change the application's SIGPIPE handler. */
@@ -68,6 +69,15 @@ static void receive_reply(struct smb2_context *smb, int status, void *data, void
     struct smb2_ioctl_reply *rep = data;
     if (rep && rep->output) { r->chunk = *(struct smb2_srv_copychunk_reply *)rep->output; smb2_free_data(smb, rep->output); }
     else if (!status) r->status = SMB2_STATUS_INTERNAL_ERROR;
+  }
+  if (r->kind == DIRECTORY && !status) {
+    struct smb2_query_directory_reply *rep = data;
+    if (!rep || !rep->output_buffer || !rep->output_buffer_length || rep->output_buffer_length > 65536) r->status = SMB2_STATUS_INVALID_NETWORK_RESPONSE;
+    else {
+      r->directory = malloc(rep->output_buffer_length);
+      if (!r->directory) r->status = SMB2_STATUS_NO_MEMORY;
+      else { memcpy(r->directory, rep->output_buffer, rep->output_buffer_length); r->directory_length = rep->output_buffer_length; }
+    }
   }
   r->done = 1;
 }
@@ -310,4 +320,216 @@ int mx_smb_mount_address(int descriptor, char *host, size_t capacity, uint16_t *
   if (getnameinfo((struct sockaddr *)&address, address.ss_len, host, (socklen_t)capacity, NULL, 0, NI_NUMERICHOST)) return -1;
   *port = ntohs(address.ss_family == AF_INET ? ((struct sockaddr_in *)&address)->sin_port : ((struct sockaddr_in6 *)&address)->sin6_port);
   return *port ? 0 : -1;
+}
+
+/* Handle-bound deletion. Share-mode exclusion protects cooperating SMB clients;
+   a server-local writer outside SMB is not covered by these locks. */
+struct mx_delete_item {
+  char *path; struct mx_remote *remote; mx_smb_delete_stamp expected; int listed;
+  struct mx_delete_item *next;
+};
+struct mx_smb_deletion {
+  mx_smb_session *session; struct held *parents; struct mx_delete_item *items;
+  char *root; size_t count; int sealed, stopped; double deadline;
+  mx_smb_cancelled cancelled; void *context;
+};
+static int delete_error(int *out, int code) { if (out) *out = code > 0 ? code : EIO; return MX_SMB_FAILED; }
+static int safe_delete_path(const char *path) {
+  if (!path || !*path || *path == '/' || strchr(path, '\\') || strchr(path, ':') || strlen(path) > 4096) return 0;
+  const char *part = path;
+  for (const char *p = path;; p++) {
+    if ((unsigned char)*p < 32 && *p) return 0;
+    if (*p == '/' || !*p) {
+      size_t n = (size_t)(p - part);
+      if (!n || (n == 1 && part[0] == '.') || (n == 2 && part[0] == '.' && part[1] == '.')) return 0;
+      if (!*p) break; part = p + 1;
+    }
+  }
+  return 1;
+}
+static int deletion_ready(mx_smb_deletion *g) {
+  if (!g || g->stopped || !g->session || g->session->broken) return ENOTCONN;
+  if (g->cancelled && g->cancelled(g->context)) return ECANCELED;
+  if (monotonic_seconds() >= g->deadline) return ETIMEDOUT;
+  return 0;
+}
+mx_smb_deletion *mx_smb_delete_begin(mx_smb_session *s, const char *mount_root,
+  const char *root_path, mx_smb_cancelled cancelled, void *context, int *error_code) {
+  if (error_code) *error_code = EINVAL;
+  if (!s || !mount_root || !safe_delete_path(root_path)) return NULL;
+  mx_smb_deletion *g = calloc(1, sizeof(*g)); if (!g) { if (error_code) *error_code = ENOMEM; return NULL; }
+  g->session = s; g->root = strdup(root_path); g->cancelled = cancelled; g->context = context;
+  g->deadline = monotonic_seconds() + 60;
+  int code = g->root ? deletion_ready(g) : ENOMEM;
+  if (!code) code = -lock_parents(s, s->source_tree, mount_root, root_path, &g->parents, cancelled, context);
+  /* Includes the share root: a DNS alias or mismatched mount must never authorize deletion. */
+  if (!code) for (struct held *h = g->parents; h; h = h->next) {
+    if (!matches(s, h->remote, h->local, 1)) { code = ESTALE; break; }
+  }
+  if (code) { if (error_code) *error_code = code; mx_smb_delete_end(g); return NULL; }
+  if (error_code) *error_code = 0; return g;
+}
+static int delete_stamp_matches(const mx_smb_delete_stamp *e, const struct smb2_stat_64 *r, int changed_directory) {
+  if (!e->inode || !r->smb2_ino || e->inode != r->smb2_ino || (r->smb2_attributes & SMB2_FILE_ATTRIBUTE_REPARSE_POINT)) return 0;
+  if ((e->type == S_IFDIR) != (r->smb2_type == SMB2_TYPE_DIRECTORY)) return 0;
+  if (e->birth_seconds < 0 || e->modified_seconds < 0 || e->birth_nanos < 0 || e->birth_nanos >= 1000000000
+      || e->modified_nanos < 0 || e->modified_nanos >= 1000000000) return 0;
+  if ((uint64_t)e->birth_seconds != r->smb2_btime || (uint64_t)e->birth_nanos / 1000 != r->smb2_btime_nsec / 1000) return 0;
+  if (changed_directory) return 1; /* Only our manifest children may have been removed. */
+  return (e->type == S_IFDIR || (e->size >= 0 && (uint64_t)e->size == r->smb2_size))
+    && (uint64_t)e->modified_seconds == r->smb2_mtime && (uint64_t)e->modified_nanos / 1000 == r->smb2_mtime_nsec / 1000;
+}
+int mx_smb_delete_bind(mx_smb_deletion *g, const char *path, const mx_smb_delete_stamp *expected, int *error_code) {
+  int code = deletion_ready(g); if (code) return delete_error(error_code, code);
+  if (g->sealed || !expected || !safe_delete_path(path)) return delete_error(error_code, EINVAL);
+  size_t prefix = strlen(g->root);
+  if (strcmp(path, g->root) && (strncmp(path, g->root, prefix) || path[prefix] != '/')) return delete_error(error_code, EPERM);
+  if (!g->count && strcmp(path, g->root)) return delete_error(error_code, EPERM);
+  if (strcmp(path, g->root)) {
+    const char *slash = strrchr(path, '/'); size_t n = slash ? (size_t)(slash - path) : 0;
+    struct mx_delete_item *parent = g->items;
+    while (parent && (strlen(parent->path) != n || strncmp(parent->path, path, n))) parent = parent->next;
+    if (!parent || parent->expected.type != S_IFDIR) return delete_error(error_code, EPERM);
+  }
+  if (g->count >= 256) return delete_error(error_code, E2BIG);
+  if (expected->type != S_IFDIR && expected->type != S_IFREG) return delete_error(error_code, ENOTSUP);
+  for (struct mx_delete_item *i = g->items; i; i = i->next)
+    if (!strcmp(i->path, path) || i->expected.inode == expected->inode) return delete_error(error_code, ENOTSUP);
+  if (select_tree(g->session, g->session->source_tree)) return delete_error(error_code, ENOTCONN);
+  struct mx_delete_item *i = calloc(1, sizeof(*i));
+  if (!i) return delete_error(error_code, ENOMEM);
+  i->remote = calloc(1, sizeof(*i->remote)); i->path = strdup(path); i->expected = *expected;
+  if (!i->remote || !i->path) { free(i->remote); free(i->path); free(i); return delete_error(error_code, ENOMEM); }
+  struct smb2_create_request req = {0}; req.name = path;
+  req.impersonation_level = SMB2_IMPERSONATION_IMPERSONATION;
+  req.desired_access = SMB2_DELETE | SMB2_FILE_READ_ATTRIBUTES | (expected->type == S_IFDIR ? SMB2_FILE_LIST_DIRECTORY : 0);
+  /* Neither writes nor rename/delete can be shared by another SMB open. */
+  req.share_access = SMB2_FILE_SHARE_READ;
+  req.create_disposition = SMB2_FILE_OPEN;
+  req.create_options = SMB2_FILE_OPEN_REPARSE_POINT | (expected->type == S_IFDIR ? SMB2_FILE_DIRECTORY_FILE : SMB2_FILE_NON_DIRECTORY_FILE);
+  struct reply r = { .kind = CREATE };
+  int ret = submit(g->session, smb2_cmd_create_async(g->session->smb, &req, receive_reply, &r), &r);
+  if (ret) { free(i->remote); free(i->path); free(i); return delete_error(error_code, -ret); }
+  memcpy(i->remote->id, r.create.file_id, sizeof(i->remote->id));
+  i->next = g->items; g->items = i; g->count++;
+  struct smb2_stat_64 info = {0}; ret = remote_stat(g->session, i->remote, &info);
+  if (ret) return delete_error(error_code, -ret);
+  if (!delete_stamp_matches(expected, &info, 0)) return delete_error(error_code, ESTALE);
+  if (error_code) *error_code = 0; return MX_SMB_COPIED;
+}
+static uint32_t delete_le32(const uint8_t *p) {
+  return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+static int direct_child(const char *parent, const char *child) {
+  size_t n = strlen(parent);
+  return !strncmp(parent, child, n) && child[n] == '/' && !strchr(child + n + 1, '/');
+}
+/* Enumerate through the retained directory handle, not the macOS metadata cache.
+   Reject every extra/missing/duplicate name or changed file ID. Bound the parser and scan. */
+static int verify_delete_children(mx_smb_deletion *g, struct mx_delete_item *directory) {
+  for (struct mx_delete_item *i = g->items; i; i = i->next) i->listed = 0;
+  int first = 1;
+  for (int page = 0; page < 64; page++) {
+    int code = deletion_ready(g); if (code) return code;
+    struct smb2_query_directory_request req = {0}; req.file_information_class = SMB2_FILE_ID_FULL_DIRECTORY_INFORMATION;
+    req.flags = first ? SMB2_RESTART_SCANS : 0; first = 0; req.name = "*"; req.output_buffer_length = 65536;
+    memcpy(req.file_id, directory->remote->id, sizeof(req.file_id));
+    struct reply r = { .kind = DIRECTORY };
+    int ret = submit(g->session, smb2_cmd_query_directory_async(g->session->smb, &req, receive_reply, &r), &r);
+    if (ret) {
+      free(r.directory);
+      if ((uint32_t)r.status == SMB2_STATUS_NO_MORE_FILES && !g->session->broken) {
+        for (struct mx_delete_item *i = g->items; i; i = i->next)
+          if (i->remote && direct_child(directory->path, i->path) && !i->listed) return ESTALE;
+        return 0;
+      }
+      return -ret;
+    }
+    size_t offset = 0; int code_parse = 0;
+    while (offset < r.directory_length) {
+      size_t left = r.directory_length - offset;
+      if (left < 80) { code_parse = EPROTO; break; }
+      uint8_t *raw = r.directory + offset;
+      uint32_t next = delete_le32(raw), length = delete_le32(raw + 60);
+      size_t record = next ? next : left;
+      if (record > left || record < 80 || length % 2 || length > record - 80 || length > 8192) { code_parse = EPROTO; break; }
+      struct smb2_iovec vec = { .buf = raw, .len = record };
+      struct smb2_fileidfulldirectoryinformation entry = {0};
+      if (smb2_decode_fileidfulldirectoryinformation(g->session->smb, &entry, &vec) || !entry.name) { code_parse = EPROTO; break; }
+      const char *name = entry.name;
+      if (strcmp(name, ".") && strcmp(name, "..")) {
+        size_t n = strlen(directory->path) + strlen(name) + 2;
+        char *path = malloc(n);
+        if (!path) { free((void *)name); code_parse = ENOMEM; break; }
+        snprintf(path, n, "%s/%s", directory->path, name);
+        struct mx_delete_item *matched = g->items;
+        while (matched && strcmp(matched->path, path)) matched = matched->next;
+        if (!safe_delete_path(name) || strchr(name, '/') || !matched || !matched->remote || matched->listed
+            || !entry.file_id || entry.file_id != matched->expected.inode) code_parse = ESTALE;
+        else matched->listed = 1;
+        free(path);
+      }
+      free((void *)name);
+      if (code_parse) break;
+      if (!next) break;
+      offset += next;
+    }
+    free(r.directory); if (code_parse) return code_parse;
+  }
+  return E2BIG;
+}
+int mx_smb_delete_commit(mx_smb_deletion *g, const char *path, int *error_code) {
+  int code = deletion_ready(g); if (code) return delete_error(error_code, code);
+  if (!g->sealed) {
+    g->sealed = 1;
+    // Validate the full remote manifest before the first irreversible request.
+    for (struct mx_delete_item *item = g->items; item; item = item->next) {
+      struct smb2_stat_64 info = {0}; int ret = remote_stat(g->session, item->remote, &info);
+      if (ret || !delete_stamp_matches(&item->expected, &info, 0)) { g->stopped = 1; return delete_error(error_code, ret ? -ret : ESTALE); }
+      if (item->expected.type == S_IFDIR && (code = verify_delete_children(g, item))) { g->stopped = 1; return delete_error(error_code, code); }
+    }
+  }
+  struct mx_delete_item *i = g->items;
+  while (i && strcmp(i->path, path)) i = i->next;
+  if (!i || !i->remote) return delete_error(error_code, ESTALE);
+  /* Postorder only: no delete-pending parent may be closed over an undeleted child. */
+  for (struct mx_delete_item *child = g->items; child; child = child->next)
+    if (child->remote && !strncmp(child->path, path, strlen(path)) && child->path[strlen(path)] == '/')
+      return delete_error(error_code, ENOTEMPTY);
+  if (select_tree(g->session, g->session->source_tree)) return delete_error(error_code, ENOTCONN);
+  struct smb2_stat_64 info = {0}; int ret = remote_stat(g->session, i->remote, &info);
+  if (ret) return delete_error(error_code, -ret);
+  if (!delete_stamp_matches(&i->expected, &info, i->expected.type == S_IFDIR)) return delete_error(error_code, ESTALE);
+  if (i->expected.type == S_IFDIR && (code = verify_delete_children(g, i))) return delete_error(error_code, code);
+  if ((code = deletion_ready(g))) return delete_error(error_code, code);
+  struct smb2_file_disposition_info disposition = { .delete_pending = 1 };
+  struct smb2_set_info_request req = {0}; req.info_type = SMB2_0_INFO_FILE;
+  req.file_info_class = SMB2_FILE_DISPOSITION_INFORMATION; req.input_data = &disposition;
+  memcpy(req.file_id, i->remote->id, sizeof(req.file_id));
+  struct reply r = { .kind = CLOSE };
+  struct smb2_pdu *pdu = smb2_cmd_set_info_async(g->session->smb, &req, receive_reply, &r);
+  if (!pdu) return delete_error(error_code, ENOMEM);
+  ret = submit(g->session, pdu, &r);
+  if (ret && r.done && !g->session->broken) return delete_error(error_code, -ret); /* Server refused disposition. */
+  if (ret) { g->stopped = 1; if (error_code) *error_code = -ret; return MX_SMB_UNCERTAIN; }
+  /* Once disposition is acknowledged, close even if cancellation arrives; report its actual result. */
+  ret = close_remote(g->session, i->remote); i->remote = NULL;
+  if (ret) {
+    g->stopped = 1;
+    if (g->session->smb) { smb2_destroy_context(g->session->smb); g->session->smb = NULL; g->session->broken = 1; }
+    if (error_code) *error_code = -ret; return MX_SMB_UNCERTAIN;
+  }
+  if (error_code) *error_code = 0; return MX_SMB_COPIED;
+}
+void mx_smb_delete_end(mx_smb_deletion *g) {
+  if (!g) return;
+  while (g->items) {
+    struct mx_delete_item *i = g->items; g->items = i->next;
+    if (i->remote) {
+      if (!g->session->broken) select_tree(g->session, g->session->source_tree);
+      close_remote(g->session, i->remote);
+    }
+    free(i->path); free(i);
+  }
+  close_all(g->session, g->parents); free(g->root); free(g);
 }

@@ -27,4 +27,19 @@ int mx_smb_mount_address(int descriptor, char *host, size_t capacity, uint16_t *
 int mx_smb_copy(mx_smb_session *session, const char *source_root, const char *destination_root,
   const char *source_path, const char *destination_path, int source_fd, int destination_fd,
   mx_smb_cancelled cancelled, mx_smb_progress progress, void *context, int *error_code);
+/* Delete only via retained SMB opens, with DELETE sharing denied. No path-based fallback.
+   A context is serial, never reconnects, and must outlive its deletion group. */
+typedef struct mx_smb_deletion mx_smb_deletion;
+typedef struct {
+  uint64_t inode;
+  int64_t size, birth_seconds, birth_nanos, modified_seconds, modified_nanos;
+  uint32_t type;
+} mx_smb_delete_stamp;
+mx_smb_deletion *mx_smb_delete_begin(mx_smb_session *session, const char *mount_root,
+  const char *root_path, mx_smb_cancelled cancelled, void *context, int *error_code);
+/* Binds all objects before commit. Supports regular files and directories; reparse points fail closed. */
+int mx_smb_delete_bind(mx_smb_deletion *, const char *path, const mx_smb_delete_stamp *, int *error_code);
+/* 0 = acknowledged deletion, 2 = failed without delete submission, 3 = result uncertain. */
+int mx_smb_delete_commit(mx_smb_deletion *, const char *path, int *error_code);
+void mx_smb_delete_end(mx_smb_deletion *);
 #endif

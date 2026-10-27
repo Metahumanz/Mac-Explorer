@@ -1040,5 +1040,11 @@
   "当前文件查看器已不可用": "The current file viewer is no longer available",
   "当前文件查看器已不可用。可在设置中恢复。": "The current file viewer is no longer available. You can restore this in Settings.",
   "可在设置中恢复。": "You can restore this in Settings.",
-  "项目不存在或无法访问": "The item doesn't exist or can't be accessed"
+  "项目不存在或无法访问": "The item doesn't exist or can't be accessed",
+  "删除结果尚未确认，请刷新并检查来源。已停止后续删除。（错误码 {0}）": "Deletion result is unconfirmed. Refresh and check the source. Further deletions stopped. (Error {0})",
+  "无法通过 SMB 文件句柄安全删除，已停止。（错误码 {0}）": "Unable to delete safely using an SMB file handle. Stopped. (Error {0})",
+  "网络删除登录": "Network deletion sign-in",
+  "正在准备删除…": "Preparing deletion…",
+  "正在删除：{0}": "Deleting: {0}",
+  "NAS 本机程序绕过 SMB 修改文件时，仍存在误删风险。": "NAS-local programs changing files outside SMB can still cause unintended deletion."
 }
