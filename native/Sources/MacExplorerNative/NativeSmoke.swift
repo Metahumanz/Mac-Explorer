@@ -87,7 +87,7 @@ enum NativeSmoke {
       try expect(browser.selectedPaths == selected && browser.collection.selectionIndexPaths.count == 2, "selection survives details-to-icons switch")
       try expect(browser.collection.visibleItems().count < 150, "collection reuses visible items")
       let menu = browser.viewMenu()
-      try expect(menu.map(\.title) == ["超大图标", "大图标", "中图标", "小图标", "列表", "详细信息", "平铺", "内容", "列", "详细信息窗格", "预览窗格", "显示", "应用到所有文件夹"], "View menu preserves layout order and includes column customization")
+      try expect(menu.map(\.title) == ["超大图标", "大图标", "中图标", "小图标", "列表", "详细信息", "平铺", "内容", "列", "详细信息窗格", "预览窗格", "显示", "分组依据", "应用到所有文件夹"], "View menu preserves layout order and includes column customization")
       for index in [0, 1, 2, 3, 4, 6, 7] {
         menu[index].action?()
         window.contentView?.layoutSubtreeIfNeeded()
