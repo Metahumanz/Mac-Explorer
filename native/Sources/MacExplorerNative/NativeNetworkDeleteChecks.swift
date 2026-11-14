@@ -20,8 +20,9 @@ enum NativeNetworkDeleteChecks {
     let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 1050, height: 700), styleMask: [.titled, .closable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false; window.contentViewController = browser; window.makeKeyAndOrderFront(nil)
     var recycleCalls = 0
-    browser.deletionNetworkLocation = { $0.lastPathComponent.hasPrefix("remote") }
-    browser.fileErrorNetworkLocation = browser.deletionNetworkLocation
+    let networkLocation: (URL) -> Bool? = { $0.lastPathComponent.hasPrefix("remote") }
+    browser.deletionNetworkLocation = networkLocation
+    browser.fileErrorNetworkLocation = networkLocation
     browser.prepareDeletionItems = { sources in
       try sources.flatMap { source in
         let plans = try PreparedDeletion.fixtures([source], root: root, classification: { parent in

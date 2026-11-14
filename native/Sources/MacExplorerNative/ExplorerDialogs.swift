@@ -155,7 +155,7 @@ enum ExplorerDialogs {
     in window: NSWindow,
     theme: String,
     onTheme: @escaping (String) -> Void,
-    toolbar: [String] = ["cut", "copy", "paste", "rename", "share", "trash"],
+    toolbar: [String] = ["cut", "copy", "paste", "rename", "trash"],
     onToolbar: (([String]) -> Void)? = nil,
     shortcutRows: [(String, String)] = [],
     onShortcut: ((String, String) -> Void)? = nil,
@@ -290,7 +290,7 @@ fileprivate final class EDPresentation {
       child.hidesOnDeactivate = false
       child.isFloatingPanel = false
       child.collectionBehavior = [.fullScreenAuxiliary]
-      child.level = parent.level
+      child.level = parent is NativeDesktopWindow ? .normal : parent.level
       child.appearance = parent.effectiveAppearance
     }
     dim.hasShadow = false
@@ -698,7 +698,7 @@ final class EDBatchRenameForm: EDView, NSTextFieldDelegate {
   private let suffix = ExplorerTextField()
   private let find = ExplorerTextField()
   private let replacement = ExplorerTextField()
-  private let casing = NSPopUpButton()
+  private let casing = ExplorerPopUpButton(frame: .zero, pullsDown: false)
   private let removeBracketed = NSButton(checkboxWithTitle: NL("删除括号内容"), target: nil, action: nil)
   private let sequence = NSButton(checkboxWithTitle: NL("添加数字序列"), target: nil, action: nil)
   private let sequenceStart = ExplorerTextField()
@@ -706,7 +706,7 @@ final class EDBatchRenameForm: EDView, NSTextFieldDelegate {
   private let changeExtension = NSButton(checkboxWithTitle: NL("更改文件扩展名"), target: nil, action: nil)
   private let fileExtension = ExplorerTextField()
   private let preview = edLabel("", size: 12, wraps: true)
-  private let previewScroll = NSScrollView()
+  private let previewScroll = ExplorerScrollView()
   private var previewValid = true
   private let sourceLabel = edLabel(NL("编辑源文件名"))
   private let prefixLabel = edLabel(NL("前缀"))
@@ -851,14 +851,13 @@ private final class EDFlow: EDView {
 }
 
 private class EDScrollingBody: EDView {
-  let scroll = NSScrollView()
+  let scroll = ExplorerScrollView()
   let flow = EDFlow()
   var bordered = false
   override init(frame: NSRect = .zero) {
     super.init(frame: frame)
     scroll.hasVerticalScroller = true
     scroll.autohidesScrollers = true
-    scroll.scrollerStyle = .overlay
     scroll.drawsBackground = false
     scroll.borderType = .noBorder
     scroll.documentView = flow
@@ -1025,8 +1024,8 @@ final class EDSettingsBody: EDView {
   private var shortcutError: NSTextField?
   private var shortcutSave: EDButton?
   private var shortcutReset: EDButton?
-  private let allTools = ["cut", "copy", "paste", "rename", "batchRename", "share", "trash", "airdrop", "terminal", "undo", "refresh"]
-  private let toolLabels = ["cut": NL("剪切"), "copy": NL("复制"), "paste": NL("粘贴"), "rename": NL("重命名"), "batchRename": NL("批量重命名"), "share": NL("共享"), "trash": NL("移到回收站"), "airdrop": NL("隔空投送"), "terminal": NL("在终端中打开"), "undo": NL("撤销"), "refresh": NL("刷新")]
+  private let allTools = ["cut", "copy", "paste", "rename", "batchRename", "trash", "airdrop", "terminal", "undo", "refresh"]
+  private let toolLabels = ["cut": NL("剪切"), "copy": NL("复制"), "paste": NL("粘贴"), "rename": NL("重命名"), "batchRename": NL("批量重命名"), "trash": NL("删除"), "airdrop": NL("隔空投送"), "terminal": NL("在终端中打开"), "undo": NL("撤销"), "refresh": NL("刷新")]
 
   init(theme: String, toolbar: [String], shortcutRows: [(String, String)], onTheme: @escaping (String) -> Void, onToolbar: (([String]) -> Void)?, onShortcut: ((String, String) -> Void)?, shortcutDefaults: [String: String], folderDefaults: [String: String], onFolderDefaults: (([String: String]) -> Void)?, onResetFolders: (() -> Void)?) {
     self.theme = theme
@@ -1231,6 +1230,10 @@ final class EDSettingsBody: EDView {
       extra.onHeightChange = { [weak self] in self?.content.needsLayout = true }
       content.flow.add(favorites) { _ in extra.preferredHeight + 26 }
       if let integration = browser.systemIntegration {
+        let desktopGroup = EDGroup(NL("桌面（实验）")), desktop = NativeDesktopSettingsView(desktop: integration.desktop)
+        desktopGroup.content.addSubview(desktop); desktopGroup.arrange = { desktop.frame = $0 }
+        desktop.onHeightChange = { [weak self] in self?.content.needsLayout = true }
+        content.flow.add(desktopGroup) { _ in desktop.preferredHeight + 26 }
         let group = EDGroup(NL("系统文件查看器（实验）")), system = NativeSystemSettingsView(integration: integration)
         group.content.addSubview(system); group.arrange = { system.frame = $0 }
         system.onHeightChange = { [weak self] in self?.content.needsLayout = true }
@@ -1255,7 +1258,7 @@ final class EDSettingsBody: EDView {
       let layout = EDChoiceRow(title: NL("默认布局"), options: layouts, value: selectedLayout) { [weak self] value in
         guard let self else { return }; let parts = value.split(separator: ":"); self.folderDefaults["view"] = String(parts[0]); if parts.count == 2 { self.folderDefaults["iconSize"] = String(parts[1]) }; self.onFolderDefaults?(self.folderDefaults)
       }
-      let sort = EDChoiceRow(title: NL("默认排序"), options: [(NL("名称"), "name"), (NL("修改日期"), "modified"), (NL("创建日期"), "created"), (NL("类型"), "kind"), (NL("大小"), "size")], value: folderDefaults["sort"] ?? "name") { [weak self] value in guard let self else { return }; self.folderDefaults["sort"] = value; self.onFolderDefaults?(self.folderDefaults) }
+      let sort = EDChoiceRow(title: NL("默认排序"), options: [(NL("名称"), "name"), (NL("修改日期"), "modified"), (NL("创建日期"), "created"), (NL("添加日期"), "added"), (NL("类型"), "kind"), (NL("大小"), "size")], value: folderDefaults["sort"] ?? "name") { [weak self] value in guard let self else { return }; self.folderDefaults["sort"] = value; self.onFolderDefaults?(self.folderDefaults) }
       let direction = EDChoiceRow(title: NL("排序方向"), options: [(NL("递增"), "true"), (NL("递减"), "false")], value: folderDefaults["ascending"] ?? "true") { [weak self] value in guard let self else { return }; self.folderDefaults["ascending"] = value; self.onFolderDefaults?(self.folderDefaults) }
       let reset = EDButton(title: NL("重置所有文件夹"), style: .secondary); reset.onPress = { [weak self] in self?.onResetFolders?() }
       [layout, sort, direction, reset].forEach(group.content.addSubview)
@@ -1295,7 +1298,7 @@ final class EDSettingsBody: EDView {
       let reset = EDButton(title: NL("恢复默认工具栏"), style: .secondary)
       reset.onPress = { [weak self] in
         guard let self else { return }
-        self.toolbar = ["cut", "copy", "paste", "rename", "share", "trash"]
+        self.toolbar = ["cut", "copy", "paste", "rename", "trash"]
         onToolbar(self.toolbar)
         self.select(1)
       }
@@ -1433,7 +1436,7 @@ final class EDSettingsBody: EDView {
       }
       return 30
     }
-    let copyright = edLabel("© 2026 qixiaoyu27 · GPL-3.0-only", size: 12)
+    let copyright = edLabel("© 2026 qixiaoyu27 · AGPL-3.0-only", size: 12)
     copyright.textColor = ExplorerPalette.secondary; copyright.alignment = .center
     content.flow.add(copyright) { _ in 24 }
   }
