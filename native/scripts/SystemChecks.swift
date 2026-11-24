@@ -115,7 +115,7 @@ struct SystemChecks {
     try check(NativeUpdateValidation.compare("0.9.9", "1.0.0") == -1, "Major version update")
     try check(NativeUpdateValidation.compare("1.10.0", "1.2.9") == 1, "Numeric minor ordering")
     try rejected("invalid version") { _ = try NativeUpdateValidation.compare("1.0.0-beta", "1.0.0") }
-    let version = "1.2.3", archive = "Mac-Explorer-Native-1.2.3-mac-arm64.zip", base = "https://github.com/qixiaoyu27/Mac-Explorer/releases/download/v1.2.3/"
+    let version = "1.2.3", archive = "Mac-Explorer-Native-1.2.3-mac-arm64.zip", base = "https://github.com/Metahumanz/Mac-Explorer/releases/download/v1.2.3/"
     var release: [String: Any] = ["tag_name":"v" + version,"draft":false,"prerelease":false,"assets":[["name":archive,"size":120,"browser_download_url":base+archive], ["name":"SHA256SUMS-native.txt","size":100,"browser_download_url":base+"SHA256SUMS-native.txt"]]]
     func parsed() throws -> NativeRelease { try NativeUpdateValidation.release(JSONSerialization.data(withJSONObject: release)) }
     try check(parsed().version == version && parsed().bytes == 120, "Native release accepted")
@@ -173,7 +173,7 @@ struct SystemChecks {
     var availableAssets = nativeAssets as! [[String: Any]]; availableAssets[0]["size"] = updateBytes.count
     available["assets"] = availableAssets
     UpdateFixtureProtocol.responses = [
-      "https://api.github.com/repos/qixiaoyu27/Mac-Explorer/releases?per_page=100": try JSONSerialization.data(withJSONObject: [available]),
+      "https://api.github.com/repos/Metahumanz/Mac-Explorer/releases?per_page=100": try JSONSerialization.data(withJSONObject: [available]),
       base + archive: updateBytes,
       base + "SHA256SUMS-native.txt": Data("\(digest)  \(archive)\n".utf8),
     ]

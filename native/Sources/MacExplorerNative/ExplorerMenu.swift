@@ -2,11 +2,21 @@ import AppKit
 import ExplorerCore
 import QuartzCore
 
+enum ExplorerMenuSelectionPlacement {
+  case separateColumn, iconColumn
+}
+
+enum ExplorerMenuStyle {
+  case standard, addressContext
+}
+
 struct ExplorerMenuItem {
   var title: String
   var icon: String? = nil
-  var checked = false
+  // Plain commands omit checked. An unchecked toggle still needs room for its mark.
+  var checked: Bool? = nil
   var radio = false
+  var selectionPlacement: ExplorerMenuSelectionPlacement = .separateColumn
   var enabled = true
   var divider = false
   var shortcut = ""
@@ -16,6 +26,7 @@ struct ExplorerMenuItem {
   var action: (() -> Void)? = nil
 
   var hasSubmenu: Bool { !children.isEmpty || loadChildren != nil }
+  var showsSelectionInIconColumn: Bool { checked == true && selectionPlacement == .iconColumn }
 }
 
 private enum MenuAppearance {
@@ -29,21 +40,37 @@ private enum MenuAppearance {
   static let disabled = ExplorerPalette.dynamic(0, 0xffffff, lightAlpha: 92.0 / 255, darkAlpha: 93.0 / 255)
 }
 
-private struct MenuLayout {
+struct MenuLayout {
+  static let panelInset: CGFloat = 1
   static let inset: CGFloat = 3
   static let captionFontSize: CGFloat = 12
   static let separatorWidth: CGFloat = 5
+  static let iconSize: CGFloat = 16
+  static let checkSize: CGFloat = 12
+  static let radioSize: CGFloat = 5
+  static let columnSpacing: CGFloat = 11
+  let rowInset: CGFloat
+  let highlightInset: CGFloat
+  private let textInset: CGFloat
+  private let markerWidth: CGFloat
   let iconX: CGFloat
   let titleX: CGFloat
   let shortcutFont: NSFont
   let shortcutWidth: CGFloat
   let contentWidth: CGFloat
 
-  init(_ items: [ExplorerMenuItem], hasQuickActions: Bool = false) {
-    let hasIcons = items.contains { $0.icon != nil || $0.applicationImage != nil }
-    let hasChecks = items.contains { $0.checked || $0.radio }
-    iconX = hasChecks ? 39 : 12
-    let titleX: CGFloat = hasIcons && hasChecks ? 67 : hasIcons || hasChecks ? 39 : 12
+  init(_ items: [ExplorerMenuItem], hasQuickActions: Bool = false, style: ExplorerMenuStyle = .standard) {
+    rowInset = style == .addressContext ? 4 : Self.inset
+    highlightInset = style == .addressContext ? 0 : 2
+    let textInset: CGFloat = style == .addressContext ? 11 : 12
+    self.textInset = textInset
+    let hasIcons = items.contains { $0.icon != nil || $0.applicationImage != nil || $0.selectionPlacement == .iconColumn }
+    let separateMarks = items.filter { $0.selectionPlacement == .separateColumn }
+    let hasCheckmark = separateMarks.contains { $0.checked != nil && !$0.radio }
+    let hasRadio = separateMarks.contains(where: \.radio)
+    markerWidth = max(hasCheckmark ? Self.checkSize : 0, hasRadio ? Self.radioSize : 0)
+    iconX = textInset + (markerWidth > 0 ? markerWidth + Self.columnSpacing : 0)
+    let titleX = iconX + (hasIcons ? Self.iconSize + Self.columnSpacing : 0)
     self.titleX = titleX
     let caption = hasQuickActions ? ExplorerTypography.font(ofSize: Self.captionFontSize) : ExplorerTypography.font()
     shortcutFont = caption
@@ -52,21 +79,27 @@ private struct MenuLayout {
     let titleFont = ExplorerTypography.font()
     contentWidth = items.map { item in
       let titleWidth = ceil((item.title as NSString).size(withAttributes: [.font: titleFont]).width)
-      return titleX + titleWidth + Self.trailingWidth(for: item, shortcutWidth: shortcutWidth)
+      return titleX + titleWidth + Self.trailingWidth(for: item, shortcutWidth: shortcutWidth, textInset: textInset)
     }.max() ?? 0
   }
 
-  private static func trailingWidth(for item: ExplorerMenuItem, shortcutWidth: CGFloat) -> CGFloat {
+  private static func trailingWidth(for item: ExplorerMenuItem, shortcutWidth: CGFloat, textInset: CGFloat) -> CGFloat {
     let accelerator = item.shortcut.isEmpty ? 0 : 24 + shortcutWidth
-    return 12 + accelerator + (item.hasSubmenu ? 36 : 0)
+    return textInset + accelerator + (item.hasSubmenu ? 36 : 0)
   }
 
   func trailingWidth(for item: ExplorerMenuItem) -> CGFloat {
-    Self.trailingWidth(for: item, shortcutWidth: shortcutWidth)
+    Self.trailingWidth(for: item, shortcutWidth: shortcutWidth, textInset: textInset)
+  }
+
+  func selectionMarkFrame(for item: ExplorerMenuItem, midY: CGFloat) -> NSRect {
+    let size = item.radio ? Self.radioSize : Self.checkSize
+    let centerX = item.showsSelectionInIconColumn ? iconX + Self.iconSize / 2 : textInset + markerWidth / 2
+    return NSRect(x: centerX - size / 2, y: midY - size / 2, width: size, height: size)
   }
 
   func fittedWidth(quickWidth: CGFloat = 0) -> CGFloat {
-    let outerInsets = 2 * (Self.inset + 1)
+    let outerInsets = 2 * (rowInset + Self.panelInset)
     return max(136, min(440, contentWidth + outerInsets), quickWidth + outerInsets)
   }
 }
@@ -114,6 +147,7 @@ final class ExplorerMenu: NSObject {
   private let shadowPanel: NSPanel
   private var child: ExplorerMenu?
   private var monitor: Any?
+  private var quickButtons: [MenuQuickAction] = []
   private var rows: [MenuRow] = []
   private var selected = -1
   private var loadingChildren: Task<Void, Never>?
@@ -125,9 +159,9 @@ final class ExplorerMenu: NSObject {
     let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
     show(items, at: NSPoint(x: rect.minX, y: rect.minY - 5), owner: window)
   }
-  static func show(_ items: [ExplorerMenuItem], at point: NSPoint, owner: NSWindow, quickActions: [ExplorerMenuItem] = []) {
+  static func show(_ items: [ExplorerMenuItem], at point: NSPoint, owner: NSWindow, quickActions: [ExplorerMenuItem] = [], style: ExplorerMenuStyle = .standard) {
     dismiss()
-    let menu = ExplorerMenu(items: items, at: point, owner: owner, quickActions: quickActions)
+    let menu = ExplorerMenu(items: items, at: point, owner: owner, quickActions: quickActions, style: style)
     current = menu
     menu.panel.makeKeyAndOrderFront(nil)
     menu.monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak menu] event in
@@ -143,10 +177,10 @@ final class ExplorerMenu: NSObject {
     MenuLayout(items).fittedWidth()
   }
 
-  private init(items: [ExplorerMenuItem], at point: NSPoint, owner: NSWindow, parent: ExplorerMenu? = nil, quickActions: [ExplorerMenuItem] = []) {
+  private init(items: [ExplorerMenuItem], at point: NSPoint, owner: NSWindow, parent: ExplorerMenu? = nil, quickActions: [ExplorerMenuItem] = [], style: ExplorerMenuStyle = .standard) {
     self.owner = owner; self.parent = parent
     let hasQuickActions = !quickActions.isEmpty
-    let layout = MenuLayout(items, hasQuickActions: hasQuickActions)
+    let layout = MenuLayout(items, hasQuickActions: hasQuickActions, style: style)
     let quickSizes = quickActions.map { MenuQuickAction.fittedSize($0.title) }
     let inset = MenuLayout.inset
     let buttonHeight = quickSizes.map(\.height).max() ?? 0
@@ -175,14 +209,17 @@ final class ExplorerMenu: NSObject {
     panel.addChildWindow(shadowPanel, ordered: .below)
     let background = MenuSurface(frame: NSRect(x: 0, y: 0, width: width, height: height))
     panel.contentView = background
-    let scroll = ExplorerScrollView(frame: NSRect(x: 1, y: topInset, width: width - 2, height: max(0, height - topInset - 1)))
+    let panelInset = MenuLayout.panelInset
+    let scroll = ExplorerScrollView(frame: NSRect(x: panelInset, y: topInset, width: width - 2 * panelInset, height: max(0, height - topInset - 1)))
     scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = false; scroll.automaticallyAdjustsContentInsets = false
-    let surface = SurfaceView(frame: NSRect(x: 0, y: 0, width: width - 2, height: documentHeight))
+    let surface = SurfaceView(frame: NSRect(x: 0, y: 0, width: scroll.frame.width, height: documentHeight))
     surface.color = .clear
     scroll.documentView = surface; background.addSubview(scroll)
     let contentWidth = scroll.contentSize.width
     surface.frame.size.width = contentWidth
     if hasQuickActions {
+      background.focusRingType = .none
+      panel.initialFirstResponder = background
       var x = 1 + inset
       for (index, (item, size)) in zip(quickActions, quickSizes).enumerated() {
         if index > 0 {
@@ -194,25 +231,27 @@ final class ExplorerMenu: NSObject {
         let button = MenuQuickAction(item: item)
         button.frame = NSRect(x: x, y: 1 + inset, width: size.width, height: buttonHeight)
         button.fill.install(behind: button, in: background)
+        quickButtons.append(button)
         x += size.width
       }
       let line = SurfaceView(frame: NSRect(x: 1, y: topInset - 1, width: width - 2, height: 1))
       line.color = MenuAppearance.divider
       background.addSubview(line)
     }
-    let rowWidth = contentWidth - 2 * inset
+    let rowWidth = contentWidth - 2 * layout.rowInset
     var y = inset
     for item in items {
       if item.divider {
-        let separator = SurfaceView(frame: NSRect(x: inset, y: y + 4, width: rowWidth, height: 1))
+        let separator = SurfaceView(frame: NSRect(x: layout.rowInset, y: y + 4, width: rowWidth, height: 1))
         separator.color = MenuAppearance.divider
         surface.addSubview(separator); y += dividerHeight
       }
-      let row = MenuRow(item: item, frame: NSRect(x: inset, y: y, width: rowWidth, height: rowHeight), menuLayout: layout)
+      let row = MenuRow(item: item, frame: NSRect(x: layout.rowInset, y: y, width: rowWidth, height: rowHeight), menuLayout: layout)
       let index = rows.count
       row.hover = { [weak self] in self?.highlight(index) }
       row.perform = { [weak self] in self?.activate(index) }
-      row.fill.install(behind: row, in: surface); rows.append(row); y += rowHeight
+      row.fill.install(behind: row, in: surface, horizontalInset: layout.highlightInset)
+      rows.append(row); y += rowHeight
     }
     owner.addChildWindow(panel, ordered: .above)
   }
@@ -259,16 +298,30 @@ final class ExplorerMenu: NSObject {
     if item.hasSubmenu { highlight(index); return }
     Self.dismiss(); item.action?()
   }
+  private func focusQuickAction(backward: Bool) -> Bool {
+    let enabled = quickButtons.filter(\.isEnabled)
+    guard !enabled.isEmpty else { return false }
+    let step = backward ? -1 : 1
+    let current = enabled.firstIndex { $0 === panel.firstResponder } ?? (backward ? 0 : -1)
+    closeChild()
+    if rows.indices.contains(selected) { rows[selected].highlighted = false }
+    selected = -1
+    return panel.makeFirstResponder(enabled[(current + step + enabled.count) % enabled.count])
+  }
   private func handleKey(_ event: NSEvent) -> Bool {
     if let child, child.panel.isKeyWindow { return child.handleKey(event) }
     switch event.keyCode {
     case 53: Self.dismiss()
+    case 48: return focusQuickAction(backward: event.modifierFlags.contains(.shift))
     case 125, 126:
       let delta = event.keyCode == 125 ? 1 : -1
-      var index = selected
+      var index = selected < 0 && delta < 0 ? 0 : selected
       for _ in rows.indices {
         index = (index + delta + rows.count) % rows.count
-        if rows[index].item.enabled { highlight(index); break }
+        if rows[index].item.enabled {
+          if panel.firstResponder is MenuQuickAction { panel.makeFirstResponder(panel.initialFirstResponder) }
+          highlight(index); break
+        }
       }
     case 124: child?.panel.makeKeyAndOrderFront(nil); child?.highlight(0)
     case 123:
@@ -277,7 +330,9 @@ final class ExplorerMenu: NSObject {
         parent.closeChild()
         parent.rows[parent.selected].highlighted = true
       } else { Self.dismiss() }
-    case 36, 49: activate(selected)
+    case 36, 49, 76:
+      if let button = panel.firstResponder as? MenuQuickAction, button.isEnabled { button.performClick(nil) }
+      else { activate(selected) }
     default: return false
     }
     return true
@@ -307,6 +362,7 @@ private final class MenuShadowSurface: NSView {
 
 private final class MenuSurface: NSView {
   override var isFlipped: Bool { true }
+  override var acceptsFirstResponder: Bool { true }
   override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
   override func draw(_ dirtyRect: NSRect) {
     MenuAppearance.background.setFill()
@@ -324,8 +380,8 @@ private final class MenuItemFill: NSView {
     didSet { if state != oldValue { updateFill(animated: true) } }
   }
 
-  func install(behind item: NSView, in container: NSView) {
-    frame = item.frame.insetBy(dx: 2, dy: 2)
+  func install(behind item: NSView, in container: NSView, horizontalInset: CGFloat = 2) {
+    frame = item.frame.insetBy(dx: horizontalInset, dy: 2)
     wantsLayer = true
     layer?.cornerRadius = 4
     container.addSubview(self)
@@ -388,6 +444,7 @@ private final class MenuQuickAction: NSButton {
 
   init(item: ExplorerMenuItem) {
     self.item = item; super.init(frame: .zero); title = item.title; isEnabled = item.enabled; isBordered = false; target = self; action = #selector(invoke); toolTip = item.title + (item.shortcut.isEmpty ? "" : "（\(item.shortcut)）")
+    focusRingType = .none
   }
   required init?(coder: NSCoder) { fatalError() }
   override var isFlipped: Bool { true }
@@ -395,6 +452,8 @@ private final class MenuQuickAction: NSButton {
   override func updateTrackingAreas() { super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea); addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)) }
   override func mouseEntered(with event: NSEvent) { hovered = true }
   override func mouseExited(with event: NSEvent) { hovered = false }
+  override func becomeFirstResponder() -> Bool { needsDisplay = true; return super.becomeFirstResponder() }
+  override func resignFirstResponder() -> Bool { needsDisplay = true; return super.resignFirstResponder() }
   override func mouseDown(with event: NSEvent) {
     pressed = isEnabled
     super.mouseDown(with: event)
@@ -409,6 +468,7 @@ private final class MenuQuickAction: NSButton {
     attributes[.foregroundColor] = ExplorerPalette.text.withAlphaComponent(isEnabled ? 1 : 0.35)
     let label = NSRect(x: 0, y: Self.titleY, width: bounds.width, height: bounds.height - Self.titleY)
     (title as NSString).draw(with: label, options: .usesLineFragmentOrigin, attributes: attributes)
+    if isEnabled && window?.firstResponder === self && ExplorerFocus.keyboardVisible { drawExplorerFocus(in: bounds) }
   }
 }
 
@@ -449,13 +509,21 @@ private final class MenuRow: NSView {
   override func draw(_ dirtyRect: NSRect) {
     let color = ExplorerPalette.text.withAlphaComponent(item.enabled ? 1 : 0.35)
     let secondary = !item.enabled ? MenuAppearance.disabled : pressed ? MenuAppearance.tertiary : MenuAppearance.secondary
-    if item.checked {
-      if item.radio { color.setFill(); NSBezierPath(ovalIn: NSRect(x: 12, y: bounds.midY - 2.5, width: 5, height: 5)).fill() }
-      else { ExplorerIcons.image("check", size: 12, color: color).draw(in: NSRect(x: 8, y: bounds.midY - 6, width: 12, height: 12), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil) }
+    if item.checked == true {
+      let markerFrame = menuLayout.selectionMarkFrame(for: item, midY: bounds.midY)
+      if item.radio {
+        color.setFill()
+        NSBezierPath(ovalIn: markerFrame).fill()
+      } else {
+        ExplorerIcons.image("check", size: markerFrame.width, color: color).draw(in: markerFrame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+      }
     }
-    let iconFrame = NSRect(x: menuLayout.iconX, y: bounds.midY - 8, width: 16, height: 16)
-    if let icon = item.icon { ExplorerIcons.image(icon, size: 16, color: color).draw(in: iconFrame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil) }
-    if let image = item.applicationImage { image.draw(in: iconFrame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil) }
+    if !item.showsSelectionInIconColumn {
+      let iconSize = MenuLayout.iconSize
+      let iconFrame = NSRect(x: menuLayout.iconX, y: bounds.midY - iconSize / 2, width: iconSize, height: iconSize)
+      if let icon = item.icon { ExplorerIcons.image(icon, size: iconSize, color: color).draw(in: iconFrame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil) }
+      if let image = item.applicationImage { image.draw(in: iconFrame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil) }
+    }
     let font = ExplorerTypography.font()
     let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
     let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]

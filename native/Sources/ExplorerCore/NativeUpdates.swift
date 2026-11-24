@@ -5,7 +5,7 @@ public struct NativeRelease: Equatable, Sendable {
   public let version: String
   public let archive: String
   public let bytes: Int64
-  public var base: String { "https://github.com/qixiaoyu27/Mac-Explorer/releases/download/v\(version)" }
+  public var base: String { "https://github.com/Metahumanz/Mac-Explorer/releases/download/v\(version)" }
 }
 public struct NativeUpdateState: Sendable {
   public init(currentVersion: String) { self.currentVersion = currentVersion }
@@ -51,7 +51,7 @@ public enum NativeUpdateValidation {
       let tag = json["tag_name"] as? String, tag.hasPrefix("v"), let assets = json["assets"] as? [[String: Any]] else { throw failure("最新发布信息不完整，请稍后重试。") }
     let version = String(tag.dropFirst()); _ = try compare(version, version)
     let archive = "Mac-Explorer-Native-\(version)-mac-arm64.zip"
-    let base = "https://github.com/qixiaoyu27/Mac-Explorer/releases/download/v\(version)"
+    let base = "https://github.com/Metahumanz/Mac-Explorer/releases/download/v\(version)"
     for name in [archive, checksumName] {
       let matches = assets.filter { $0["name"] as? String == name }
       guard matches.count == 1, matches[0]["browser_download_url"] as? String == "\(base)/\(name)" else { throw failure("暂时没有可用更新。") }
@@ -129,7 +129,7 @@ public actor NativeUpdates {
     busy = true; defer { busy = false }; state.status = "checking"; state.error = ""; selected = nil; state.latestVersion = nil; state.downloaded = 0; state.total = 0
     do {
       // The latest release may still contain only Electron assets; select a stable Native release explicitly.
-      let response = try await request("https://api.github.com/repos/qixiaoyu27/Mac-Explorer/releases?per_page=100", maximum: 4 * 1024 * 1024)
+      let response = try await request("https://api.github.com/repos/Metahumanz/Mac-Explorer/releases?per_page=100", maximum: 4 * 1024 * 1024)
       guard let releases = try JSONSerialization.jsonObject(with: response) as? [[String: Any]] else { throw NativeUpdateValidation.failure("最新发布信息不完整，请稍后重试。") }
       let compatible = releases.compactMap { value -> NativeRelease? in guard let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }; return try? NativeUpdateValidation.release(data) }
       guard let latest = compatible.max(by: { (try? NativeUpdateValidation.compare($0.version, $1.version)) == -1 }) else { throw NativeUpdateValidation.failure("暂时没有可用更新。") }

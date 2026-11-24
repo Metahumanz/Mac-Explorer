@@ -786,7 +786,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
       guard let service = NSSharingService(named: .sendViaAirDrop), service.canPerform(withItems: urls) else { operationError = NL("隔空投送不可用"); render(); return false }
       service.perform(withItems: urls); return true
     }
-    runTransferOperation { control in FileActions.transfer(urls, to: target, move: operation == .move, control: control) }; return true
+    runFileTransfer(urls, to: target, move: operation == .move); return true
   }
   private func layoutSidebarRows() {
     let width = sidebarScroll.contentSize.width
@@ -1578,7 +1578,10 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
 
   func sortMenu() -> [ExplorerMenuItem] {
     var items = [(NL("名称"), EntrySort.name), (NL("修改日期"), .modified), (NL("创建日期"), .created), (NL("添加日期"), .added), (NL("类型"), .kind), (NL("大小"), .size)].map { name, key in ExplorerMenuItem(title: name, checked: sort == key, action: { [weak self] in self?.sort = key; self?.saveView(group: "sort"); self?.recompute() }) }
-    items += [ExplorerMenuItem(title: NL("递增"), checked: ascending, divider: true, action: { [weak self] in self?.ascending = true; self?.saveView(group: "sort"); self?.recompute() }), ExplorerMenuItem(title: NL("递减"), checked: !ascending, action: { [weak self] in self?.ascending = false; self?.saveView(group: "sort"); self?.recompute() })]
+    items += [
+      ExplorerMenuItem(title: NL("递增"), checked: ascending, radio: true, divider: true, action: { [weak self] in self?.ascending = true; self?.saveView(group: "sort"); self?.recompute() }),
+      ExplorerMenuItem(title: NL("递减"), checked: !ascending, radio: true, action: { [weak self] in self?.ascending = false; self?.saveView(group: "sort"); self?.recompute() }),
+    ]
     items.append(ExplorerMenuItem(title: NL("文件夹优先"), checked: foldersFirst, divider: true, action: { [weak self] in self?.foldersFirst.toggle(); self?.saveView(group: "sort"); self?.recompute() }))
     return items
   }
@@ -1613,7 +1616,10 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     var items = [(NL("超大图标"), CGFloat(128)), (NL("大图标"), 64), (NL("中图标"), 48), (NL("小图标"), 32)].enumerated().map { index, option in ExplorerMenuItem(title: option.0, icon: ["viewExtra", "viewLarge", "viewMedium", "viewSmall"][index], checked: mode == .icons && iconSize == option.1, radio: true, shortcut: shortcutHint(["extra-large-icons", "icons", "medium-icons", "small-icons"][index]), action: { [weak self] in self?.setView(.icons, size: option.1) }) }
     for (index, option) in [(NL("列表"), ExplorerLayoutMode.list), (NL("详细信息"), .details), (NL("平铺"), .tiles), (NL("内容"), .content)].enumerated() { items.append(ExplorerMenuItem(title: option.0, icon: ["viewList", "viewDetails", "viewTiles", "viewContent"][index], checked: mode == option.1, radio: true, shortcut: shortcutHint(["list", "details", "tiles", "content"][index]), action: { [weak self] in self?.setView(option.1) })) }
     items.append(ExplorerMenuItem(title: NL("列"), children: columnMenu()))
-    items += [ExplorerMenuItem(title: NL("详细信息窗格"), icon: "panelRight", checked: paneMode == "details", divider: true, action: { [weak self] in self?.togglePane("details") }), ExplorerMenuItem(title: NL("预览窗格"), icon: "panelRight", checked: paneMode == "preview", action: { [weak self] in self?.togglePane("preview") }), ExplorerMenuItem(title: NL("显示"), divider: true, children: [
+    items += [
+      ExplorerMenuItem(title: NL("详细信息窗格"), icon: "panelRight", checked: paneMode == "details", radio: true, divider: true, action: { [weak self] in self?.togglePane("details") }),
+      ExplorerMenuItem(title: NL("预览窗格"), icon: "panelRight", checked: paneMode == "preview", radio: true, action: { [weak self] in self?.togglePane("preview") }),
+      ExplorerMenuItem(title: NL("显示"), divider: true, children: [
       ExplorerMenuItem(title: NL("导航窗格"), icon: "panelLeft", checked: navigationPane, action: { [weak self] in guard let self else { return }; self.navigationPane.toggle(); self.defaults.set(self.navigationPane, forKey: "navigationPane"); self.view.needsLayout = true }),
       ExplorerMenuItem(title: NL("紧凑视图"), icon: "list", checked: compact, divider: true, action: { [weak self] in guard let self else { return }; self.compact.toggle(); self.defaults.set(self.compact, forKey: "compact"); self.updateMode(persist: false) }),
       ExplorerMenuItem(title: NL("项目复选框"), icon: "check", checked: checkboxes, divider: true, action: { [weak self] in guard let self else { return }; self.checkboxes.toggle(); self.defaults.set(self.checkboxes, forKey: "checkboxes"); self.render() }),
@@ -1637,7 +1643,9 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     let chosen = selectedEntries(), first = selectedEntries().first
     let canPaste = !busy && writable && (!clipboard.isEmpty || filePasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]))
     let refresh = ExplorerMenuItem(title: NL("刷新"), icon: "refresh", shortcut: shortcutHint("refresh"), action: { [weak self] in self?.executeAction("refresh") })
-    let hidden = ExplorerMenuItem(title: NL("隐藏的项目"), checked: showHidden, action: { [weak self] in self?.toggleHidden() })
+    let hidden = ExplorerMenuItem(title: NL("隐藏的项目"), checked: showHidden,
+                                  selectionPlacement: viewingTrash ? .separateColumn : .iconColumn,
+                                  action: { [weak self] in self?.toggleHidden() })
     if viewingTrash {
       var items: [ExplorerMenuItem] = []
       if !chosen.isEmpty {
@@ -1876,19 +1884,12 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     guard let field else { return }
     renamingEntry = entry; renameField = field; field.identifier = NSUserInterfaceItemIdentifier(entry.id)
     field.stringValue = entry.name; field.isEditable = true; field.isSelectable = true; field.isBordered = true; field.drawsBackground = true; field.backgroundColor = ExplorerPalette.surface; field.textColor = ExplorerPalette.text; field.focusRingType = .none
+    field.cell?.usesSingleLineMode = true
     field.delegate = self; field.target = self; field.action = #selector(commitInlineRename)
     field.superview?.needsLayout = true; field.superview?.layoutSubtreeIfNeeded()
     view.window?.makeFirstResponder(field)
     let stem = entry.isDirectory || entry.url.pathExtension.isEmpty ? entry.name : entry.url.deletingPathExtension().lastPathComponent
     if let editor = field.currentEditor() as? NSTextView {
-      if mode == .details, let font = field.font {
-        let height = NSLayoutManager().defaultLineHeight(for: font)
-        let centered = NSRect(x: 2, y: (field.bounds.height - height) / 2, width: editor.bounds.width, height: height)
-        if let clip = editor.superview as? NSClipView {
-          clip.frame = field.convert(centered, to: clip.superview)
-          editor.frame = NSRect(origin: .zero, size: centered.size)
-        }
-      }
       editor.setSelectedRange(NSRange(location: 0, length: (stem as NSString).length))
     }
   }
@@ -1916,7 +1917,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
   private func cancelInlineRename() {
     guard let field = renameField else { renamingEntry = nil; return }
     renamingEntry = nil; renameField = nil; field.delegate = nil; field.target = nil; field.action = nil
-    field.abortEditing(); field.isEditable = false; field.isSelectable = false; field.isBordered = false; field.drawsBackground = false; field.superview?.needsLayout = true
+    field.abortEditing(); field.cell?.usesSingleLineMode = false; field.isEditable = false; field.isSelectable = false; field.isBordered = false; field.drawsBackground = false; field.superview?.needsLayout = true
   }
   @objc private func commitInlineRename() {
     guard let entry = renamingEntry, let field = renameField, field.identifier?.rawValue == entry.id else { cancelInlineRename(); return }
@@ -1957,12 +1958,12 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     guard !busy, writable else { return }; readClipboard()
     let sources = clipboard, target = directory, move = isCut, version = clipboardChange
     guard !sources.isEmpty else { return }
-    runTransferOperation(completion: { [weak self] result in
+    runFileTransfer(sources, to: target, move: move, completion: { [weak self] result in
       guard let self, move, self.clipboardChange == version else { return }
       let moved = Set((result.consumedMoveSources + result.succeeded.filter { sources.contains($0) }).map(\.path))
       self.clipboard.removeAll { moved.contains($0.path) }; if self.clipboard.isEmpty { self.isCut = false }
       if self.filePasteboard.changeCount == version { self.writeClipboard() }
-    }) { control in FileActions.transfer(sources, to: target, move: move, control: control) }
+    })
   }
   // Cached mount classification keeps menu/selection updates free of network I/O.
   var deletionNetworkLocation: ((URL) -> Bool?)? {
@@ -2313,7 +2314,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     case "redo": redoFiles()
     case "move-here":
       clipboard = (filePasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []; clipboardChange = filePasteboard.changeCount; isCut = true; pasteFiles()
-    case "duplicate": guard writable else { return }; let sources = selectedEntries().map(\.url), target = directory; runTransferOperation { control in FileActions.transfer(sources, to: target, move: false, control: control) }
+    case "duplicate": guard writable else { return }; let sources = selectedEntries().map(\.url), target = directory; runFileTransfer(sources, to: target, move: false)
     case "select-all": selectAllFiles()
     case "new-folder": createEntry(directory: true)
     case "trash": trashSelected()
@@ -2432,7 +2433,7 @@ final class BrowserController: NSViewController, NSMenuItemValidation, NSTableVi
     let operation = dropOperation(info, target: target, fromTab: fromTab)
     let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     guard !urls.isEmpty, !operation.isEmpty else { return false }
-    runTransferOperation { control in FileActions.transfer(urls, to: target, move: operation == .move, control: control) }; return true
+    runFileTransfer(urls, to: target, move: operation == .move); return true
   }
   func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { finishedDragging(operation) }
   func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, dragOperation operation: NSDragOperation) { finishedDragging(operation) }
@@ -2603,6 +2604,19 @@ extension BrowserController {
 struct ExternalOpenGroup {
   let directory: URL
   var selection: [URL] = []
+
+  var initialTab: BrowserTab {
+    BrowserTab(history: [directory.standardizedFileURL], locationStates: [0: locationState()])
+  }
+
+  func locationState(preserving state: BrowserLocationState = BrowserLocationState()) -> BrowserLocationState {
+    let parent = directory.standardizedFileURL
+    let paths = selection.map { parent.appendingPathComponent($0.lastPathComponent).path }
+    guard let first = paths.first else { return state }
+    var state = state
+    state.requestedPaths = Set(paths); state.revealPath = first
+    return state
+  }
 }
 
 extension BrowserController {
@@ -2623,9 +2637,7 @@ extension BrowserController {
     navigate(to: group.directory)
     guard !group.selection.isEmpty else { return }
     // Replaces the state navigate prepared, which would otherwise reveal the previous folder.
-    let paths = group.selection.map { directory.appendingPathComponent($0.lastPathComponent).path }
-    var state = pendingLocationState ?? BrowserLocationState()
-    state.requestedPaths = Set(paths); state.revealPath = paths[0]
+    let state = group.locationState(preserving: pendingLocationState ?? BrowserLocationState())
     tabs[activeTab].locationStates[tabs[activeTab].index] = state
     prepareLocationState(state)
   }

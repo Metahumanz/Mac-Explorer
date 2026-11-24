@@ -59,7 +59,7 @@ private func drawExplorerImage(_ image: NSImage, in rect: NSRect, fraction: CGFl
   image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: fraction, respectFlipped: true, hints: nil)
 }
 
-private func drawExplorerFocus(in rect: NSRect) {
+func drawExplorerFocus(in rect: NSRect) {
   ExplorerPalette.accent.setStroke()
   let path = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
   path.lineWidth = 2
@@ -644,8 +644,10 @@ final class ExplorerSidebarRow: NSView, NSDraggingSource {
         NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
       }
       if selected {
+        let indicatorHeight: CGFloat = 17
         ExplorerPalette.accent.setFill()
-        NSBezierPath(roundedRect: NSRect(x: bounds.minX, y: bounds.minY + 10, width: 3, height: 17), xRadius: 1.5, yRadius: 1.5).fill()
+        let indicator = NSRect(x: bounds.minX, y: bounds.midY - indicatorHeight / 2, width: 3, height: indicatorHeight)
+        NSBezierPath(roundedRect: indicator, xRadius: 1.5, yRadius: 1.5).fill()
       }
       let x = bounds.minX + 24 + CGFloat(level) * 14
       drawExplorerImage(ExplorerIcons.image(icon, color: tint ?? defaultTint), in: NSRect(x: x, y: bounds.midY - 9, width: 18, height: 18))
